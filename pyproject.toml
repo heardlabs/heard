@@ -1,0 +1,51 @@
+[project]
+name = "heard"
+version = "0.1.0"
+description = "A voice companion for your AI coding agents. Heard speaks your agent's replies so you can keep working."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11,<3.14"
+authors = [{ name = "heardhq" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "kokoro-onnx>=0.4.0",
+    "soundfile>=0.12.0",
+    "typer>=0.12.0",
+    "pyyaml>=6.0",
+    "platformdirs>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.scripts]
+heard = "heard.cli:app"
+
+[project.urls]
+Homepage = "https://heard.dev"
+Repository = "https://github.com/heardhq/heard"
+Issues = "https://github.com/heardhq/heard/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["heard"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
