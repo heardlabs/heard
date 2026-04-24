@@ -1,0 +1,10 @@
+# Ambient: background awareness without chatter.
+# Only narrates long-running tool calls (tests, builds) and failures.
+# Keeps the final response but clamps to short summaries.
+persona: raw
+voice: am_onyx
+speed: 1.10
+verbosity: low
+narrate_tools: true
+narrate_tool_results: true
+skip_under_chars: 50
