@@ -17,7 +17,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from heard import config, verbosity
+from heard import config, hotkey, verbosity
 from heard import persona as persona_mod
 from heard.session import SessionStore
 from heard.tts.kokoro import KokoroTTS
@@ -44,10 +44,31 @@ class Daemon:
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
         self._current_cancel: threading.Event | None = None
+        self._hotkey_listener: object | None = None
+        self._start_hotkey()
+
+    def _start_hotkey(self) -> None:
+        if not self.cfg.get("hotkey_enabled", True):
+            return
+        binding = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+        self._hotkey_listener = hotkey.start(binding, self._cancel_only)
 
     def _reload_config(self) -> None:
+        old_binding = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+        old_enabled = self.cfg.get("hotkey_enabled", True)
         self.cfg = config.load()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
+
+        new_binding = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+        new_enabled = self.cfg.get("hotkey_enabled", True)
+        if (new_binding, new_enabled) != (old_binding, old_enabled):
+            if self._hotkey_listener is not None:
+                try:
+                    self._hotkey_listener.stop()
+                except Exception:
+                    pass
+                self._hotkey_listener = None
+            self._start_hotkey()
 
     def _voice(self, cfg: dict | None = None, persona: persona_mod.Persona | None = None) -> str:
         cfg = cfg or self.cfg
@@ -97,6 +118,20 @@ class Daemon:
                     self._current_proc = None
             path.unlink(missing_ok=True)
 
+    def _kill_current(self) -> None:
+        """Must hold self._lock before calling. Hard-kills afplay so the
+        audio buffer doesn't drain into the next utterance."""
+        if self._current_proc is not None:
+            try:
+                self._current_proc.kill()
+            except Exception:
+                pass
+            try:
+                self._current_proc.wait(timeout=0.5)
+            except Exception:
+                pass
+            self._current_proc = None
+
     def _start_speech(
         self,
         text: str,
@@ -106,12 +141,7 @@ class Daemon:
         with self._lock:
             if self._current_cancel is not None:
                 self._current_cancel.set()
-            if self._current_proc is not None:
-                try:
-                    self._current_proc.terminate()
-                except Exception:
-                    pass
-                self._current_proc = None
+            self._kill_current()
 
         text = (text or "").strip()
         if not text:
@@ -127,12 +157,7 @@ class Daemon:
         with self._lock:
             if self._current_cancel is not None:
                 self._current_cancel.set()
-            if self._current_proc is not None:
-                try:
-                    self._current_proc.terminate()
-                except Exception:
-                    pass
-                self._current_proc = None
+            self._kill_current()
 
     # --- event handling -----------------------------------------------------
 
