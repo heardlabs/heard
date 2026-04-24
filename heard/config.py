@@ -40,6 +40,8 @@ DEFAULTS: dict[str, Any] = {
     "narrate_tool_results": True,
     "persona": "raw",
     "verbosity": "normal",
+    "hotkey_enabled": True,
+    "hotkey_silence": "<cmd>+<shift>+.",
 }
 
 
