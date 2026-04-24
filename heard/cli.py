@@ -36,12 +36,23 @@ def voices() -> None:
 
 
 @app.command()
-def install(agent: str) -> None:
-    """Install the hook for AGENT (e.g. 'claude-code')."""
+def install(
+    agent: str,
+    skip_download: bool = typer.Option(False, "--skip-download", help="Don't download the voice model now."),
+) -> None:
+    """Install the hook for AGENT (e.g. 'claude-code'). Also fetches the voice
+    model on first install so the first narration has no surprise delay.
+    """
     adapter = ADAPTERS.get(agent)
     if adapter is None:
         typer.echo(f"Unknown agent: {agent}. Supported: {', '.join(ADAPTERS)}", err=True)
         raise typer.Exit(1)
+    if not skip_download:
+        config.ensure_dirs()
+        tts = KokoroTTS(config.MODELS_DIR)
+        if not tts.is_downloaded():
+            typer.echo("One-time setup: downloading the voice model (~350 MB total).")
+            tts.ensure_downloaded()
     adapter.install()
     typer.echo(f"Installed hook for {agent}. Restart the agent session to pick it up.")
 
