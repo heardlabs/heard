@@ -12,7 +12,7 @@ import sys
 from heard import client
 
 
-def _claude_code() -> None:
+def _cc() -> None:
     raw = sys.stdin.read()
     try:
         data = json.loads(raw)
@@ -27,8 +27,24 @@ def _claude_code() -> None:
         client.handle_cc_post_tool(data)
 
 
+def _codex() -> None:
+    raw = sys.stdin.read()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return
+    event = data.get("hook_event_name") or ""
+    if event == "Stop":
+        client.handle_codex_stop(data)
+    elif event == "PreToolUse":
+        client.handle_codex_pre_tool(data)
+    elif event == "PostToolUse":
+        client.handle_codex_post_tool(data)
+
+
 AGENTS = {
-    "claude-code": _claude_code,
+    "claude-code": _cc,
+    "codex": _codex,
 }
 
 

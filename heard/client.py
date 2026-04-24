@@ -181,6 +181,66 @@ def handle_cc_post_tool(data: dict) -> None:
     )
 
 
+# --- Codex event handlers ---------------------------------------------------
+
+
+def handle_codex_stop(data: dict) -> None:
+    cfg = config.load(cwd=data.get("cwd"))
+    # Codex hands us the assistant message directly (no transcript tail).
+    text = (data.get("last_assistant_message") or "").strip()
+    if not text:
+        # fall back to transcript tail like CC
+        path = data.get("transcript_path")
+        if path:
+            time.sleep(cfg["flush_delay_ms"] / 1000.0)
+            text = extract_last_assistant_text(path)
+    clean = markdown.strip(text)
+    if len(clean) < cfg["skip_under_chars"]:
+        return
+    send_event(
+        kind="final",
+        neutral=clean,
+        tag="final_long" if len(clean) > 400 else "final_short",
+        ctx={"length": len(clean)},
+        session=_session_from_data(data),
+    )
+
+
+def handle_codex_pre_tool(data: dict) -> None:
+    cfg = config.load(cwd=data.get("cwd"))
+    if not cfg.get("narrate_tools", True):
+        return
+    # Codex currently only emits Bash as a tool name.
+    ev = templates.pre_tool_event(data.get("tool_name") or "", data.get("tool_input") or {})
+    if ev is None:
+        return
+    send_event(
+        kind="tool_pre",
+        neutral=ev.text,
+        tag=ev.tag,
+        ctx=ev.ctx,
+        session=_session_from_data(data),
+    )
+
+
+def handle_codex_post_tool(data: dict) -> None:
+    cfg = config.load(cwd=data.get("cwd"))
+    if not cfg.get("narrate_tools", True):
+        return
+    if not cfg.get("narrate_tool_results", True):
+        return
+    ev = templates.post_tool_event(data.get("tool_name") or "", data.get("tool_response"))
+    if ev is None:
+        return
+    send_event(
+        kind="tool_post",
+        neutral=ev.text,
+        tag=ev.tag,
+        ctx=ev.ctx,
+        session=_session_from_data(data),
+    )
+
+
 # --- Back-compat entry point ------------------------------------------------
 
 
