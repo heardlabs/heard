@@ -61,9 +61,13 @@ Run `heard config path` to see the exact location.
 ## Supported agents
 
 - [x] Claude Code
-- [ ] Codex
+- [x] Codex (enable `codex_hooks = true` in `~/.codex/config.toml`)
 - [ ] Cursor CLI
 - [ ] Aider
+
+For anything without a first-class adapter, use `heard run <command>` as a
+universal fallback — it wraps the child in a PTY and narrates idle-flushed
+output.
 
 Adapters live in `heard/adapters/`. Contributions welcome.
 
