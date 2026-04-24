@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
     "flush_delay_ms": 800,
     "narrate_tools": True,
     "narrate_tool_results": True,
+    "persona": "raw",
 }
 
 
