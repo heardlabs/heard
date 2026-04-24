@@ -27,7 +27,7 @@ import sys
 import termios
 import time
 import tty
-from typing import Sequence
+from collections.abc import Sequence
 
 from heard import client, config, markdown
 

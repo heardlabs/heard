@@ -45,8 +45,12 @@ build-backend = "hatchling.build"
 packages = ["heard"]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# tests call our internal markdown.strip(), which ruff mistakes for str.strip()
+"tests/**.py" = ["B005"]

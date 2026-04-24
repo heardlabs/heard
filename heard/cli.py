@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import subprocess
-from typing import Optional
 
 import typer
 
 from heard import client, config, service
 from heard.adapters import ADAPTERS
-from heard.presets import list_bundled as list_presets, load as load_preset
+from heard.presets import list_bundled as list_presets
+from heard.presets import load as load_preset
 from heard.tts.kokoro import KokoroTTS
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Heard — speak your agent's replies.")
@@ -113,7 +113,7 @@ def run(ctx: typer.Context) -> None:
 
 
 @app.command()
-def preset(name: Optional[str] = typer.Argument(None)) -> None:
+def preset(name: str | None = typer.Argument(None)) -> None:
     """Apply a bundled preset (jarvis, ambient, silent, chatty) to the global config.
 
     Run without an argument to list available presets.
@@ -174,7 +174,7 @@ def stop() -> None:
 
 
 @config_app.command("get")
-def config_get(key: Optional[str] = typer.Argument(None)) -> None:
+def config_get(key: str | None = typer.Argument(None)) -> None:
     """Show config value(s)."""
     cfg = config.load()
     if key is None:

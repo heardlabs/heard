@@ -10,7 +10,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from heard import client, config, persona as persona_mod
+from heard import client, config
+from heard import persona as persona_mod
 from heard.tts.kokoro import KokoroTTS
 
 console = Console()
@@ -122,6 +123,7 @@ def run() -> None:
         pass
 
     console.print(
-        f"\n[green]Saved.[/green] voice=[bold]{voice}[/bold]  persona=[bold]{persona}[/bold]  verbosity=[bold]{verb}[/bold]"
+        f"\n[green]Saved.[/green] voice=[bold]{voice}[/bold]  "
+        f"persona=[bold]{persona}[/bold]  verbosity=[bold]{verb}[/bold]"
     )
     console.print("Run [cyan]heard say \"hello\"[/cyan] to sanity-check.\n")

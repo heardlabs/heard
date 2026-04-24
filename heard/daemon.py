@@ -17,7 +17,8 @@ import tempfile
 import threading
 from pathlib import Path
 
-from heard import config, persona as persona_mod, verbosity
+from heard import config, verbosity
+from heard import persona as persona_mod
 from heard.session import SessionStore
 from heard.tts.kokoro import KokoroTTS
 
@@ -48,7 +49,7 @@ class Daemon:
         self.cfg = config.load()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
 
-    def _voice(self, cfg: dict | None = None, persona: "persona_mod.Persona | None" = None) -> str:
+    def _voice(self, cfg: dict | None = None, persona: persona_mod.Persona | None = None) -> str:
         cfg = cfg or self.cfg
         persona = persona or self.persona
         return persona.voice or cfg["voice"]
@@ -58,7 +59,7 @@ class Daemon:
         text: str,
         cancel: threading.Event,
         cfg: dict | None = None,
-        persona: "persona_mod.Persona | None" = None,
+        persona: persona_mod.Persona | None = None,
     ) -> None:
         cfg = cfg or self.cfg
         voice = self._voice(cfg, persona)
@@ -100,7 +101,7 @@ class Daemon:
         self,
         text: str,
         cfg: dict | None = None,
-        persona: "persona_mod.Persona | None" = None,
+        persona: persona_mod.Persona | None = None,
     ) -> None:
         with self._lock:
             if self._current_cancel is not None:
