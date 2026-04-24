@@ -1,7 +1,11 @@
 """Default per-tool narration templates.
 
-Pre-tool lines announce what's about to happen ("Running the test suite.").
-Post-tool lines are terse and fire only on failures by default.
+Each event returns a Narration with:
+  - tag: a stable string the persona layer uses to look up overrides
+  - text: the neutral spoken string (used when the persona is raw, and
+    as seed material for Haiku rewrites)
+  - ctx: variables available to persona template substitution (e.g.,
+    {"file": "auth.py"})
 
 Returning None means "stay silent" — the dispatcher skips synthesis.
 """
@@ -10,7 +14,15 @@ from __future__ import annotations
 
 import os
 import urllib.parse as urlparse
+from dataclasses import dataclass, field
 from typing import Any
+
+
+@dataclass
+class Narration:
+    tag: str
+    text: str
+    ctx: dict[str, Any] = field(default_factory=dict)
 
 
 def _basename(path: str | None) -> str:
@@ -32,90 +44,120 @@ _INSTALL_MARKERS = (
 )
 
 
-def _bash_summary(command: str | None, description: str | None) -> str:
+def _bash_tag_and_text(command: str | None, description: str | None) -> tuple[str, str]:
     cmd = (command or "").strip()
     low = cmd.lower()
     if any(m in low for m in _TEST_MARKERS):
-        return "Running the test suite"
+        return "tool_bash_test", "Running the test suite."
     if low.startswith("git commit"):
-        return "Committing"
+        return "tool_bash_commit", "Committing."
     if low.startswith("git push"):
-        return "Pushing"
+        return "tool_bash_push", "Pushing."
     if low.startswith("git pull") or low.startswith("git fetch"):
-        return "Syncing with git"
+        return "tool_bash_sync", "Syncing with git."
     if any(low.startswith(m) for m in _INSTALL_MARKERS):
-        return "Installing dependencies"
+        return "tool_bash_install", "Installing dependencies."
     first_tokens = low.split()[:3]
     if any(v in first_tokens for v in _BUILD_VERBS):
-        return "Building"
+        return "tool_bash_build", "Building."
     if description:
-        return description.rstrip(".")
-    return "Running a shell command"
+        return "tool_bash_generic", description.rstrip(".") + "."
+    return "tool_bash_generic", "Running a shell command."
 
 
-def pre_tool_line(tool_name: str, tool_input: dict[str, Any] | None) -> str | None:
+def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narration | None:
     tool_input = tool_input or {}
     tn = tool_name or ""
     if tn == "Bash":
-        return _bash_summary(tool_input.get("command"), tool_input.get("description")) + "."
+        tag, text = _bash_tag_and_text(tool_input.get("command"), tool_input.get("description"))
+        return Narration(
+            tag=tag,
+            text=text,
+            ctx={"command": (tool_input.get("command") or "").strip()[:200]},
+        )
     if tn == "Edit":
         name = _basename(tool_input.get("file_path"))
-        return f"Editing {name}." if name else "Editing a file."
+        return Narration(tag="tool_edit", text=f"Editing {name}." if name else "Editing a file.", ctx={"file": name})
     if tn == "Write":
         name = _basename(tool_input.get("file_path"))
-        return f"Writing {name}." if name else "Writing a file."
+        return Narration(tag="tool_write", text=f"Writing {name}." if name else "Writing a file.", ctx={"file": name})
     if tn == "NotebookEdit":
         name = _basename(tool_input.get("notebook_path"))
-        return f"Editing {name}." if name else "Editing a notebook."
+        return Narration(tag="tool_edit", text=f"Editing {name}." if name else "Editing a notebook.", ctx={"file": name})
     if tn == "Read":
-        return None  # too spammy to narrate by default
+        return None
     if tn == "Glob":
-        return "Searching for files."
+        return Narration(tag="tool_glob", text="Searching for files.", ctx={"pattern": tool_input.get("pattern", "")})
     if tn == "Grep":
-        return "Searching the codebase."
+        return Narration(tag="tool_grep", text="Searching the codebase.", ctx={"pattern": tool_input.get("pattern", "")})
     if tn == "WebFetch":
+        host = ""
         try:
             host = urlparse.urlparse(tool_input.get("url") or "").netloc
         except Exception:
             host = ""
-        return f"Fetching {host}." if host else "Fetching a page."
+        return Narration(
+            tag="tool_webfetch",
+            text=f"Fetching {host}." if host else "Fetching a page.",
+            ctx={"host": host},
+        )
     if tn == "WebSearch":
-        return "Searching the web."
+        return Narration(tag="tool_websearch", text="Searching the web.", ctx={"query": tool_input.get("query", "")})
     if tn == "Agent":
         desc = (tool_input.get("description") or "").strip()
-        if desc:
-            return f"Delegating: {desc}."
-        return "Delegating to a subagent."
+        text = f"Delegating: {desc}." if desc else "Delegating to a subagent."
+        return Narration(tag="tool_agent", text=text, ctx={"description": desc})
     if tn == "AskUserQuestion":
         questions = tool_input.get("questions") or []
         if questions:
             q = (questions[0].get("question") or "").strip()
             if q:
-                return q
+                return Narration(tag="tool_question", text=q, ctx={"question": q})
         return None
     if tn in ("TodoWrite", "ExitPlanMode", "EnterPlanMode"):
-        return None  # meta/planning noise
+        return None
     if tn.startswith("mcp__"):
-        return None  # MCP tools vary wildly — silent by default
+        return None
     return None
 
 
-def post_tool_line(tool_name: str, tool_response: Any) -> str | None:
-    """Post-tool narration is terse by default. Only speak on failure."""
+def post_tool_event(tool_name: str, tool_response: Any) -> Narration | None:
+    """Terse post-tool narration. Silent on success; speaks on failure."""
     if not isinstance(tool_response, dict):
         return None
     if tool_response.get("success") is False:
-        return f"{tool_name} failed." if tool_name else "That failed."
+        return Narration(
+            tag="tool_post_failure",
+            text=f"{tool_name} failed." if tool_name else "That failed.",
+            ctx={"tool": tool_name or ""},
+        )
     if "error" in tool_response:
         err = tool_response.get("error")
         if isinstance(err, str) and err.strip():
             first = err.strip().splitlines()[0][:120]
-            return f"Error: {first}."
-        return f"{tool_name} failed." if tool_name else "That failed."
+            return Narration(tag="tool_post_failure", text=f"Error: {first}.", ctx={"error": first})
+        return Narration(
+            tag="tool_post_failure",
+            text=f"{tool_name} failed." if tool_name else "That failed.",
+            ctx={"tool": tool_name or ""},
+        )
     if tool_name == "Bash":
         ec = tool_response.get("exit_code")
         if ec is None:
             ec = tool_response.get("exitCode")
         if ec not in (None, 0):
-            return "Command failed."
+            return Narration(tag="tool_post_command_failed", text="Command failed.", ctx={"exit_code": ec})
     return None
+
+
+# --- Backwards-compat wrappers (kept for tests and old call sites) ----------
+
+
+def pre_tool_line(tool_name: str, tool_input: dict[str, Any] | None) -> str | None:
+    n = pre_tool_event(tool_name, tool_input)
+    return n.text if n else None
+
+
+def post_tool_line(tool_name: str, tool_response: Any) -> str | None:
+    n = post_tool_event(tool_name, tool_response)
+    return n.text if n else None

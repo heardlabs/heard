@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+from typing import Any
 
 from heard import config, markdown, templates
 
@@ -58,13 +59,8 @@ def send(payload: dict) -> None:
     s.close()
 
 
-def speak(text: str, replace: bool = True) -> None:
-    """Send text to the daemon. `replace=True` cancels any in-flight speech
-    (the default — one agent event replaces the previous). Pass False to
-    queue after whatever is playing (not currently supported by the daemon,
-    but keeps the call site honest)."""
+def _send_with_retry(payload: dict) -> None:
     ensure_daemon()
-    payload: dict = {"text": text}
     try:
         send(payload)
     except Exception:
@@ -73,6 +69,31 @@ def speak(text: str, replace: bool = True) -> None:
             send(payload)
         except Exception:
             pass
+
+
+def speak(text: str) -> None:
+    """Speak the given text literally (bypasses persona). Used by `heard say`."""
+    _send_with_retry({"text": text})
+
+
+def send_event(
+    kind: str,
+    neutral: str,
+    tag: str,
+    ctx: dict[str, Any] | None = None,
+    session: dict[str, Any] | None = None,
+) -> None:
+    """Send a structured event to the daemon. Daemon applies persona."""
+    _send_with_retry(
+        {
+            "cmd": "event",
+            "kind": kind,
+            "neutral": neutral,
+            "tag": tag,
+            "ctx": ctx or {},
+            "session": session or {},
+        }
+    )
 
 
 def extract_last_assistant_text(transcript_path: str) -> str:
@@ -96,6 +117,14 @@ def extract_last_assistant_text(transcript_path: str) -> str:
     return last
 
 
+def _session_from_data(data: dict) -> dict:
+    return {
+        "id": data.get("session_id") or "default",
+        "cwd": data.get("cwd"),
+        "transcript_path": data.get("transcript_path"),
+    }
+
+
 # --- Claude Code event handlers ---------------------------------------------
 
 
@@ -109,25 +138,47 @@ def handle_cc_stop(data: dict) -> None:
     clean = markdown.strip(text)
     if len(clean) < cfg["skip_under_chars"]:
         return
-    speak(clean)
+    send_event(
+        kind="final",
+        neutral=clean,
+        tag="final_long" if len(clean) > 400 else "final_short",
+        ctx={"length": len(clean)},
+        session=_session_from_data(data),
+    )
 
 
 def handle_cc_pre_tool(data: dict) -> None:
     cfg = config.load()
     if not cfg.get("narrate_tools", True):
         return
-    line = templates.pre_tool_line(data.get("tool_name") or "", data.get("tool_input") or {})
-    if line:
-        speak(line)
+    ev = templates.pre_tool_event(data.get("tool_name") or "", data.get("tool_input") or {})
+    if ev is None:
+        return
+    send_event(
+        kind="tool_pre",
+        neutral=ev.text,
+        tag=ev.tag,
+        ctx=ev.ctx,
+        session=_session_from_data(data),
+    )
 
 
 def handle_cc_post_tool(data: dict) -> None:
     cfg = config.load()
     if not cfg.get("narrate_tools", True):
         return
-    line = templates.post_tool_line(data.get("tool_name") or "", data.get("tool_response"))
-    if line and cfg.get("narrate_tool_results", True):
-        speak(line)
+    if not cfg.get("narrate_tool_results", True):
+        return
+    ev = templates.post_tool_event(data.get("tool_name") or "", data.get("tool_response"))
+    if ev is None:
+        return
+    send_event(
+        kind="tool_post",
+        neutral=ev.text,
+        tag=ev.tag,
+        ctx=ev.ctx,
+        session=_session_from_data(data),
+    )
 
 
 # --- Back-compat entry point ------------------------------------------------
