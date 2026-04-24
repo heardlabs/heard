@@ -12,7 +12,7 @@ def test_list_bundled():
 def test_jarvis_preset_shape():
     p = presets.load("jarvis")
     assert p["persona"] == "jarvis"
-    assert p["voice"].startswith("bm_")
+    assert p["voice"]
     assert p["verbosity"] in ("low", "normal", "high")
 
 

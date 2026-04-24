@@ -58,11 +58,16 @@ class Persona:
         """Return the final line to speak. Always returns a string.
 
         Falls back gracefully: Haiku → template → neutral.
+
+        Haiku only fires for `final` events (the summary at end of a turn).
+        Tool events (tool_pre / tool_post) always use templates — they are
+        short, repetitive, and don't need a model to rewrite, so this keeps
+        per-event TTFA near 300ms instead of ~1.5s.
         """
         if self.is_raw:
             return neutral
 
-        if _haiku_enabled():
+        if event_kind == "final" and _haiku_enabled():
             haiku = _haiku_rewrite(self, event_kind, neutral, tag, ctx or {}, session or {})
             if haiku:
                 return haiku
