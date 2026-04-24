@@ -83,13 +83,18 @@ def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narrati
         return Narration(tag="tool_write", text=f"Writing {name}." if name else "Writing a file.", ctx={"file": name})
     if tn == "NotebookEdit":
         name = _basename(tool_input.get("notebook_path"))
-        return Narration(tag="tool_edit", text=f"Editing {name}." if name else "Editing a notebook.", ctx={"file": name})
+        text = f"Editing {name}." if name else "Editing a notebook."
+        return Narration(tag="tool_edit", text=text, ctx={"file": name})
     if tn == "Read":
         return None
     if tn == "Glob":
         return Narration(tag="tool_glob", text="Searching for files.", ctx={"pattern": tool_input.get("pattern", "")})
     if tn == "Grep":
-        return Narration(tag="tool_grep", text="Searching the codebase.", ctx={"pattern": tool_input.get("pattern", "")})
+        return Narration(
+            tag="tool_grep",
+            text="Searching the codebase.",
+            ctx={"pattern": tool_input.get("pattern", "")},
+        )
     if tn == "WebFetch":
         host = ""
         try:
