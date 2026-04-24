@@ -14,8 +14,17 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
 PY=${PYTHON:-$ROOT/.venv/bin/python}
 
-if [[ ! -x "$PY" ]]; then
-  echo "python not found at $PY — set PYTHON=/path/to/python or create a venv at $ROOT/.venv" >&2
+# Resolve to an absolute path: if $PY is a relative command name (e.g.
+# `python` in CI), look it up on PATH. Otherwise require the file to exist.
+if [[ "$PY" != /* ]]; then
+  RESOLVED=$(command -v "$PY" || true)
+  if [[ -z "$RESOLVED" ]]; then
+    echo "python not found on PATH: $PY" >&2
+    exit 1
+  fi
+  PY=$RESOLVED
+elif [[ ! -x "$PY" ]]; then
+  echo "python not executable at $PY — set PYTHON=/path/to/python or create a venv at $ROOT/.venv" >&2
   exit 1
 fi
 
