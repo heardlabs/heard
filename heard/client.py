@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 
-from heard import config, markdown
+from heard import config, markdown, templates
 
 
 def is_daemon_alive() -> bool:
@@ -58,14 +58,19 @@ def send(payload: dict) -> None:
     s.close()
 
 
-def speak(text: str) -> None:
+def speak(text: str, replace: bool = True) -> None:
+    """Send text to the daemon. `replace=True` cancels any in-flight speech
+    (the default — one agent event replaces the previous). Pass False to
+    queue after whatever is playing (not currently supported by the daemon,
+    but keeps the call site honest)."""
     ensure_daemon()
+    payload: dict = {"text": text}
     try:
-        send({"text": text})
+        send(payload)
     except Exception:
         time.sleep(0.3)
         try:
-            send({"text": text})
+            send(payload)
         except Exception:
             pass
 
@@ -91,14 +96,12 @@ def extract_last_assistant_text(transcript_path: str) -> str:
     return last
 
 
-def from_claude_code_hook() -> None:
-    """Entry point for Claude Code's Stop hook."""
+# --- Claude Code event handlers ---------------------------------------------
+
+
+def handle_cc_stop(data: dict) -> None:
     cfg = config.load()
-    try:
-        hook_input = json.load(sys.stdin)
-    except Exception:
-        return
-    path = hook_input.get("transcript_path")
+    path = data.get("transcript_path")
     if not path:
         return
     time.sleep(cfg["flush_delay_ms"] / 1000.0)
@@ -107,3 +110,40 @@ def from_claude_code_hook() -> None:
     if len(clean) < cfg["skip_under_chars"]:
         return
     speak(clean)
+
+
+def handle_cc_pre_tool(data: dict) -> None:
+    cfg = config.load()
+    if not cfg.get("narrate_tools", True):
+        return
+    line = templates.pre_tool_line(data.get("tool_name") or "", data.get("tool_input") or {})
+    if line:
+        speak(line)
+
+
+def handle_cc_post_tool(data: dict) -> None:
+    cfg = config.load()
+    if not cfg.get("narrate_tools", True):
+        return
+    line = templates.post_tool_line(data.get("tool_name") or "", data.get("tool_response"))
+    if line and cfg.get("narrate_tool_results", True):
+        speak(line)
+
+
+# --- Back-compat entry point ------------------------------------------------
+
+
+def from_claude_code_hook() -> None:
+    """Deprecated: old entry point still used by v0.1 installs. Forwards
+    whatever payload is on stdin to the new handlers based on event name."""
+    try:
+        hook_input = json.load(sys.stdin)
+    except Exception:
+        return
+    event = hook_input.get("hook_event_name") or "Stop"
+    if event == "Stop":
+        handle_cc_stop(hook_input)
+    elif event == "PreToolUse":
+        handle_cc_pre_tool(hook_input)
+    elif event == "PostToolUse":
+        handle_cc_post_tool(hook_input)
