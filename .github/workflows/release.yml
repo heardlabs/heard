@@ -20,9 +20,15 @@ jobs:
 
       - name: Install build deps
         run: |
+          brew install librsvg
           python -m pip install --upgrade pip
           pip install py2app "setuptools<80"
           pip install -e .
+
+      - name: Build icon
+        run: |
+          cd packaging
+          ./build-icon.sh
 
       - name: Build Heard.app
         env:
