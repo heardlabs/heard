@@ -157,6 +157,14 @@ def tune() -> None:
 
 
 @app.command()
+def ui() -> None:
+    """Launch the menu bar app. Blocks until you pick Quit from the menu."""
+    from heard import ui as ui_mod
+
+    ui_mod.run()
+
+
+@app.command()
 def silence() -> None:
     """Cancel current speech. Daemon stays running so the next response is fast.
 
