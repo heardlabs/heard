@@ -6,76 +6,96 @@ Counterpart to input tools like [Wispr Flow](https://wisprflow.ai). Wispr handle
 
 ## Install
 
+### Menu bar app (recommended)
+
+Download the latest `Heard-v*.zip` from [Releases](https://github.com/sodiumsun/heard/releases), unzip, drag `Heard.app` into `/Applications`. First launch: right-click → Open (unsigned build).
+
+The menu bar icon appears immediately. From there: pick a preset, enable the silence hotkey, and install the adapter for Claude Code or Codex.
+
+### CLI only
+
 ```bash
 pipx install heard
 # or
 uv tool install heard
-```
 
-Then enable for your agent CLI:
-
-```bash
 heard install claude-code
 ```
 
-That's it. Your next Claude Code response will be spoken aloud.
+That's it. Your next Claude Code response will be narrated. A macOS notification confirms setup; the voice model downloads on first use (~350 MB, one-time).
 
-## How it works
+## What it does
 
-- **Offline by default.** Uses [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), an open-source 82M-parameter voice model that runs locally on your Mac. No API keys, no data leaves your machine.
-- **Low latency.** A small background daemon keeps the model loaded so speech starts in roughly 300ms.
-- **Interruption-aware.** Each new agent response cancels any still-playing speech — no pile-up.
-- **Markdown-aware.** Code blocks, URLs, link syntax, and list markers are stripped before synthesis so you hear prose, not Markdown punctuation.
-- **54 voices.** American, British, male, female. Default is `am_onyx`.
+- **Narrates tool calls, not just final responses.** "Running the test suite." "Three failures in auth.py." Hooks into `PreToolUse`, `PostToolUse`, and `Stop`.
+- **Jarvis persona.** Set `ANTHROPIC_API_KEY` and apply the `jarvis` preset — Claude Haiku 4.5 rewrites each final response into a dry, in-character line. Falls back to neutral templates when no key is set, so the OSS experience is complete without a paid API.
+- **Global silence hotkey.** `⌘⇧.` cuts Heard off mid-sentence anywhere on your Mac. Bindable, one-time Accessibility grant.
+- **Menu bar app.** `heard ui` for live status, preset switcher, verbosity, silence button.
+- **Local-first voice.** Kokoro 82M runs on your Mac. 54 voices. No data leaves your machine unless you opt into Haiku persona rewrites.
+- **Per-project config.** Drop a `.heard.yaml` in a repo to override global settings inside that project — quiet at work, chatty on side projects.
+- **Works with any agent.** First-class adapters for Claude Code + Codex. `heard run <command>` wraps anything else (Aider, Cursor-CLI, arbitrary CLIs) under a PTY and narrates idle-flushed output.
 
 ## Commands
 
 ```
-heard install <agent>          Install the hook for an agent CLI
-heard uninstall <agent>        Remove the hook
-heard voices                   List available voices
-heard say "hello"              Test the voice directly
-heard config get               Show all settings
-heard config set voice=am_puck Change a setting (reloads live)
-heard status                   Show daemon + install status
-heard doctor                   Diagnose problems
-heard service install          Auto-start the daemon on login
-heard silence                  Cancel current speech (bind to a hotkey)
-heard stop                     Cancel speech + shut down daemon
+heard install <agent>           Install the hook + download voice model
+heard uninstall <agent>         Remove the hook
+heard preset <name>             Apply preset (jarvis / ambient / silent / chatty)
+heard tune                      Interactive voice/persona/verbosity walk
+heard ui                        Launch the menu bar app
+heard say "hello"               Speak text directly
+heard run <cmd> [args...]       Wrap any command and narrate its output
+heard silence                   Cancel current speech (bind to a hotkey)
+heard stop                      Cancel speech + shut down daemon
+heard voices                    List available voices
+heard config get [key]          Show config value(s)
+heard config set key value      Change a setting (reloads live)
+heard status                    Show daemon + install status
+heard doctor                    Diagnose problems
+heard service install           Auto-start the daemon on login
 ```
 
-## Configuration
+## Presets
 
-YAML file at `~/Library/Application Support/heard/config.yaml` (macOS):
+| Preset   | Persona | Voice    | Verbosity | Tool narration                  |
+|----------|---------|----------|-----------|---------------------------------|
+| jarvis   | jarvis  | am_onyx  | normal    | on                              |
+| chatty   | jarvis  | am_onyx  | high      | on (everything)                 |
+| ambient  | raw     | am_onyx  | low       | only long-running + failures    |
+| silent   | raw     | am_onyx  | normal    | off (final responses only)      |
+
+Apply with `heard preset <name>`. Mix your own by editing `~/Library/Application Support/heard/config.yaml`.
+
+## Configuration
 
 ```yaml
 voice: am_onyx
 speed: 1.05
-lang: en-us
-skip_under_chars: 30    # don't speak responses shorter than this
-flush_delay_ms: 800     # wait for transcript to flush before reading
+persona: jarvis              # raw | jarvis
+verbosity: normal            # low | normal | high
+narrate_tools: true
+narrate_tool_results: true
+hotkey_silence: "<cmd>+<shift>+."
+skip_under_chars: 30         # ignore responses shorter than this
+flush_delay_ms: 800          # wait for transcript to settle before reading
 ```
 
-Run `heard config path` to see the exact location.
+Any repo can override by placing `.heard.yaml` in its root.
 
 ## Supported agents
 
 - [x] Claude Code
 - [x] Codex (enable `codex_hooks = true` in `~/.codex/config.toml`)
-- [ ] Cursor CLI
-- [ ] Aider
-
-For anything without a first-class adapter, use `heard run <command>` as a
-universal fallback — it wraps the child in a PTY and narrates idle-flushed
-output.
+- [x] Anything else via `heard run <command>`
+- [ ] Cursor CLI (planned first-class adapter)
+- [ ] Aider (planned first-class adapter)
 
 Adapters live in `heard/adapters/`. Contributions welcome.
 
 ## Requirements
 
-- macOS (Linux support planned)
-- Python 3.11+
-- ~350MB disk (Kokoro model + voices, downloaded on first run)
+- macOS 13+ (Linux support planned)
+- For CLI install: Python 3.11+
+- ~350 MB disk (Kokoro model, one-time download)
 
 ## Status
 
