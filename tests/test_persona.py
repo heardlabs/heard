@@ -48,6 +48,28 @@ def test_template_substitution():
     assert out
 
 
+def test_tool_events_never_hit_haiku(monkeypatch):
+    """Latency win: tool_pre and tool_post always go template-only, even
+    when Haiku is enabled. Only `final` events are rewritten by Haiku."""
+    p = persona.load("jarvis")
+    called = {"n": 0}
+
+    def fake_haiku(*a, **kw):
+        called["n"] += 1
+        return "HAIKU_OUTPUT"
+
+    monkeypatch.setattr(persona, "_haiku_enabled", lambda: True)
+    monkeypatch.setattr(persona, "_haiku_rewrite", fake_haiku)
+
+    p.rewrite("tool_pre", "Running the tests.", "tool_bash_test", {}, {})
+    p.rewrite("tool_post", "Command failed.", "tool_post_command_failed", {}, {})
+    assert called["n"] == 0
+
+    out = p.rewrite("final", "I've finished the migration.", "final_short", {}, {})
+    assert out == "HAIKU_OUTPUT"
+    assert called["n"] == 1
+
+
 def test_haiku_timeout_falls_back_to_template(monkeypatch):
     p = persona.load("jarvis")
 
