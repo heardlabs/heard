@@ -6,7 +6,7 @@ import subprocess
 
 import typer
 
-from heard import client, config, service
+from heard import client, config, onboarding, service
 from heard.adapters import ADAPTERS
 from heard.presets import list_bundled as list_presets
 from heard.presets import load as load_preset
@@ -54,7 +54,7 @@ def install(
             typer.echo("One-time setup: downloading the voice model (~350 MB total).")
             tts.ensure_downloaded()
     adapter.install()
-    typer.echo(f"Installed hook for {agent}. Restart the agent session to pick it up.")
+    onboarding.after_install(agent)
 
 
 @app.command()
