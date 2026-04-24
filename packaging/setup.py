@@ -76,6 +76,7 @@ OPTIONS = {
     ],
     "includes": ["pkg_resources"],
     "excludes": ["tkinter", "matplotlib", "pytest"],
+    "iconfile": os.path.join(HERE, "heard.icns"),
     # py2app + Python 3.12/3.13 can miss libffi (used by ctypes). We pin
     # the path explicitly when one is findable alongside the interpreter.
     "frameworks": [],

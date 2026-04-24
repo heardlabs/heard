@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a1f78"/>
+      <stop offset="1" stop-color="#0f0a1f"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- stylized mic head -->
+  <rect x="200" y="120" width="112" height="192" rx="56" fill="#e8d8ff"/>
+  <!-- stand and base -->
+  <path d="M160 300 a96 96 0 0 0 192 0" stroke="#e8d8ff" stroke-width="18" fill="none" stroke-linecap="round"/>
+  <line x1="256" y1="396" x2="256" y2="440" stroke="#e8d8ff" stroke-width="18" stroke-linecap="round"/>
+  <line x1="206" y1="440" x2="306" y2="440" stroke="#e8d8ff" stroke-width="18" stroke-linecap="round"/>
+  <!-- sound waves arcs -->
+  <g stroke="#b685ff" stroke-width="14" fill="none" stroke-linecap="round">
+    <path d="M140 170 q-28 42 0 84"/>
+    <path d="M372 170 q28 42 0 84"/>
+  </g>
+</svg>
