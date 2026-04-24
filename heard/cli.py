@@ -9,6 +9,7 @@ import typer
 
 from heard import client, config, service
 from heard.adapters import ADAPTERS
+from heard.presets import list_bundled as list_presets, load as load_preset
 from heard.tts.kokoro import KokoroTTS
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Heard — speak your agent's replies.")
@@ -89,6 +90,39 @@ def daemon() -> None:
     from heard import daemon as _daemon
 
     _daemon.run()
+
+
+@app.command()
+def preset(name: Optional[str] = typer.Argument(None)) -> None:
+    """Apply a bundled preset (jarvis, ambient, silent, chatty) to the global config.
+
+    Run without an argument to list available presets.
+    """
+    available = list_presets()
+    if name is None:
+        for n in available:
+            typer.echo(n)
+        return
+    if name not in available:
+        typer.echo(f"Unknown preset: {name}. Available: {', '.join(available)}", err=True)
+        raise typer.Exit(1)
+    cfg_overrides = load_preset(name)
+    config.apply_preset(cfg_overrides)
+    try:
+        client.send({"cmd": "reload"})
+    except Exception:
+        pass
+    typer.echo(f"Applied preset: {name}")
+    for k, v in sorted(cfg_overrides.items()):
+        typer.echo(f"  {k} = {v}")
+
+
+@app.command()
+def tune() -> None:
+    """Interactively pick voice, persona, and verbosity. Plays voice samples."""
+    from heard import tune as tune_mod
+
+    tune_mod.run()
 
 
 @app.command()

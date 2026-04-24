@@ -1,0 +1,9 @@
+# Silent: speaks only the final response. No tool-call narration.
+# For people who want the summary at the end and nothing in between.
+persona: raw
+voice: am_onyx
+speed: 1.10
+verbosity: normal
+narrate_tools: false
+narrate_tool_results: false
+skip_under_chars: 60

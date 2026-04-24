@@ -1,0 +1,10 @@
+# Jarvis: the default "feels like Iron Man" setup.
+# Narrates tool calls, speaks failures, summarises long responses.
+# Use a British male voice; skip tiny acknowledgements.
+persona: jarvis
+voice: bm_george
+speed: 1.05
+verbosity: normal
+narrate_tools: true
+narrate_tool_results: true
+skip_under_chars: 30

@@ -48,13 +48,22 @@ class Daemon:
         self.cfg = config.load()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
 
-    def _voice(self) -> str:
-        return self.persona.voice or self.cfg["voice"]
+    def _voice(self, cfg: dict | None = None, persona: "persona_mod.Persona | None" = None) -> str:
+        cfg = cfg or self.cfg
+        persona = persona or self.persona
+        return persona.voice or cfg["voice"]
 
-    def _speak(self, text: str, cancel: threading.Event) -> None:
-        voice = self._voice()
-        speed = float(self.cfg["speed"])
-        lang = self.cfg["lang"]
+    def _speak(
+        self,
+        text: str,
+        cancel: threading.Event,
+        cfg: dict | None = None,
+        persona: "persona_mod.Persona | None" = None,
+    ) -> None:
+        cfg = cfg or self.cfg
+        voice = self._voice(cfg, persona)
+        speed = float(cfg["speed"])
+        lang = cfg["lang"]
         for chunk in _split(text):
             if cancel.is_set():
                 return
@@ -87,7 +96,12 @@ class Daemon:
                     self._current_proc = None
             path.unlink(missing_ok=True)
 
-    def _start_speech(self, text: str) -> None:
+    def _start_speech(
+        self,
+        text: str,
+        cfg: dict | None = None,
+        persona: "persona_mod.Persona | None" = None,
+    ) -> None:
         with self._lock:
             if self._current_cancel is not None:
                 self._current_cancel.set()
@@ -104,7 +118,9 @@ class Daemon:
         cancel = threading.Event()
         with self._lock:
             self._current_cancel = cancel
-        threading.Thread(target=self._speak, args=(text, cancel), daemon=True).start()
+        threading.Thread(
+            target=self._speak, args=(text, cancel), kwargs={"cfg": cfg, "persona": persona}, daemon=True
+        ).start()
 
     def _cancel_only(self) -> None:
         with self._lock:
@@ -128,13 +144,17 @@ class Daemon:
         session_id = sess_payload.get("id") or "default"
         cwd = sess_payload.get("cwd")
 
+        # resolve per-project config + persona for this event's cwd
+        cfg = config.load(cwd=cwd)
+        persona = self._persona_for(cfg)
+
         # update session state
         session = self.sessions.touch(session_id, cwd=cwd)
 
         # verbosity gate — drop early to avoid Haiku spend on silenced events
         if kind == "tool_pre":
             density = self.sessions.tool_density(session_id)
-            if not verbosity.should_narrate_pre(self.cfg, tag, density):
+            if not verbosity.should_narrate_pre(cfg, tag, density):
                 self.sessions.record_tool_event(session_id)
                 return
             self.sessions.record_tool_event(session_id)
@@ -142,19 +162,19 @@ class Daemon:
             if tag in ("tool_post_failure", "tool_post_command_failed"):
                 self.sessions.note_failure(session_id)
                 session = self.sessions.get(session_id)
-            if not verbosity.should_narrate_post(self.cfg, tag):
+            if not verbosity.should_narrate_post(cfg, tag):
                 return
         elif kind == "final":
             # length-based fallback summarization for template mode
-            budget = verbosity.final_char_budget(self.cfg)
-            if len(neutral) > budget and self.persona.is_raw:
+            budget = verbosity.final_char_budget(cfg)
+            if len(neutral) > budget and persona.is_raw:
                 neutral = verbosity.truncate_to_sentences(neutral, budget)
 
         if not neutral:
             return
 
         # persona rewrite
-        final = self.persona.rewrite(
+        final = persona.rewrite(
             event_kind=kind,
             neutral=neutral,
             tag=tag,
@@ -166,13 +186,19 @@ class Daemon:
 
         # post-rewrite: if Haiku was skipped and final is still over budget,
         # truncate so the user doesn't have to listen to a wall of text
-        if kind == "final" and len(final) > verbosity.final_char_budget(self.cfg):
-            final = verbosity.truncate_to_sentences(final, verbosity.final_char_budget(self.cfg))
+        if kind == "final" and len(final) > verbosity.final_char_budget(cfg):
+            final = verbosity.truncate_to_sentences(final, verbosity.final_char_budget(cfg))
 
         # lightweight topic tracking
         self.sessions.note_topic(session_id, tag)
 
-        self._start_speech(final)
+        self._start_speech(final, cfg=cfg, persona=persona)
+
+    def _persona_for(self, cfg: dict) -> persona_mod.Persona:
+        name = cfg.get("persona", "raw")
+        if getattr(self.persona, "name", None) == name:
+            return self.persona
+        return persona_mod.load(name, config_dir=config.CONFIG_DIR)
 
     def _handle(self, raw: str) -> None:
         try:
