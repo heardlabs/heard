@@ -92,6 +92,26 @@ def daemon() -> None:
     _daemon.run()
 
 
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def run(ctx: typer.Context) -> None:
+    """Wrap any command (aider, cursor-agent, anything) under a PTY and
+    narrate its output. Use when there is no first-class adapter yet.
+
+    Example:  heard run aider
+              heard run -- python manage.py shell
+    """
+    from heard import wrapper
+
+    args = list(ctx.args)
+    if not args:
+        typer.echo("usage: heard run <command> [args...]", err=True)
+        raise typer.Exit(2)
+    code = wrapper.run(args)
+    raise typer.Exit(code)
+
+
 @app.command()
 def preset(name: Optional[str] = typer.Argument(None)) -> None:
     """Apply a bundled preset (jarvis, ambient, silent, chatty) to the global config.
