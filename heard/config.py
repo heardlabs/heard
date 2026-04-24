@@ -25,6 +25,8 @@ DEFAULTS: dict[str, Any] = {
     "lang": "en-us",
     "skip_under_chars": 30,
     "flush_delay_ms": 800,
+    "narrate_tools": True,
+    "narrate_tool_results": True,
 }
 
 

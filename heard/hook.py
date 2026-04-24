@@ -1,23 +1,41 @@
 """Dispatcher invoked by agent CLI hooks.
 
 Each agent CLI's adapter writes a hook entry that runs `python -m heard.hook <agent>`.
+Reads the hook payload from stdin, routes by hook_event_name.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 
-from heard.client import from_claude_code_hook
+from heard import client
 
-DISPATCHERS = {
-    "claude-code": from_claude_code_hook,
+
+def _claude_code() -> None:
+    raw = sys.stdin.read()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return
+    event = data.get("hook_event_name") or ""
+    if event == "Stop":
+        client.handle_cc_stop(data)
+    elif event == "PreToolUse":
+        client.handle_cc_pre_tool(data)
+    elif event == "PostToolUse":
+        client.handle_cc_post_tool(data)
+
+
+AGENTS = {
+    "claude-code": _claude_code,
 }
 
 
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit(0)
-    fn = DISPATCHERS.get(sys.argv[1])
+    fn = AGENTS.get(sys.argv[1])
     if fn is not None:
         fn()
 
