@@ -16,9 +16,11 @@ from __future__ import annotations
 import os
 import threading
 import time
+from collections import deque
 from typing import Any
 
 EVICT_AFTER_S = 6 * 3600  # 6 hours of inactivity
+DENSITY_WINDOW_S = 30
 
 
 class SessionStore:
@@ -37,16 +39,47 @@ class SessionStore:
             self._evict()
             sess = self._sessions.setdefault(
                 session_id,
-                {"repo_name": None, "failure_count": 0, "last_topic": None, "last_seen": time.time()},
+                {
+                    "repo_name": None,
+                    "failure_count": 0,
+                    "last_topic": None,
+                    "last_seen": time.time(),
+                    "_events": deque(),
+                },
             )
             sess["last_seen"] = time.time()
             if cwd and not sess.get("repo_name"):
                 sess["repo_name"] = os.path.basename(cwd.rstrip("/")) or cwd
-            return dict(sess)
+            return {k: v for k, v in sess.items() if not k.startswith("_")}
+
+    def record_tool_event(self, session_id: str) -> None:
+        with self._lock:
+            sess = self._sessions.get(session_id)
+            if sess is None:
+                return
+            events: deque = sess.setdefault("_events", deque())
+            now = time.time()
+            events.append(now)
+            cutoff = now - DENSITY_WINDOW_S
+            while events and events[0] < cutoff:
+                events.popleft()
+
+    def tool_density(self, session_id: str) -> int:
+        with self._lock:
+            sess = self._sessions.get(session_id)
+            if sess is None:
+                return 0
+            events: deque = sess.get("_events") or deque()
+            now = time.time()
+            cutoff = now - DENSITY_WINDOW_S
+            while events and events[0] < cutoff:
+                events.popleft()
+            return len(events)
 
     def get(self, session_id: str) -> dict[str, Any]:
         with self._lock:
-            return dict(self._sessions.get(session_id, {}))
+            sess = self._sessions.get(session_id, {})
+            return {k: v for k, v in sess.items() if not k.startswith("_")}
 
     def note_failure(self, session_id: str) -> None:
         with self._lock:

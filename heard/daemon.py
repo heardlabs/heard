@@ -17,7 +17,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from heard import config, persona as persona_mod
+from heard import config, persona as persona_mod, verbosity
 from heard.session import SessionStore
 from heard.tts.kokoro import KokoroTTS
 
@@ -130,9 +130,25 @@ class Daemon:
 
         # update session state
         session = self.sessions.touch(session_id, cwd=cwd)
-        if kind == "tool_post" and (tag == "tool_post_failure" or tag == "tool_post_command_failed"):
-            self.sessions.note_failure(session_id)
-            session = self.sessions.get(session_id)
+
+        # verbosity gate — drop early to avoid Haiku spend on silenced events
+        if kind == "tool_pre":
+            density = self.sessions.tool_density(session_id)
+            if not verbosity.should_narrate_pre(self.cfg, tag, density):
+                self.sessions.record_tool_event(session_id)
+                return
+            self.sessions.record_tool_event(session_id)
+        elif kind == "tool_post":
+            if tag in ("tool_post_failure", "tool_post_command_failed"):
+                self.sessions.note_failure(session_id)
+                session = self.sessions.get(session_id)
+            if not verbosity.should_narrate_post(self.cfg, tag):
+                return
+        elif kind == "final":
+            # length-based fallback summarization for template mode
+            budget = verbosity.final_char_budget(self.cfg)
+            if len(neutral) > budget and self.persona.is_raw:
+                neutral = verbosity.truncate_to_sentences(neutral, budget)
 
         if not neutral:
             return
@@ -147,6 +163,11 @@ class Daemon:
         )
         if not final:
             return
+
+        # post-rewrite: if Haiku was skipped and final is still over budget,
+        # truncate so the user doesn't have to listen to a wall of text
+        if kind == "final" and len(final) > verbosity.final_char_budget(self.cfg):
+            final = verbosity.truncate_to_sentences(final, verbosity.final_char_budget(self.cfg))
 
         # lightweight topic tracking
         self.sessions.note_topic(session_id, tag)
