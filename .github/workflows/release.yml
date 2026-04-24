@@ -1,0 +1,63 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build-app:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install py2app "setuptools<80"
+          pip install -e .
+
+      - name: Build Heard.app
+        env:
+          PYTHON: python
+        run: |
+          cd packaging
+          ./build-app.sh
+
+      - name: Zip the bundle
+        run: |
+          cd packaging/dist
+          zip -ry "Heard-${GITHUB_REF_NAME:-dev}.zip" Heard.app
+
+      - name: Upload artifact (for workflow_dispatch / non-tag runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: heard-app
+          path: packaging/dist/Heard-*.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/dist/Heard-*.zip
+          body: |
+            ### Install
+
+            1. Download `Heard-${{ github.ref_name }}.zip` below
+            2. Unzip
+            3. Drag `Heard.app` into `/Applications`
+            4. First launch: right-click → Open (unsigned build)
+            5. Grant Accessibility permission when prompted — enables the
+               global silence hotkey (default `Cmd+Shift+.`)
+
+            Prefer the CLI?  `pipx install heard`
+
+            First launch downloads the Kokoro voice model (~350 MB, one-time).
