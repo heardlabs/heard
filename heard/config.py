@@ -28,6 +28,7 @@ DEFAULTS: dict[str, Any] = {
     "narrate_tools": True,
     "narrate_tool_results": True,
     "persona": "raw",
+    "verbosity": "normal",
 }
 
 
