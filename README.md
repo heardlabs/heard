@@ -40,7 +40,8 @@ heard config set voice=am_puck Change a setting (reloads live)
 heard status                   Show daemon + install status
 heard doctor                   Diagnose problems
 heard service install          Auto-start the daemon on login
-heard stop                     Stop current speech + daemon
+heard silence                  Cancel current speech (bind to a hotkey)
+heard stop                     Cancel speech + shut down daemon
 ```
 
 ## Configuration
