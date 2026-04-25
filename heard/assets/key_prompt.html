@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --ink: #1f1922;
+    --ink-dim: #6c5f6a;
+    --ink-faint: #a497a3;
+    --field-bg: #ffffff;
+    --accent: #1a1018;
+    --warn: #b03050;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: transparent;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    font-size: 13px;
+    -webkit-user-select: none;
+    height: 100%;
+  }
+
+  /* Card sits over the native NSVisualEffectView. We add a subtle pink
+     wash over the system glass so brand colour shows through without
+     dominating the wallpaper behind. */
+  .stage {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(80% 60% at 0% 0%, rgba(255, 200, 220, 0.32) 0%, transparent 70%),
+      radial-gradient(80% 70% at 100% 100%, rgba(220, 170, 195, 0.30) 0%, transparent 70%),
+      rgba(255, 230, 240, 0.08);
+    border-radius: 22px;
+  }
+
+  .card {
+    position: absolute;
+    inset: 0;
+    padding: 26px 30px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* Step indicator — three dots at top center */
+  .stepper {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 7px;
+  }
+  .stepper .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(31, 25, 34, 0.18);
+    transition: background 0.25s ease, width 0.25s ease;
+  }
+  .stepper .dot.active { background: var(--ink); width: 18px; border-radius: 999px; }
+  .stepper .dot.done { background: rgba(31, 25, 34, 0.5); }
+
+  /* Top brand row with Skip */
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 20px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    letter-spacing: 0.3px;
+  }
+  .brand .icon {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .brand .icon svg { width: 16px; height: 16px; }
+  .skip-top {
+    background: transparent; border: none;
+    color: var(--ink-dim);
+    font-size: 12.5px; cursor: pointer; font-family: inherit;
+    padding: 4px 0;
+  }
+  .skip-top:hover { color: var(--ink); }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    line-height: 1.15;
+  }
+  p {
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    line-height: 1.55;
+    max-width: 380px;
+  }
+  p .em { color: var(--ink); font-weight: 500; }
+
+  /* Screens — stacked, only one visible at a time */
+  .screen {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .screen.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .screen.gone {
+    display: none;
+  }
+
+  /* Input fields */
+  .field {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--field-bg);
+    border-radius: 999px;
+    padding: 12px 18px;
+    box-shadow: 0 2px 8px rgba(60, 30, 50, 0.05);
+  }
+  .field .leading {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.05);
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .field svg { width: 13px; height: 13px; color: var(--ink-dim); }
+  .field input {
+    flex: 1;
+    border: none; background: transparent; outline: none;
+    font-size: 13px;
+    color: var(--ink);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .field input::placeholder { color: var(--ink-faint); }
+  .field-label {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin-left: 16px;
+    margin-bottom: -10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  /* Footer row with primary action */
+  .footer {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: auto;
+    gap: 16px;
+  }
+  .legal {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    line-height: 1.45;
+    max-width: 260px;
+  }
+
+  .next {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+    box-shadow: 0 6px 18px rgba(40, 20, 30, 0.25);
+  }
+  .next:hover { opacity: 0.9; }
+  .next:active { transform: scale(0.95); }
+  .next svg { width: 16px; height: 16px; }
+
+  /* Welcome — large hero text */
+  .hero {
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.8px;
+    line-height: 1.05;
+    margin-top: 4px;
+  }
+  .hero .accent { color: var(--ink-dim); }
+
+  /* Low-RAM notice — shown on screen 2 only when injected by Python */
+  .ram-notice {
+    background: rgba(255, 222, 173, 0.4);
+    border: 1px solid rgba(180, 110, 60, 0.25);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: #5a3a20;
+    line-height: 1.5;
+  }
+  .ram-notice .em { color: #2a1a0a; font-weight: 500; }
+
+  /* Hotkey screen — single-key shortcut, two actions (tap vs hold) */
+  .single-key {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 6px; margin: 8px 0 4px;
+  }
+  .keycap.large {
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-size: 22px;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+    min-width: 56px;
+    padding: 12px 14px;
+    text-align: center;
+    color: var(--ink);
+    box-shadow: 0 2px 0 rgba(0, 0, 0, 0.06);
+  }
+  .keycap-label {
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+  }
+  .actions {
+    display: flex; gap: 24px; margin-top: 6px;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+  }
+  .actions b { color: var(--ink); font-weight: 600; }
+
+  /* Drag handle — top of card always draggable */
+  .drag-handle {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 36px;
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="drag-handle" id="drag-handle"></div>
+
+    <div class="stepper">
+      <div class="dot active" id="dot-1"></div>
+      <div class="dot" id="dot-2"></div>
+      <div class="dot" id="dot-3"></div>
+    </div>
+
+    <div class="card">
+      <div class="top">
+        <div class="brand">
+          <span class="icon">
+            <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+              <g fill="white">
+                <circle cx="11"   cy="4"    r="1.3"/>
+                <circle cx="15.95" cy="6.05" r="1.3"/>
+                <circle cx="18"   cy="11"   r="1.3"/>
+                <circle cx="15.95" cy="15.95" r="1.3"/>
+                <circle cx="11"   cy="18"   r="1.3"/>
+                <circle cx="6.05" cy="15.95" r="1.3"/>
+                <circle cx="4"    cy="11"   r="1.3"/>
+                <circle cx="6.05" cy="6.05" r="1.3"/>
+              </g>
+            </svg>
+          </span>
+          <span>heard_</span>
+        </div>
+        <button class="skip-top" onclick="finish()">Skip</button>
+      </div>
+
+      <!-- ─────── Screen 1: API key ─────── -->
+      <div class="screen active" id="screen-1">
+        <h1>Add an API key to make me alive.</h1>
+        <p>
+          Heard rewrites each line through Claude Haiku 4.5 or GPT-4o-mini.
+          Both run about $1/month at typical use. Without a key, narration
+          falls back to templates and sounds stiff.
+        </p>
+
+        <label class="field">
+          <span class="leading">
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M9 1a4 4 0 0 1 1.3 7.78L11 9l-1 1v1H9v1H8v1H6v-1.5l-.5-.5L5 11v-1l3.31-.37A4 4 0 0 1 9 1zm0 1.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>
+          </span>
+          <input id="llm-key" type="password" placeholder="sk-ant-… or sk-…" autocomplete="off" spellcheck="false" />
+        </label>
+
+        <div class="footer">
+          <div class="legal">Stored on your Mac. Never sent anywhere except the API itself.</div>
+          <button class="next" onclick="goto(2)" aria-label="Continue">
+            <svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h8M8 4l4 4-4 4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ─────── Screen 2: Voice ─────── -->
+      <div class="screen gone" id="screen-2">
+        <h1>Pick a voice.</h1>
+        <p>
+          By default I use <span class="em">Kokoro</span> — free, local,
+          private. For richer voices, paste your <span class="em">ElevenLabs</span>
+          key.
+        </p>
+
+        <div class="ram-notice" style="display: {{LOW_RAM_NOTICE_DISPLAY}};">
+          Heads up — this Mac has <span class="em">{{LOW_RAM_GB}} GB</span> of RAM.
+          Kokoro runs best on 12 GB+. Paste an ElevenLabs key for the
+          smoothest experience.
+        </div>
+
+        <label class="field">
+          <span class="leading">
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a3 3 0 0 0-3 3v3a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zm-4 6.5a4 4 0 0 0 3.25 3.93V13H6v1h4v-1H8.75v-.57A4 4 0 0 0 12 8.5h-1a3 3 0 0 1-6 0H4z"/></svg>
+          </span>
+          <input id="el-key" type="password" placeholder="ElevenLabs key (optional)" autocomplete="off" spellcheck="false" />
+        </label>
+
+        <div class="footer">
+          <div class="legal">Activates when ElevenLabs support ships.</div>
+          <button class="next" onclick="goto(3)" aria-label="Continue">
+            <svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h8M8 4l4 4-4 4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ─────── Screen 3: Hotkey ─────── -->
+      <div class="screen gone" id="screen-3">
+        <h1>One key. One hand.</h1>
+        <p>
+          On the right side of your spacebar — your right
+          <span class="em">option</span> key.
+        </p>
+
+        <div class="single-key">
+          <span class="keycap large">⌥</span>
+          <span class="keycap-label">right option</span>
+        </div>
+
+        <div class="actions">
+          <span><b>Tap</b> → silence</span>
+          <span><b>Long press</b> → replay</span>
+        </div>
+
+        <p>
+          macOS will ask once for Accessibility access — <span class="em">click Allow</span>.
+        </p>
+        <div class="footer">
+          <div class="legal">You'll find me in the menu bar from now on.</div>
+          <button class="next" onclick="finish()" aria-label="Done">
+            <svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3.5 3.5L13 5"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  var current = 1;
+  function setStep(n) {
+    current = n;
+    for (var i = 1; i <= 3; i++) {
+      var dot = document.getElementById('dot-' + i);
+      dot.classList.remove('active', 'done');
+      if (i < n) dot.classList.add('done');
+      if (i === n) dot.classList.add('active');
+      var screen = document.getElementById('screen-' + i);
+      screen.classList.toggle('active', i === n);
+      if (i === n) {
+        screen.classList.remove('gone');
+      } else {
+        // delay hiding to let fade-out finish
+        setTimeout(function (s) { return function() { if (!s.classList.contains('active')) s.classList.add('gone'); }; }(screen), 280);
+      }
+    }
+    if (n === 1) {
+      setTimeout(function () { document.getElementById('llm-key').focus(); }, 320);
+    }
+    if (n === 2) {
+      setTimeout(function () { document.getElementById('el-key').focus(); }, 320);
+    }
+  }
+  function goto(n) { setStep(n); }
+  function post(action, payload) {
+    try {
+      window.webkit.messageHandlers.heard.postMessage({ action: action, payload: payload || {} });
+    } catch (e) {}
+  }
+  function finish() {
+    var llm = (document.getElementById('llm-key') || {}).value || '';
+    var el = (document.getElementById('el-key') || {}).value || '';
+    post('finish', { llm: llm.trim(), elevenlabs: el.trim() });
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      if (current < 3) { e.preventDefault(); goto(current + 1); }
+      else { e.preventDefault(); finish(); }
+    }
+    if (e.key === 'Escape') { e.preventDefault(); finish(); }
+  });
+  // Drag: clicking on background or drag-handle drags the window
+  document.addEventListener('mousedown', function (e) {
+    if (e.target.closest('button, input, label, .field')) return;
+    post('drag', {});
+  });
+</script>
+</body>
+</html>
