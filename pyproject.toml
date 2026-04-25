@@ -30,6 +30,11 @@ dependencies = [
     "anthropic>=0.40.0",
     "pynput>=1.7",
     "rumps>=0.4",
+    # Explicit pyobjc frameworks for the WKWebView onboarding window.
+    # rumps brings pyobjc-core but not these — without them, importing
+    # heard.key_window fails on a fresh CI runner.
+    "pyobjc-framework-Cocoa>=10.0",
+    "pyobjc-framework-WebKit>=10.0",
 ]
 
 [project.optional-dependencies]
