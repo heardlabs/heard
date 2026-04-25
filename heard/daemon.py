@@ -46,7 +46,6 @@ class Daemon:
         self._current_cancel: threading.Event | None = None
         self._last_spoken: str = ""
         self._hotkey_listener: object | None = None
-        self._replay_hotkey_listener: object | None = None
         self._start_hotkey()
 
     def _start_hotkey(self) -> None:
@@ -64,11 +63,15 @@ class Daemon:
                 file=sys.stderr,
                 flush=True,
             )
+
+        bindings: dict = {}
         silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
-        self._hotkey_listener = hotkey.start(silence, self._cancel_only)
+        if silence:
+            bindings[silence] = self._cancel_only
         replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
         if replay:
-            self._replay_hotkey_listener = hotkey.start(replay, self._replay_last)
+            bindings[replay] = self._replay_last
+        self._hotkey_listener = hotkey.start(bindings)
 
     def _reload_config(self) -> None:
         old_silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
@@ -81,14 +84,12 @@ class Daemon:
         new_replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
         new_enabled = self.cfg.get("hotkey_enabled", True)
         if (new_silence, new_replay, new_enabled) != (old_silence, old_replay, old_enabled):
-            for listener in (self._hotkey_listener, self._replay_hotkey_listener):
-                if listener is not None:
-                    try:
-                        listener.stop()
-                    except Exception:
-                        pass
+            if self._hotkey_listener is not None:
+                try:
+                    self._hotkey_listener.stop()
+                except Exception:
+                    pass
             self._hotkey_listener = None
-            self._replay_hotkey_listener = None
             self._start_hotkey()
 
     def _voice(self, cfg: dict | None = None, persona: persona_mod.Persona | None = None) -> str:

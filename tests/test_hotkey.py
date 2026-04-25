@@ -8,9 +8,10 @@ from unittest.mock import MagicMock
 from heard import hotkey
 
 
-def test_default_binding_constant():
-    # Anchor so config defaults don't silently drift.
+def test_default_bindings_constants():
+    # Anchors so config defaults don't silently drift.
     assert hotkey.DEFAULT_BINDING == "<cmd>+<shift>+."
+    assert hotkey.DEFAULT_REPLAY_BINDING == "<cmd>+<shift>+,"
 
 
 def test_start_returns_none_on_failure(monkeypatch):
@@ -18,19 +19,22 @@ def test_start_returns_none_on_failure(monkeypatch):
         raise RuntimeError("no accessibility")
 
     monkeypatch.setattr(hotkey, "_install", boom)
-    result = hotkey.start("<cmd>+.", lambda: None)
+    result = hotkey.start({"<cmd>+.": lambda: None})
     assert result is None
+
+
+def test_start_returns_none_for_empty_bindings():
+    assert hotkey.start({}) is None
 
 
 def test_start_returns_listener_on_success(monkeypatch):
     sentinel = MagicMock(name="listener")
-    monkeypatch.setattr(hotkey, "_install", lambda b, cb: sentinel)
-    result = hotkey.start("<cmd>+.", lambda: None)
+    monkeypatch.setattr(hotkey, "_install", lambda b: sentinel)
+    result = hotkey.start({"<cmd>+.": lambda: None})
     assert result is sentinel
 
 
-def test_install_uses_pynput_global_hotkeys(monkeypatch):
-    # Construct a fake pynput.keyboard module so _install can import it.
+def test_install_uses_pynput_global_hotkeys_with_multiple_bindings(monkeypatch):
     fake_keyboard = MagicMock()
     fake_listener = MagicMock()
     fake_keyboard.GlobalHotKeys.return_value = fake_listener
@@ -40,17 +44,22 @@ def test_install_uses_pynput_global_hotkeys(monkeypatch):
     monkeypatch.setitem(sys.modules, "pynput", fake_pynput)
     monkeypatch.setitem(sys.modules, "pynput.keyboard", fake_keyboard)
 
-    triggered = {"n": 0}
+    triggered = {"a": 0, "b": 0}
 
-    def cb():
-        triggered["n"] += 1
+    def cb_a():
+        triggered["a"] += 1
 
-    listener = hotkey._install("<cmd>+.", cb)
+    def cb_b():
+        triggered["b"] += 1
+
+    listener = hotkey._install({"<cmd>+.": cb_a, "<cmd>+,": cb_b})
     assert listener is fake_listener
     fake_keyboard.GlobalHotKeys.assert_called_once()
     call_args = fake_keyboard.GlobalHotKeys.call_args[0][0]
     assert "<cmd>+." in call_args
-    # Invoke the registered callable — it wraps the user callback in a try/except
+    assert "<cmd>+," in call_args
+    # invoke each wrapped callable
     call_args["<cmd>+."]()
-    assert triggered["n"] == 1
+    call_args["<cmd>+,"]()
+    assert triggered == {"a": 1, "b": 1}
     fake_listener.start.assert_called_once()

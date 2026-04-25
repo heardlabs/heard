@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- App icon: 8 white dots on a dark circular field. Same shape as
+       the menu bar template, scaled up. -->
+  <circle cx="256" cy="256" r="248" fill="#1a1a1a"/>
+  <g fill="#f5f5f5">
+    <circle cx="256" cy="116" r="18"/>
+    <circle cx="355" cy="157" r="18"/>
+    <circle cx="396" cy="256" r="18"/>
+    <circle cx="355" cy="355" r="18"/>
+    <circle cx="256" cy="396" r="18"/>
+    <circle cx="157" cy="355" r="18"/>
+    <circle cx="116" cy="256" r="18"/>
+    <circle cx="157" cy="157" r="18"/>
+  </g>
+</svg>

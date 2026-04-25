@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 from setuptools import setup  # noqa: E402
 
 APP_NAME = "Heard"
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.2.3"
 APP_BUNDLE_ID = "dev.heard.menubar"
 
 APP = [os.path.join(HERE, "app_entry.py")]
@@ -44,6 +44,13 @@ DATA_FILES = [
             os.path.join(ROOT, "heard/presets/ambient.yaml"),
             os.path.join(ROOT, "heard/presets/silent.yaml"),
             os.path.join(ROOT, "heard/presets/chatty.yaml"),
+        ],
+    ),
+    (
+        "heard/assets",
+        [
+            os.path.join(ROOT, "heard/assets/menubar.png"),
+            os.path.join(ROOT, "heard/assets/menubar@2x.png"),
         ],
     ),
 ]

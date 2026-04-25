@@ -28,14 +28,20 @@ from heard import persona as persona_mod
 from heard.presets import list_bundled as list_presets
 from heard.presets import load as load_preset
 
-TITLE_IDLE = "🎙"
-TITLE_MUTED = "🔇"
-TITLE_DOWN = "⚠️"
+ASSETS_DIR = Path(__file__).parent / "assets"
+ICON_PATH = ASSETS_DIR / "menubar.png"
 
 
 class HeardApp(rumps.App):
     def __init__(self) -> None:
-        super().__init__(TITLE_IDLE, quit_button=None)
+        # template=True asks macOS to auto-tint the icon to match the menu
+        # bar (white in dark mode, black in light mode). Falls back to a
+        # short text title if the icon asset wasn't bundled (source builds
+        # without rsvg-convert available).
+        if ICON_PATH.exists():
+            super().__init__("Heard", icon=str(ICON_PATH), template=True, quit_button=None)
+        else:
+            super().__init__("Heard", title="Heard", quit_button=None)
         self._build_menu()
         self.refresh(None)
         rumps.Timer(self.refresh, 3).start()
@@ -90,14 +96,13 @@ class HeardApp(rumps.App):
         cfg = config.load()
         alive = client.is_daemon_alive()
 
+        # Icon stays constant; state communicated through the status_item
+        # text inside the dropdown. Keeps the menu bar tidy.
         if not alive:
-            self.title = TITLE_DOWN
             self.status_item.title = "daemon stopped"
         elif not cfg.get("narrate_tools", True):
-            self.title = TITLE_MUTED
             self.status_item.title = self._status_line(cfg, "muted")
         else:
-            self.title = TITLE_IDLE
             self.status_item.title = self._status_line(cfg, "on")
 
         active_preset = cfg.get("persona", "raw")
