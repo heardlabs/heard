@@ -23,10 +23,10 @@ import tempfile
 import threading
 from pathlib import Path
 
-from heard import accessibility, config, hotkey, verbosity
+from heard import accessibility, config, hotkey, notify, verbosity
 from heard import persona as persona_mod
 from heard.session import SessionStore
-from heard.tts.elevenlabs import ElevenLabsTTS
+from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
 
 
 def _split(text: str) -> list[str]:
@@ -166,7 +166,34 @@ class Daemon:
             path = Path(path_str)
             try:
                 self.tts.synth_to_file(chunk, voice, speed, lang, path)
+            except ElevenLabsError as e:
+                # Surface to the user — silent failure here means the
+                # narration just stops with no explanation. Most likely
+                # cause is an invalid key, so guide them there.
+                msg = str(e)
+                if "401" in msg or "invalid_api_key" in msg.lower():
+                    notify.notify(
+                        "Heard — ElevenLabs key invalid",
+                        "Your ElevenLabs key was rejected. Open Heard from the menu bar to fix it.",
+                        kind="elevenlabs_auth",
+                    )
+                else:
+                    notify.notify(
+                        "Heard — voice service unreachable",
+                        "ElevenLabs didn't respond. Check your connection or your account.",
+                        kind="elevenlabs_network",
+                    )
+                print(f"synth error: {e}", file=sys.stderr, flush=True)
+                path.unlink(missing_ok=True)
+                continue
             except Exception as e:
+                # Generic synth failure — Kokoro download issue, disk
+                # full, etc. One notification per session via dedup tag.
+                notify.notify(
+                    "Heard — couldn't generate audio",
+                    "Run `heard doctor` for details.",
+                    kind="synth_generic",
+                )
                 print(f"synth error: {e}", file=sys.stderr, flush=True)
                 path.unlink(missing_ok=True)
                 continue
