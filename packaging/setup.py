@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 from setuptools import setup  # noqa: E402
 
 APP_NAME = "Heard"
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 APP_BUNDLE_ID = "dev.heard.menubar"
 
 APP = [os.path.join(HERE, "app_entry.py")]
@@ -51,6 +51,7 @@ DATA_FILES = [
         [
             os.path.join(ROOT, "heard/assets/menubar.png"),
             os.path.join(ROOT, "heard/assets/menubar@2x.png"),
+            os.path.join(ROOT, "heard/assets/key_prompt.html"),
         ],
     ),
 ]
@@ -70,11 +71,17 @@ OPTIONS = {
     },
     "packages": [
         "heard",
+        # Bundle the Kokoro stack so users on the free tier get a working
+        # local backend without a second pip install. The model FILES
+        # (kokoro-v1.0.onnx, voices-v1.0.bin, ~337 MB) are NOT bundled —
+        # they download to ~/Library/Application Support/heard/models/
+        # on first synth call only if the user opted into Kokoro.
         "kokoro_onnx",
         "onnxruntime",
         "soundfile",
-        # _soundfile_data ships libsndfile as a native dylib — must stay on
-        # the filesystem (not zipped) so ctypes can dlopen it.
+        # _soundfile_data ships libsndfile as a native dylib — must stay
+        # on the filesystem (not zipped) so ctypes can dlopen it. Patched
+        # post-build by build-app.sh.
         "_soundfile_data",
         "rumps",
         "pynput",
@@ -84,8 +91,14 @@ OPTIONS = {
         "platformdirs",
         "rich",
     ],
-    "includes": ["pkg_resources"],
-    "excludes": ["tkinter", "matplotlib", "pytest"],
+    "includes": ["pkg_resources", "WebKit"],
+    "excludes": [
+        "tkinter",
+        "matplotlib",
+        "pytest",
+        "scipy",
+        "torch",
+    ],
     "iconfile": os.path.join(HERE, "heard.icns"),
     # py2app + Python 3.12/3.13 can miss libffi (used by ctypes). We pin
     # the path explicitly when one is findable alongside the interpreter.

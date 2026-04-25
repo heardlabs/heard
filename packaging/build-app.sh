@@ -62,9 +62,10 @@ if [[ ! -f "$FRAMEWORKS/libffi.8.dylib" ]]; then
 fi
 
 # libsndfile patch: py2app packages soundfile into the zip archive but the
-# _soundfile_data/libsndfile_*.dylib can't be dlopen'd from inside a zip. We
-# copy it out to Contents/Resources/_soundfile_data/ where soundfile's own
-# lookup path will find it.
+# _soundfile_data/libsndfile_*.dylib can't be dlopen'd from inside a zip.
+# We copy it out to Contents/Resources/_soundfile_data/ where soundfile's
+# own lookup path will find it. Only the Kokoro backend needs this — the
+# ElevenLabs path streams MP3 directly to afplay with no decoding.
 echo "==> patching libsndfile"
 SOUNDFILE_SRC=$("$PY" -c "import os, _soundfile_data; print(os.path.dirname(_soundfile_data.__file__))" 2>/dev/null || true)
 if [[ -n "$SOUNDFILE_SRC" && -d "$SOUNDFILE_SRC" ]]; then
@@ -72,9 +73,9 @@ if [[ -n "$SOUNDFILE_SRC" && -d "$SOUNDFILE_SRC" ]]; then
   mkdir -p "$SOUNDFILE_DEST"
   cp "$SOUNDFILE_SRC"/libsndfile_*.dylib "$SOUNDFILE_DEST"/ 2>/dev/null || true
   echo "   copied from $SOUNDFILE_SRC → $SOUNDFILE_DEST"
-  ls "$SOUNDFILE_DEST"
+  ls "$SOUNDFILE_DEST" 2>/dev/null || true
 else
-  echo "WARN: _soundfile_data not locatable; soundfile will fail to load at runtime." >&2
+  echo "WARN: _soundfile_data not locatable; Kokoro backend will fail at runtime." >&2
 fi
 
 echo "==> bundle ready at $BUNDLE"
