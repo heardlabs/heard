@@ -6,7 +6,15 @@ get substituted to *something* sensible (i.e. hidden)."""
 
 from __future__ import annotations
 
-from heard import key_window
+import pytest
+
+# heard.key_window pulls in pyobjc's WebKit + AppKit at import time.
+# On a developer machine without those (Linux, or a CI runner before
+# the deps install) we want collection to skip rather than crash.
+pytest.importorskip("WebKit")
+pytest.importorskip("AppKit")
+
+from heard import key_window  # noqa: E402 — must follow importorskip
 
 
 def test_total_memory_returns_float_or_none():
