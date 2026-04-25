@@ -20,29 +20,45 @@ DEFAULT_BINDING = "<cmd>+<shift>+."
 DEFAULT_REPLAY_BINDING = "<cmd>+<shift>+,"
 
 
-def _install(binding: str, on_trigger: Callable[[], None]):
-    """Internal: register the binding and return the listener object.
-    Raises on setup failure so the caller can decide how loud to be."""
+def _install(bindings: dict[str, Callable[[], None]]):
+    """Register one or more global hotkey bindings on a SINGLE pynput
+    listener. macOS HIToolbox's Text Services Manager isn't thread-safe;
+    multiple listeners can race on shared keyboard-layout state and
+    SIGSEGV. One listener avoids that entirely."""
     from pynput import keyboard  # imported lazily so tests can mock
 
-    def _safe():
-        try:
-            on_trigger()
-        except Exception as e:
-            print(f"hotkey trigger error: {e}", file=sys.stderr, flush=True)
+    safe: dict[str, Callable[[], None]] = {}
 
-    listener = keyboard.GlobalHotKeys({binding: _safe})
+    def _wrap(fn):
+        def runner():
+            try:
+                fn()
+            except Exception as e:
+                print(f"hotkey trigger error: {e}", file=sys.stderr, flush=True)
+
+        return runner
+
+    for binding, fn in bindings.items():
+        safe[binding] = _wrap(fn)
+
+    listener = keyboard.GlobalHotKeys(safe)
     listener.daemon = True
     listener.start()
     return listener
 
 
-def start(binding: str, on_trigger: Callable[[], None]) -> object | None:
-    """Start a background hotkey listener. Returns the listener object (for
-    later .stop()) or None if setup failed. Never raises."""
+def start(bindings: dict[str, Callable[[], None]]) -> object | None:
+    """Start a single pynput listener handling all given bindings.
+
+    `bindings` maps a pynput-format string ("<cmd>+<shift>+.") to the
+    function to invoke. Returns the listener (for .stop()) or None on
+    failure. Never raises."""
+    if not bindings:
+        return None
     try:
-        listener = _install(binding, on_trigger)
-        print(f"hotkey listener started: {binding}", flush=True)
+        listener = _install(bindings)
+        for b in bindings:
+            print(f"hotkey listener started: {b}", flush=True)
         return listener
     except Exception as e:
         msg = str(e).lower()

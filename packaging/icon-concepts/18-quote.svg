@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">
+  <!-- Two stylised quote marks — Heard "speaks back" what your agent
+       said, like a quotation. -->
+  <g fill="black">
+    <path d="M5  6  q-2 1 -2 4 q0 2 2 3 l1 -1 q-1 -1 -1 -2 q0 -1 1 -2 z"/>
+    <path d="M11 6  q-2 1 -2 4 q0 2 2 3 l1 -1 q-1 -1 -1 -2 q0 -1 1 -2 z"/>
+  </g>
+</svg>
