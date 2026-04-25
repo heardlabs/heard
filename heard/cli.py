@@ -10,7 +10,7 @@ from heard import client, config, onboarding, service
 from heard.adapters import ADAPTERS
 from heard.presets import list_bundled as list_presets
 from heard.presets import load as load_preset
-from heard.tts.kokoro import KokoroTTS
+from heard.tts.elevenlabs import ElevenLabsTTS
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Heard — speak your agent's replies.")
 config_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Manage configuration.")
@@ -26,11 +26,28 @@ def say(text: str) -> None:
 
 
 @app.command()
+def demo() -> None:
+    """Play a scripted ~20-second exchange so you can hear Heard before
+    installing the Claude Code hook. Uses your current persona + voice."""
+    from heard import demo as demo_mod
+
+    if not client.ensure_daemon():
+        typer.echo(
+            "Heard daemon couldn't start. Run `heard doctor` for details.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo("Heard demo — speaking now (Ctrl+C to stop).")
+    sent = demo_mod.run_demo(sender=client.send_event)
+    typer.echo(f"Done. Played {sent} lines.")
+
+
+@app.command()
 def voices() -> None:
     """List available voices."""
-    config.ensure_dirs()
-    tts = KokoroTTS(config.MODELS_DIR)
-    tts.ensure_downloaded()
+    cfg = config.load()
+    tts = ElevenLabsTTS(api_key=cfg.get("elevenlabs_api_key", ""))
     for v in tts.list_voices():
         typer.echo(v)
 
@@ -38,21 +55,17 @@ def voices() -> None:
 @app.command()
 def install(
     agent: str,
-    skip_download: bool = typer.Option(False, "--skip-download", help="Don't download the voice model now."),
+    skip_download: bool = typer.Option(
+        False, "--skip-download", help="Deprecated; no model download needed.", hidden=True
+    ),
 ) -> None:
-    """Install the hook for AGENT (e.g. 'claude-code'). Also fetches the voice
-    model on first install so the first narration has no surprise delay.
-    """
+    """Install the hook for AGENT (e.g. 'claude-code')."""
+    _ = skip_download  # kept for backwards-compat with old scripts
     adapter = ADAPTERS.get(agent)
     if adapter is None:
         typer.echo(f"Unknown agent: {agent}. Supported: {', '.join(ADAPTERS)}", err=True)
         raise typer.Exit(1)
-    if not skip_download:
-        config.ensure_dirs()
-        tts = KokoroTTS(config.MODELS_DIR)
-        if not tts.is_downloaded():
-            typer.echo("One-time setup: downloading the voice model (~350 MB total).")
-            tts.ensure_downloaded()
+    config.ensure_dirs()
     adapter.install()
     onboarding.after_install(agent)
 
