@@ -2,7 +2,7 @@
 # Only narrates long-running tool calls (tests, builds) and failures.
 # Keeps the final response but clamps to short summaries.
 persona: raw
-voice: am_onyx
+voice: george
 speed: 1.10
 verbosity: low
 narrate_tools: true

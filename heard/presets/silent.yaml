@@ -1,7 +1,7 @@
 # Silent: speaks only the final response. No tool-call narration.
 # For people who want the summary at the end and nothing in between.
 persona: raw
-voice: am_onyx
+voice: george
 speed: 1.10
 verbosity: normal
 narrate_tools: false

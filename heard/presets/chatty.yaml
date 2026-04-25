@@ -1,7 +1,7 @@
 # Chatty: Jarvis persona but talks about everything.
 # Good for demos and for people who like a running commentary.
 persona: jarvis
-voice: am_onyx
+voice: george
 speed: 1.05
 verbosity: high
 narrate_tools: true
