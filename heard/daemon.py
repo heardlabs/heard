@@ -297,8 +297,12 @@ class Daemon:
             config.PID_PATH.unlink(missing_ok=True)
             sys.exit(0)
 
-        signal.signal(signal.SIGTERM, shutdown)
-        signal.signal(signal.SIGINT, shutdown)
+        # signal.signal can only be called from the main thread. When the
+        # daemon runs embedded in the menu bar process (NSApp on main, daemon
+        # in a worker thread), skip it — the NSApp lifecycle handles cleanup.
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGTERM, shutdown)
+            signal.signal(signal.SIGINT, shutdown)
 
         while True:
             conn, _ = srv.accept()

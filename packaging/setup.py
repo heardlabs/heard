@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 from setuptools import setup  # noqa: E402
 
 APP_NAME = "Heard"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 APP_BUNDLE_ID = "dev.heard.menubar"
 
 APP = [os.path.join(HERE, "app_entry.py")]
@@ -66,6 +66,9 @@ OPTIONS = {
         "kokoro_onnx",
         "onnxruntime",
         "soundfile",
+        # _soundfile_data ships libsndfile as a native dylib — must stay on
+        # the filesystem (not zipped) so ctypes can dlopen it.
+        "_soundfile_data",
         "rumps",
         "pynput",
         "anthropic",
