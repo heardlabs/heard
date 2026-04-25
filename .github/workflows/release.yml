@@ -16,19 +16,19 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Install build deps
         run: |
-          brew install librsvg
           python -m pip install --upgrade pip
           pip install py2app "setuptools<80"
-          pip install -e .
+          # Install Heard + its runtime deps so py2app can collect them.
+          pip install -e ".[dev]"
 
-      - name: Build icon
+      - name: Test gate (don't ship a broken build)
         run: |
-          cd packaging
-          ./build-icon.sh
+          ruff check heard/ tests/
+          pytest -q
 
       - name: Build Heard.app
         env:
@@ -60,10 +60,36 @@ jobs:
             1. Download `Heard-${{ github.ref_name }}.zip` below
             2. Unzip
             3. Drag `Heard.app` into `/Applications`
-            4. First launch: right-click → Open (unsigned build)
-            5. Grant Accessibility permission when prompted — enables the
-               global silence hotkey (default `Cmd+Shift+.`)
+            4. **First launch:** right-click `Heard.app` → **Open** (unsigned build, so macOS Gatekeeper will refuse a normal double-click — right-click bypasses that one time)
+            5. The onboarding window walks you through three screens: API key (optional, for the Jarvis persona), voice, and the silence/replay hotkey
+            6. Run `heard install claude-code` in your terminal to wire Heard up to your agent
 
-            Prefer the CLI?  `pipx install heard`
+            ### Voice — two options
 
-            First launch downloads the Kokoro voice model (~350 MB, one-time).
+            - **Free local (Kokoro)** — skip the ElevenLabs key field in onboarding. Downloads a ~337 MB voice model on first synth call. Best on Macs with 12 GB+ RAM.
+            - **Premium (ElevenLabs)** — paste your `sk_…` key on screen 2 of onboarding. Tiny daemon (~80 MB), pay-per-character (typically pennies a day), best voice quality.
+
+            ### Hotkey
+
+            **Right Option** key (right of your spacebar):
+            - **Tap** — silence the current narration
+            - **Long-press** (≥ 400 ms) — replay the last line
+
+            macOS will ask once for Accessibility access — click Allow.
+
+            ### Try without installing
+
+            ```bash
+            heard demo
+            ```
+
+            Plays a scripted ~20-second exchange so you can hear the voice + persona before wiring up any agent.
+
+            ### CLI alternative
+
+            ```bash
+            pipx install heard
+            heard install claude-code
+            ```
+
+            See the [README](https://github.com/sodiumsun/heard#readme) for full docs and troubleshooting.
