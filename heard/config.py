@@ -42,6 +42,7 @@ DEFAULTS: dict[str, Any] = {
     "verbosity": "normal",
     "hotkey_enabled": True,
     "hotkey_silence": "<cmd>+<shift>+.",
+    "hotkey_replay": "<cmd>+<shift>+,",
 }
 
 

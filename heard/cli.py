@@ -168,11 +168,22 @@ def ui() -> None:
 def silence() -> None:
     """Cancel current speech. Daemon stays running so the next response is fast.
 
-    Bind this to a global hotkey so you can cut Heard off mid-sentence
-    (see docs/hotkeys.md for Karabiner / BetterTouchTool / Hammerspoon setup).
+    Default hotkey: ⌘⇧. Configurable via `hotkey_silence`.
     """
     try:
         client.send({"cmd": "stop"})
+    except Exception:
+        pass
+
+
+@app.command()
+def replay() -> None:
+    """Re-speak the last narration (useful if you stepped away during a call).
+
+    Default hotkey: ⌘⇧, Configurable via `hotkey_replay`.
+    """
+    try:
+        client.send({"cmd": "replay"})
     except Exception:
         pass
 
