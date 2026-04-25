@@ -31,7 +31,10 @@ PID_PATH = DATA_DIR / "daemon.pid"
 PROJECT_FILE = ".heard.yaml"
 
 DEFAULTS: dict[str, Any] = {
-    "voice": "am_onyx",
+    # ElevenLabs voice alias (see heard.tts.elevenlabs._VOICE_ALIASES) or
+    # a 20-char ElevenLabs voice_id. Defaults to George — male British,
+    # fits the Jarvis persona.
+    "voice": "george",
     "speed": 1.05,
     "lang": "en-us",
     "skip_under_chars": 30,
@@ -41,8 +44,29 @@ DEFAULTS: dict[str, Any] = {
     "persona": "raw",
     "verbosity": "normal",
     "hotkey_enabled": True,
+    # Hotkey mode:
+    #   "taphold" — single key, tap = silence, hold ≥ threshold = replay.
+    #   "combo"   — chorded shortcuts, configured via hotkey_silence /
+    #               hotkey_replay below.
+    "hotkey_mode": "taphold",
+    # taphold defaults: Right Option, ergonomic + rarely used by other apps.
+    # Friendly key names: right_option, left_option, right_cmd, right_ctrl,
+    # right_shift, caps_lock (and their _l/_r counterparts).
+    "hotkey_taphold_key": "right_option",
+    "hotkey_taphold_threshold_ms": 400,
+    # Used only when hotkey_mode == "combo". Keep as escape hatches.
     "hotkey_silence": "<cmd>+<shift>+.",
     "hotkey_replay": "<cmd>+<shift>+,",
+    # Empty by default; the persona layer falls back to env vars
+    # (ANTHROPIC_API_KEY / OPENAI_API_KEY) if these are unset, then to
+    # template mode if neither is available. Stored plain-text under the
+    # user-only-readable config dir.
+    "anthropic_api_key": "",
+    "openai_api_key": "",
+    "elevenlabs_api_key": "",
+    # Set to True after the user finishes the welcome flow (or skips it),
+    # so we never re-prompt them.
+    "onboarded": False,
 }
 
 
