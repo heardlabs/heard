@@ -17,6 +17,7 @@ import threading
 from collections.abc import Callable
 
 DEFAULT_BINDING = "<cmd>+<shift>+."
+DEFAULT_REPLAY_BINDING = "<cmd>+<shift>+,"
 
 
 def _install(binding: str, on_trigger: Callable[[], None]):

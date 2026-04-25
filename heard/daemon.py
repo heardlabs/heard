@@ -17,7 +17,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from heard import config, hotkey, verbosity
+from heard import accessibility, config, hotkey, verbosity
 from heard import persona as persona_mod
 from heard.session import SessionStore
 from heard.tts.kokoro import KokoroTTS
@@ -44,30 +44,51 @@ class Daemon:
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
         self._current_cancel: threading.Event | None = None
+        self._last_spoken: str = ""
         self._hotkey_listener: object | None = None
+        self._replay_hotkey_listener: object | None = None
         self._start_hotkey()
 
     def _start_hotkey(self) -> None:
         if not self.cfg.get("hotkey_enabled", True):
             return
-        binding = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
-        self._hotkey_listener = hotkey.start(binding, self._cancel_only)
+        # Fire macOS's native Accessibility permission dialog if we don't
+        # already have trust. No-op if trust was granted previously or if
+        # we're not on macOS. Prompts at most once per macOS session.
+        trusted = accessibility.ensure_trusted(prompt=True)
+        if not trusted:
+            print(
+                "heard: Accessibility permission pending — hotkeys will start "
+                "working after you enable Heard in System Settings → Privacy & "
+                "Security → Accessibility.",
+                file=sys.stderr,
+                flush=True,
+            )
+        silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+        self._hotkey_listener = hotkey.start(silence, self._cancel_only)
+        replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
+        if replay:
+            self._replay_hotkey_listener = hotkey.start(replay, self._replay_last)
 
     def _reload_config(self) -> None:
-        old_binding = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+        old_silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+        old_replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
         old_enabled = self.cfg.get("hotkey_enabled", True)
         self.cfg = config.load()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
 
-        new_binding = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+        new_silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+        new_replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
         new_enabled = self.cfg.get("hotkey_enabled", True)
-        if (new_binding, new_enabled) != (old_binding, old_enabled):
-            if self._hotkey_listener is not None:
-                try:
-                    self._hotkey_listener.stop()
-                except Exception:
-                    pass
-                self._hotkey_listener = None
+        if (new_silence, new_replay, new_enabled) != (old_silence, old_replay, old_enabled):
+            for listener in (self._hotkey_listener, self._replay_hotkey_listener):
+                if listener is not None:
+                    try:
+                        listener.stop()
+                    except Exception:
+                        pass
+            self._hotkey_listener = None
+            self._replay_hotkey_listener = None
             self._start_hotkey()
 
     def _voice(self, cfg: dict | None = None, persona: persona_mod.Persona | None = None) -> str:
@@ -146,12 +167,17 @@ class Daemon:
         text = (text or "").strip()
         if not text:
             return
+        self._last_spoken = text
         cancel = threading.Event()
         with self._lock:
             self._current_cancel = cancel
         threading.Thread(
             target=self._speak, args=(text, cancel), kwargs={"cfg": cfg, "persona": persona}, daemon=True
         ).start()
+
+    def _replay_last(self) -> None:
+        if self._last_spoken:
+            self._start_speech(self._last_spoken)
 
     def _cancel_only(self) -> None:
         with self._lock:
@@ -239,6 +265,9 @@ class Daemon:
             return
         if cmd == "stop":
             self._cancel_only()
+            return
+        if cmd == "replay":
+            self._replay_last()
             return
         if cmd == "event":
             self._handle_event(req)
