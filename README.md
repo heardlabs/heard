@@ -8,9 +8,13 @@ Counterpart to input tools like [Wispr Flow](https://wisprflow.ai). Wispr handle
 
 ### Menu bar app (recommended)
 
-Download the latest `Heard-v*.zip` from [Releases](https://github.com/sodiumsun/heard/releases), unzip, drag `Heard.app` into `/Applications`. First launch: right-click → Open (unsigned build).
+1. Download the latest `Heard-v*.zip` from [Releases](https://github.com/sodiumsun/heard/releases).
+2. Unzip and drag `Heard.app` into `/Applications`.
+3. **First launch:** right-click `Heard.app` → **Open** (it's an unsigned build, so macOS Gatekeeper will refuse a normal double-click — right-click bypasses that one time).
+4. The onboarding window walks you through three screens: API key (optional, for the Jarvis persona), voice (Kokoro free or paste an ElevenLabs key), and the silence/replay hotkey.
+5. Run `heard install claude-code` (or `codex`) in your terminal to wire Heard up to your agent.
 
-The menu bar icon appears immediately. From there: pick a preset, enable the silence hotkey, and install the adapter for Claude Code or Codex.
+The menu bar icon stays visible from then on. Click it for status, preset switching, and silence.
 
 ### CLI only
 
@@ -22,29 +26,49 @@ uv tool install heard
 heard install claude-code
 ```
 
-That's it. Your next Claude Code response will be narrated. A macOS notification confirms setup; the voice model downloads on first use (~350 MB, one-time).
+That's it. Your next Claude Code response will be narrated.
+
+### Try it without installing
+
+```bash
+heard demo
+```
+
+Plays a scripted ~20-second exchange so you can hear the voice + persona before wiring up any agent.
+
+## Voice — two ways
+
+Heard ships with two TTS backends. The choice is implicit at onboarding:
+
+| Backend | When | Memory | Notes |
+|---|---|---|---|
+| **Kokoro** (free, local) | Default if you skip the ElevenLabs key field | ~700 MB resident, 12 GB+ RAM recommended | One-time ~337 MB model download on first synth. No internet, no key. |
+| **ElevenLabs** (premium, BYOK) | Paste your `sk_…` key on screen 2 of onboarding | ~80 MB resident, no model loaded | Internet required. Pay per character (typically pennies a day). |
+
+On low-RAM Macs (under 12 GB) the onboarding window flags Kokoro as a stretch and recommends ElevenLabs.
 
 ## What it does
 
-- **Narrates tool calls, not just final responses.** "Running the test suite." "Three failures in auth.py." Hooks into `PreToolUse`, `PostToolUse`, and `Stop`.
-- **Jarvis persona.** Set `ANTHROPIC_API_KEY` and apply the `jarvis` preset — Claude Haiku 4.5 rewrites each final response into a dry, in-character line. Falls back to neutral templates when no key is set, so the OSS experience is complete without a paid API.
-- **Global silence hotkey.** `⌘⇧.` cuts Heard off mid-sentence anywhere on your Mac. Bindable, one-time Accessibility grant.
-- **Menu bar app.** `heard ui` for live status, preset switcher, verbosity, silence button.
-- **Local-first voice.** Kokoro 82M runs on your Mac. 54 voices. No data leaves your machine unless you opt into Haiku persona rewrites.
+- **Narrates tool calls + intermediate prose.** "Looking at your test failures." "Three failures in auth.py." Hooks into `PreToolUse`, `PostToolUse`, and `Stop`. Surfaces every block of assistant text, not just the final summary.
+- **Jarvis persona.** Set `ANTHROPIC_API_KEY` (or paste it during onboarding) and apply the `jarvis` preset — Claude Haiku 4.5 rewrites each line into a dry, in-character butler. Falls back to neutral templates when no key is set, so the OSS experience is complete without a paid API.
+- **Tap-hold hotkey.** Tap your Right Option key to silence Heard mid-sentence. Long-press to replay the last narration. One-time Accessibility grant.
+- **Menu bar app.** Live status, preset switcher, silence button.
 - **Per-project config.** Drop a `.heard.yaml` in a repo to override global settings inside that project — quiet at work, chatty on side projects.
-- **Works with any agent.** First-class adapters for Claude Code + Codex. `heard run <command>` wraps anything else (Aider, Cursor-CLI, arbitrary CLIs) under a PTY and narrates idle-flushed output.
+- **Works with any agent.** First-class adapters for Claude Code + Codex. `heard run <command>` wraps anything else (Aider, arbitrary CLIs) under a PTY and narrates idle-flushed output.
 
 ## Commands
 
 ```
-heard install <agent>           Install the hook + download voice model
+heard install <agent>           Install the hook (claude-code | codex)
 heard uninstall <agent>         Remove the hook
+heard demo                      Play a scripted ~20-second preview
 heard preset <name>             Apply preset (jarvis / ambient / silent / chatty)
 heard tune                      Interactive voice/persona/verbosity walk
 heard ui                        Launch the menu bar app
 heard say "hello"               Speak text directly
 heard run <cmd> [args...]       Wrap any command and narrate its output
-heard silence                   Cancel current speech (bind to a hotkey)
+heard silence                   Cancel current speech (also: tap Right Option)
+heard replay                    Re-speak the last narration (also: long-press Right Option)
 heard stop                      Cancel speech + shut down daemon
 heard voices                    List available voices
 heard config get [key]          Show config value(s)
@@ -56,30 +80,44 @@ heard service install           Auto-start the daemon on login
 
 ## Presets
 
-| Preset   | Persona | Voice    | Verbosity | Tool narration                  |
-|----------|---------|----------|-----------|---------------------------------|
-| jarvis   | jarvis  | am_onyx  | normal    | on                              |
-| chatty   | jarvis  | am_onyx  | high      | on (everything)                 |
-| ambient  | raw     | am_onyx  | low       | only long-running + failures    |
-| silent   | raw     | am_onyx  | normal    | off (final responses only)      |
+| Preset   | Persona | Voice  | Verbosity | Tool narration                  |
+|----------|---------|--------|-----------|---------------------------------|
+| jarvis   | jarvis  | george | normal    | on                              |
+| chatty   | jarvis  | george | high      | on (everything)                 |
+| ambient  | raw     | george | low       | only long-running + failures    |
+| silent   | raw     | george | normal    | off (final responses only)      |
 
 Apply with `heard preset <name>`. Mix your own by editing `~/Library/Application Support/heard/config.yaml`.
 
 ## Configuration
 
 ```yaml
-voice: am_onyx
+voice: george                # ElevenLabs alias or 20-char voice_id
 speed: 1.05
 persona: jarvis              # raw | jarvis
 verbosity: normal            # low | normal | high
 narrate_tools: true
 narrate_tool_results: true
-hotkey_silence: "<cmd>+<shift>+."
+hotkey_mode: taphold         # taphold | combo
+hotkey_taphold_key: right_option
+hotkey_taphold_threshold_ms: 400
 skip_under_chars: 30         # ignore responses shorter than this
 flush_delay_ms: 800          # wait for transcript to settle before reading
+elevenlabs_api_key: ""       # paste your key to enable premium voice
+anthropic_api_key: ""        # paste your key to enable Jarvis persona
 ```
 
 Any repo can override by placing `.heard.yaml` in its root.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `Heard.app` won't open ("Apple cannot check…") | Right-click the app → **Open**. Unsigned builds need this once. |
+| No sound after first launch | Check the menu bar icon is alive; run `heard doctor`. The first Kokoro synth downloads the model (~337 MB) — give it a minute on slow connections. |
+| ElevenLabs narration silent | A macOS notification will tell you if your key was rejected. Double-check it via `heard config get elevenlabs_api_key`. |
+| "Heard paused — system memory low" notification | Close some apps; the daemon refuses to spawn under high memory pressure. Run `pkill -f heard.daemon` if a stale process is hanging on. |
+| Hotkey doesn't fire | Grant Accessibility access in System Settings → Privacy & Security → Accessibility. Tap the Right Option key alone (no chord). |
 
 ## Supported agents
 
@@ -95,11 +133,12 @@ Adapters live in `heard/adapters/`. Contributions welcome.
 
 - macOS 13+ (Linux support planned)
 - For CLI install: Python 3.11+
-- ~350 MB disk (Kokoro model, one-time download)
+- For Kokoro backend: ~337 MB disk (model downloads on first use). 12 GB+ RAM recommended.
+- For ElevenLabs backend: an [ElevenLabs](https://elevenlabs.io) account.
 
 ## Status
 
-Early alpha. Works well for a single user (the author). API may change.
+Early alpha — v0.3 OSS launch. Works well for the author and a small circle of testers. API may change.
 
 ## License
 
