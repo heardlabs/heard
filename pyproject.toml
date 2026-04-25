@@ -1,6 +1,6 @@
 [project]
 name = "heard"
-version = "0.2.3"
+version = "0.2.4"
 description = "A voice companion for your AI coding agents. Heard speaks your agent's replies so you can keep working."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -18,6 +18,10 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
+    # Local TTS path. Lazy-imported by the daemon — only loads in-process
+    # when the user has no ElevenLabs key (i.e. opted into the free tier).
+    # The model files (~337 MB) download separately on first use; never
+    # bundled in the .app.
     "kokoro-onnx>=0.4.0",
     "soundfile>=0.12.0",
     "typer>=0.12.0",

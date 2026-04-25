@@ -1,4 +1,10 @@
-"""The long-running daemon. Loads Kokoro once and serves speech requests over a Unix socket.
+"""The long-running daemon. Serves speech requests over a Unix socket.
+
+The TTS backend is ElevenLabs over HTTP — no in-process model, so the
+daemon stays small (~80 MB) regardless of how many narration requests
+fly through. Each synth call re-reads the API key from config so the
+user can paste their key in onboarding without us needing a daemon
+restart signal.
 
 Also owns the persona layer and per-session state — both are kept warm
 here so the first tool event in a new CC session is fast.
@@ -20,7 +26,7 @@ from pathlib import Path
 from heard import accessibility, config, hotkey, verbosity
 from heard import persona as persona_mod
 from heard.session import SessionStore
-from heard.tts.kokoro import KokoroTTS
+from heard.tts.elevenlabs import ElevenLabsTTS
 
 
 def _split(text: str) -> list[str]:
@@ -38,7 +44,7 @@ class Daemon:
     def __init__(self) -> None:
         config.ensure_dirs()
         self.cfg = config.load()
-        self.tts = KokoroTTS(config.MODELS_DIR)
+        self.tts = self._make_tts()
         self.sessions = SessionStore()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         self._lock = threading.Lock()
@@ -64,26 +70,68 @@ class Daemon:
                 flush=True,
             )
 
-        bindings: dict = {}
-        silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
-        if silence:
-            bindings[silence] = self._cancel_only
-        replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
-        if replay:
-            bindings[replay] = self._replay_last
-        self._hotkey_listener = hotkey.start(bindings)
+        mode = (self.cfg.get("hotkey_mode") or "taphold").lower()
+        if mode == "taphold":
+            key_name = self.cfg.get("hotkey_taphold_key") or hotkey.DEFAULT_TAPHOLD_KEY
+            threshold = int(
+                self.cfg.get("hotkey_taphold_threshold_ms")
+                or hotkey.DEFAULT_TAPHOLD_THRESHOLD_MS
+            )
+            self._hotkey_listener = hotkey.start_taphold(
+                key_name,
+                threshold,
+                on_tap=self._cancel_only,
+                on_hold=self._replay_last,
+            )
+        else:
+            bindings: dict = {}
+            silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
+            if silence:
+                bindings[silence] = self._cancel_only
+            replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
+            if replay:
+                bindings[replay] = self._replay_last
+            self._hotkey_listener = hotkey.start(bindings)
+
+    def _make_tts(self):
+        """Pick a TTS backend based on config:
+
+        * ``elevenlabs_api_key`` set → ElevenLabs (HTTP, ~80 MB daemon).
+        * Otherwise → Kokoro (local ONNX, downloads model on first synth).
+
+        Kokoro is imported LAZILY inside the else branch so users on the
+        ElevenLabs path never load ``kokoro_onnx`` / ``onnxruntime`` —
+        keeping the daemon tiny for the BYOK flow.
+        """
+        api_key = (self.cfg.get("elevenlabs_api_key") or "").strip()
+        if api_key:
+            return ElevenLabsTTS(api_key=api_key)
+
+        from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415 — lazy on purpose
+
+        return KokoroTTS(config.MODELS_DIR)
+
+    def _hotkey_signature(self, cfg: dict) -> tuple:
+        """Snapshot of every config value that affects hotkey wiring.
+        Used to detect when we need to restart the listener."""
+        return (
+            (cfg.get("hotkey_mode") or "taphold").lower(),
+            cfg.get("hotkey_taphold_key") or hotkey.DEFAULT_TAPHOLD_KEY,
+            int(cfg.get("hotkey_taphold_threshold_ms") or hotkey.DEFAULT_TAPHOLD_THRESHOLD_MS),
+            cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING),
+            cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING),
+            bool(cfg.get("hotkey_enabled", True)),
+        )
 
     def _reload_config(self) -> None:
-        old_silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
-        old_replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
-        old_enabled = self.cfg.get("hotkey_enabled", True)
+        old_sig = self._hotkey_signature(self.cfg)
+        old_key = self.cfg.get("elevenlabs_api_key", "")
         self.cfg = config.load()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
-
-        new_silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
-        new_replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
-        new_enabled = self.cfg.get("hotkey_enabled", True)
-        if (new_silence, new_replay, new_enabled) != (old_silence, old_replay, old_enabled):
+        if self.cfg.get("elevenlabs_api_key", "") != old_key:
+            self.tts = self._make_tts()
+        new_sig = self._hotkey_signature(self.cfg)
+        if new_sig != old_sig:
             if self._hotkey_listener is not None:
                 try:
                     self._hotkey_listener.stop()
@@ -111,7 +159,9 @@ class Daemon:
         for chunk in _split(text):
             if cancel.is_set():
                 return
-            fd, path_str = tempfile.mkstemp(suffix=".wav", prefix="heard-")
+            fd, path_str = tempfile.mkstemp(
+                suffix=getattr(self.tts, "AUDIO_EXT", ".mp3"), prefix="heard-"
+            )
             os.close(fd)
             path = Path(path_str)
             try:

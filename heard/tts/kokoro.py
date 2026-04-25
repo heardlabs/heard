@@ -55,6 +55,10 @@ def _download_with_progress(url: str, dest: Path, label: str) -> None:
 
 
 class KokoroTTS:
+    # File extension the daemon should mint a tempfile with. Kokoro
+    # writes WAV via soundfile — afplay handles it natively.
+    AUDIO_EXT = ".wav"
+
     def __init__(self, models_dir: Path):
         self.model_path = models_dir / "kokoro-v1.0.onnx"
         self.voices_path = models_dir / "voices-v1.0.bin"
