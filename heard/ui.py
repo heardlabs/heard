@@ -42,6 +42,7 @@ class HeardApp(rumps.App):
             super().__init__("Heard", icon=str(ICON_PATH), template=True, quit_button=None)
         else:
             super().__init__("Heard", title="Heard", quit_button=None)
+        self._first_launch_checked = False
         self._build_menu()
         self.refresh(None)
         rumps.Timer(self.refresh, 3).start()
@@ -73,6 +74,7 @@ class HeardApp(rumps.App):
 
         options_menu = rumps.MenuItem("Options")
         options_menu["Narrate tool calls"] = self.narrate_tools_item
+        options_menu["Set API key…"] = rumps.MenuItem("Set API key…", callback=self.on_set_api_keys)
         options_menu["Open config file"] = rumps.MenuItem("Open config file", callback=self.on_open_config)
         options_menu["GitHub"] = rumps.MenuItem("GitHub", callback=self.on_github)
 
@@ -95,6 +97,14 @@ class HeardApp(rumps.App):
     def refresh(self, _timer) -> None:
         cfg = config.load()
         alive = client.is_daemon_alive()
+
+        # First-launch onboarding: only if the user hasn't been through it
+        # yet. The flag is set inside _prompt_api_key once the flow
+        # finishes (or the user skips), so we never re-prompt.
+        if not self._first_launch_checked and alive:
+            self._first_launch_checked = True
+            if not cfg.get("onboarded"):
+                self._first_launch_prompt()
 
         # Icon stays constant; state communicated through the status_item
         # text inside the dropdown. Keeps the menu bar tidy.
@@ -180,6 +190,56 @@ class HeardApp(rumps.App):
         if not path.exists():
             path.write_text("")
         subprocess.Popen(["open", str(path)])
+
+    def _first_launch_prompt(self) -> None:
+        """Right-on-launch ask for an API key. Cancel = skip."""
+        self._prompt_api_key()
+        try:
+            client.send({"cmd": "reload"})
+        except Exception:
+            pass
+
+    def on_set_api_keys(self, _sender) -> None:
+        self._prompt_api_key()
+        try:
+            client.send({"cmd": "reload"})
+        except Exception:
+            pass
+        self.refresh(None)
+
+    def _prompt_api_key(self) -> None:
+        """Three-step onboarding window. Saves whichever keys the user
+        provides into config; either way, marks the user as onboarded so
+        we never re-show this on subsequent launches."""
+        try:
+            from heard import key_window
+        except Exception as e:
+            print(f"key_window unavailable: {e}", file=sys.stderr)
+            return
+
+        result = key_window.prompt()
+        # Always mark onboarded once they've seen the flow — even if they
+        # clicked Skip — so we don't re-prompt on every launch.
+        config.set_value("onboarded", True)
+
+        if result.get("action") != "finish":
+            return
+
+        # LLM key — auto-route by prefix
+        llm = (result.get("llm") or "").strip()
+        if llm:
+            if llm.startswith("sk-ant-"):
+                config.set_value("anthropic_api_key", llm)
+            elif llm.startswith("sk-"):
+                config.set_value("openai_api_key", llm)
+            else:
+                # Ambiguous — assume Anthropic since that's the primary path
+                config.set_value("anthropic_api_key", llm)
+
+        # ElevenLabs key — stored verbatim; activates when ElevenLabs ships
+        eleven = (result.get("elevenlabs") or "").strip()
+        if eleven:
+            config.set_value("elevenlabs_api_key", eleven)
 
     def on_github(self, _sender) -> None:
         webbrowser.open("https://github.com/sodiumsun/heard")

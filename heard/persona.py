@@ -107,22 +107,43 @@ def list_bundled() -> list[str]:
 # --- Haiku path -------------------------------------------------------------
 
 
+def _anthropic_key() -> str:
+    """Resolve the Anthropic API key. Config wins over env var so the
+    user can override per-machine via heard ui without touching the
+    shell environment."""
+    env = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    try:
+        from heard import config as _config
+
+        cfg_key = (_config.load().get("anthropic_api_key") or "").strip()
+    except Exception:
+        cfg_key = ""
+    return cfg_key or env
+
+
 def _haiku_enabled() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return bool(_anthropic_key())
 
 
 _client = None
+_client_key: str | None = None
 
 
 def _get_client():
-    global _client
-    if _client is None:
+    """Build (or rebuild, if the key changed) the Anthropic client."""
+    global _client, _client_key
+    key = _anthropic_key()
+    if not key:
+        return None
+    if _client is None or _client_key != key:
         try:
             from anthropic import Anthropic
 
-            _client = Anthropic()
+            _client = Anthropic(api_key=key)
+            _client_key = key
         except Exception:
             _client = False
+            _client_key = None
     return _client or None
 
 
