@@ -23,7 +23,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from heard import accessibility, config, hotkey, notify, verbosity
+from heard import accessibility, audio_monitor, config, hotkey, notify, verbosity
 from heard import persona as persona_mod
 from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
@@ -52,7 +52,9 @@ class Daemon:
         self._current_cancel: threading.Event | None = None
         self._last_spoken: str = ""
         self._hotkey_listener: object | None = None
+        self._audio_monitor: audio_monitor.AudioMonitor | None = None
         self._start_hotkey()
+        self._start_audio_monitor()
 
     def _start_hotkey(self) -> None:
         if not self.cfg.get("hotkey_enabled", True):
@@ -93,6 +95,22 @@ class Daemon:
                 bindings[replay] = self._replay_last
             self._hotkey_listener = hotkey.start(bindings)
 
+    def _start_audio_monitor(self) -> None:
+        """Start the mic-capture watcher (CoreAudio polling) so Heard
+        auto-silences when a call / dictation / Wispr starts recording.
+        Mirrors macOS's orange recording dot — same signal."""
+        if not self.cfg.get("auto_silence_on_mic", True):
+            return
+        self._audio_monitor = audio_monitor.start(self._cancel_only)
+
+    def _stop_audio_monitor(self) -> None:
+        if self._audio_monitor is not None:
+            try:
+                self._audio_monitor.stop()
+            except Exception:
+                pass
+            self._audio_monitor = None
+
     def _make_tts(self):
         """Pick a TTS backend based on config:
 
@@ -126,6 +144,7 @@ class Daemon:
     def _reload_config(self) -> None:
         old_sig = self._hotkey_signature(self.cfg)
         old_key = self.cfg.get("elevenlabs_api_key", "")
+        old_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
         self.cfg = config.load()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         if self.cfg.get("elevenlabs_api_key", "") != old_key:
@@ -139,6 +158,11 @@ class Daemon:
                     pass
             self._hotkey_listener = None
             self._start_hotkey()
+        new_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
+        if new_auto_silence != old_auto_silence:
+            self._stop_audio_monitor()
+            if new_auto_silence:
+                self._start_audio_monitor()
 
     def _voice(self, cfg: dict | None = None, persona: persona_mod.Persona | None = None) -> str:
         cfg = cfg or self.cfg

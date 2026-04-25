@@ -64,6 +64,11 @@ DEFAULTS: dict[str, Any] = {
     "anthropic_api_key": "",
     "openai_api_key": "",
     "elevenlabs_api_key": "",
+    # Auto-silence Heard whenever any app starts recording from the mic
+    # (Zoom, Meet, Teams, FaceTime, Wispr Flow, Apple Dictation, etc.).
+    # Mirrors macOS's orange recording indicator. Set to false to keep
+    # narration playing through calls.
+    "auto_silence_on_mic": True,
     # Set to True after the user finishes the welcome flow (or skips it),
     # so we never re-prompt them.
     "onboarded": False,
