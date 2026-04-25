@@ -1,8 +1,8 @@
 # Heard — Build PRD
 
-**Status:** draft, v0.2 planning
+**Status:** v0.3 OSS launch planning
 **Owner:** Christian
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-25
 
 ---
 
@@ -43,19 +43,25 @@ From deep research on 10+ existing tools, **no shipped competitor does all of th
 
 Same core daemon. Same voice. Same persona. Two ways to hook in.
 
-### Current state (v0.1 scaffolding shipped)
+### Current state (v0.2.4 shipped, going into v0.3)
 
 At `~/Desktop/Projects/heard/`:
-- Python package, pipx/uv installable
-- Long-running daemon, Unix socket IPC, ~300ms TTFA
-- Client spawns daemon, cancels in-flight on new request (partial barge-in)
-- CC adapter — Stop hook only, no tool-call awareness yet
-- Markdown stripping
-- Kokoro ONNX, 54 voices, `am_onyx` default
-- CLI: `install / uninstall / status / doctor / say / voices / config / service / stop`
+- Python package, pipx/uv installable, py2app menu-bar bundle (~64 MB)
+- Long-running daemon, Unix socket IPC, file-locked spawn, memory-pressure guard
+- CC + Codex adapters with PreToolUse/PostToolUse + Stop hooks
+- Intermediate-text narration (prose between tool calls is now spoken, not dropped)
+- Persona layer: raw, jarvis (Haiku BYOK with template fallback), session-state cache
+- Dynamic verbosity (length + density signals)
+- Tap-hold hotkey on Right Option (tap → silence, long-press → replay)
+- Three-step onboarding window (Anthropic key → ElevenLabs key → hotkey explainer)
+- ElevenLabs TTS backend (HTTP-only, ~80 MB daemon)
+- Per-project `.heard.yaml`, presets (jarvis/ambient/silent/chatty), `heard tune` TUI
 - macOS LaunchAgent, YAML config
 
-v0.1 is a thin voice pipe. v0.2 is the actual product.
+**Cut from v0.2:** Kokoro ONNX local backend. We had to remove it because loading
+it inside the daemon on a low-RAM Mac (8 GB) blew memory and OOM-killed the
+machine repeatedly. v0.3 restores Kokoro as an *opt-in download* — never
+bundled, never auto-loaded — so the bundle stays small and 8 GB Macs stay safe.
 
 ## 6. Config — the core UX
 
@@ -87,111 +93,175 @@ The better this module, the better the product feels. Config is not a back-of-th
 
 **v0.3 stretch:** `heard tone drier` — natural language config. User talks to Heard, Haiku rewrites the YAML. "Sound more British." "Less narration during builds." Makes the product conversational all the way down.
 
-## 7. v0.2 build scope (OSS launch)
+## 7. v0.2 build scope — DONE
 
-Ordered by build order. Each is one logical commit.
+For posterity. Most of v0.2 shipped; one item (Kokoro local TTS) regressed
+out due to the memory issue and gets re-added in v0.3 as opt-in.
 
-### 7.1 — Codex adapter
-New module `heard/adapters/codex.py`. Investigate Codex's hook system. Fallback: wrapper script on the `codex` binary, or transcript tailing.
+| § | Item | Status |
+|---|---|---|
+| 7.1 | Codex adapter | ✅ shipped |
+| 7.2 | CC tool-call narration | ✅ shipped + intermediate-text fix |
+| 7.3 | Codex tool-call wiring | ✅ shipped |
+| 7.4 | `heard run` PTY wrapper | ✅ shipped |
+| 7.5 | Hotkey | ✅ shipped (tap-hold Right Option, better than original spec) |
+| 7.6 | Persona + Haiku BYOK | ✅ shipped |
+| 7.7 | Dynamic verbosity | ✅ shipped |
+| 7.8 | Config UX (presets, `tune`, per-project) | ✅ shipped (web UI dropped) |
+| — | Three-step onboarding window | ✅ shipped (not in original PRD) |
+| — | Spawn protection / memory guard | ✅ shipped (after the OOM incident) |
 
-### 7.2 — Tool-call narration (CC)
-Register `PreToolUse` + `PostToolUse` hooks. Pre: one-sentence announce. Post: one-sentence result only when meaningful (failures, edits). Template-driven per-tool. Global `narrate_tools: true|false`.
+## 8. v0.3 build scope — OSS launch
 
-### 7.3 — Codex tool-call wiring
-Mirror 7.2 for Codex. Fall back to transcript tailing if Codex hooks are limited.
+Goal: ship a clean GitHub release that a dev community user can install in
+one click (or right-click → Open for the unsigned build) and have working
+narration in under 60 seconds.
 
-### 7.4 — Universal terminal wrapper
-`heard run <command>` PTY wrapper. Best-effort parsing. Plain-text narration only. Ships as Tier 2 fallback.
+### 8.1 — Restore Kokoro as opt-in download
 
-### 7.5 — True barge-in
-Daemon cancel IPC already exists. Add `heard silence` command + docs for global hotkey via Karabiner/BetterTouchTool. v0.3: auto-detect keypress inside TUI.
+Re-add `heard/tts/kokoro.py` and `kokoro_onnx`/`onnxruntime` deps. Daemon
+picks the backend at speech time:
 
-### 7.6 — Persona layer (BYOK Haiku + template fallback)
-New `heard/persona.py`. Ships one persona: **Jarvis** (British, dry, first-person, "Sir"). Every narration rewrites via Haiku 4.5 if `ANTHROPIC_API_KEY` is set; falls back to template strings otherwise. Session-state cache per-CC-session: repo name, failure count, last-spoken-topic.
+- If `elevenlabs_api_key` is set in config → ElevenLabs.
+- Else → Kokoro (download model on first synth call if not present).
 
-**Critical design point:** persona must feel good *without* Haiku. Template mode is the default experience; Haiku is the "whoa" upgrade power users discover. This keeps the OSS product honest and sets up the Pro tier cleanly.
+No backend picker UI in onboarding. The choice is implicit: paste a key →
+ElevenLabs; skip the field → Kokoro. Memory-guard: if system is under
+pressure when Kokoro would load, refuse and surface a notification.
 
-### 7.7 — Dynamic verbosity
-Three signals: response length → summarize if long; tool-call density → cut pre-announcements when busy; wait state → always speak questions immediately. One knob: `verbosity: low | normal | high`.
+### 8.2 — `heard demo` command
 
-### 7.8 — Config UX layer
-Presets (`heard preset jarvis|coach|ambient|silent`). Interactive TUI (`heard tune`) with voice samples. Web UI at `localhost:4711`. Per-project `.heard.yaml`.
+Plays a scripted 20-second exchange showing tool narration + a Jarvis
+summary. No CC adapter required, no API keys required (uses the chosen
+backend with neutral templates). Lets curious devs evaluate the product
+without installing the hook.
 
-### 7.9 — Launch polish
-Landing page at heard.dev. 30-second demo video (CC session → tool narration → Jarvis summary). `heard demo` command (fake CC session, no install needed). Homebrew tap. Config UI shows `ElevenLabs voices (Pro — coming soon)` to prime demand.
+### 8.3 — Visible error states
 
-## 8. Monetization phasing
+macOS notification (pyobjc `NSUserNotification`) when synth fails:
+- Bad ElevenLabs key → "ElevenLabs key invalid. Open settings?"
+- No Kokoro model + offline → "Couldn't download voice model. Retry?"
+- Memory pressure refused spawn → "Heard paused — system memory low."
 
-**Don't build paid infra before OSS validates.** Distribution is the only thing that matters in month one.
+Today these are silent failures.
 
-### Phase 1 — OSS launch (v0.2, 4 weeks)
-Ship everything above. Free. No monetization code, no backend, no auth. Power users BYOK for Haiku persona. Launch on HN, dev Twitter, /r/LocalLLaMA, Product Hunt.
+### 8.4 — GitHub Actions release pipeline
 
-**Trigger to advance:** 500 installs within 30 days AND unsolicited "can I pay you for X" messages.
+Tag `v0.3.0` → workflow runs py2app build → zips `Heard.app` → attaches to
+GitHub Release. README links to "Download latest" auto-resolved. No code
+signing for v0.3 — README documents right-click → Open.
 
-### Phase 2 — Pro tier ($9/mo, triggered by Phase 1 signal)
-Separate mini-PRD when triggered. Build with LemonSqueezy, not Stripe-from-scratch (3-day integration, not 2 weeks).
-- Managed ElevenLabs passthrough (the real British butler voice)
-- Managed Haiku (no more BYOK — "just works" tier)
-- Extra personas: Alfred, HAL, GLaDOS, stern-coach, surfer-dude
-- Voice cloning upload
-- Cloud sync across Macs
-- Priority support / Discord lounge
+### 8.5 — README rewrite
 
-### Phase 3 — Team tier (only if customers pay upfront)
-$19/user/mo. Shared org personas, usage dashboard, centralized billing. No SOC 2 / SSO / enterprise until a real customer asks and pre-pays.
+- Lead with the .app download (matches website CTA)
+- "Right-click → Open" instructions for Gatekeeper
+- Clearly explain Kokoro vs ElevenLabs choice (paste key → premium,
+  skip → free local download)
+- Link to `heard demo` for try-before-install
 
-## 9. Out of scope (v0.2)
+## 9. Website ↔ product alignment (heard.dev)
 
-- Linux/Windows — macOS only until 100 active users.
-- Speech-to-text — Wispr Flow owns input.
-- Voice cloning — Pro feature, Phase 2.
-- Non-coding agents (general chatbot voice) — dilutes positioning.
-- GUI app — CLI is the product.
-- Cursor IDE / JetBrains plugins — after Cursor-CLI adapter.
-- Enterprise SSO / SOC 2 — only when a customer pre-pays.
+The site at `~/Desktop/Projects/heard-website` (deployed at
+heard-website.vercel.app, mapped to heard.dev) promises a few things the
+shipping product doesn't yet do. Two ways to close the gap: build the
+feature, or trim the site copy. For v0.3 the right move is **trim the
+site to match reality**, with "coming soon" markers for roadmap items.
 
-## 10. Success criteria
+| Promised on site | Actual product | v0.3 action |
+|---|---|---|
+| Cursor integration (`cursor add heard-companion`) | No Cursor adapter | Mark "coming soon" on integrations grid |
+| "Hold space and talk back" (voice barge-in to agent) | No voice input — only silence/replay hotkey | Replace with "Tap to silence, long-press to replay" |
+| Hotkey shown as `⌘ ⇧ H` | Right Option (tap-hold) | Update keycaps to `⌥` with tap/long-press explainer |
+| "Quiet mode auto-yields when on a call" | Verbosity exists; call-detection doesn't | Drop the call-detection sentence, keep the rest |
+| Voice picker — "preview, then default with one click" | No in-app picker; voice is set in config | Mark "Pro" or "v0.4" on the voice preview block |
+| Glanceable HUD orb that pulses when active | Static menu-bar icon | Drop "pulses when active"; keep menu-bar concept |
 
-**v0.2 launch quality bar:**
-- CC and Codex adapters work end-to-end on a clean Mac.
-- Jarvis persona (both template and Haiku modes) passes the "30-second demo" test: a dev watches the video and says "I want that."
-- Barge-in works with one documented hotkey setup.
-- `heard tune` makes changing voice feel like fun, not work.
+Site copy that's accurate and stays:
+- Local-first / "your logs don't leave the machine" (true with Kokoro)
+- Claude Code + Codex integrations (true)
+- Ambient narration positioning (true)
+
+## 10. Monetization phasing
+
+**Don't build paid infra before OSS validates.** Distribution is the only
+thing that matters in month one.
+
+### Phase 1 — OSS launch (v0.3)
+Ship everything in §8. Free. No monetization code, no backend, no auth.
+Users BYOK for ElevenLabs (Pro voice) and Anthropic (Jarvis persona).
+Launch on HN, dev Twitter, /r/LocalLLaMA, Product Hunt.
+
+**Trigger to advance:** 500 installs within 30 days AND unsolicited
+"can I pay you for X" messages.
+
+### Phase 2 — Pro tier ($9/mo, post-validation)
+Separate mini-PRD. Built on LemonSqueezy. Managed ElevenLabs
+passthrough, managed Haiku, extra personas, voice cloning, cloud sync.
+
+### Phase 3 — Team tier
+Only if a customer pre-pays. $19/user/mo. Shared org personas.
+
+## 11. Out of scope for v0.3
+
+- Code signing / notarization — unsigned with right-click-Open is fine for
+  technical OSS audience
+- Sparkle auto-updater — manual redownload from Releases is fine
+- Demo video — let early users tweet clips
+- Homebrew tap — second distribution channel, after Releases work
+- Backend picker UI in onboarding — implicit choice (key-or-skip) suffices
+- Telemetry — GitHub stars + clone counts are signal enough
+- Cursor adapter — site marks "coming soon"
+- Voice input / barge-in — site copy trimmed
+- Linux / Windows — macOS only until 100 active users
+
+## 12. Success criteria
+
+**v0.3 launch quality bar:**
+- Fresh-machine install: download .app → onboarding → narration in <60s
+- Both backends work end-to-end (ElevenLabs with key, Kokoro without)
+- 8 GB Mac safety: daemon stays under 200 MB resident in normal use
+- README matches site, site matches product, no broken promises
 
 **30 days post-launch:**
-- 500 installs (Homebrew + opt-in telemetry).
-- 3+ organic mentions (HN / X / /r/LocalLLaMA).
-- At least 1 unsolicited "can I pay for X" → triggers Phase 2.
+- 500 installs, 3+ organic mentions, ≥1 "can I pay" → triggers Phase 2
 
 **90 days:**
-- 3,000 installs, or kill. Ambient voice for agents is either a thing or it isn't — Heard finds out fast.
+- 3,000 installs, or kill the project. Find out fast.
 
-## 11. Technical risks
+## 13. Technical risks
 
-- **Hook contract changes.** CC/Codex could break schemas. Mitigation: adapter isolation; `heard doctor` diagnoses breakage clearly.
-- **Codex doesn't expose clean hooks.** Fall back to transcript tailing or PTY wrap.
-- **Haiku latency for persona rewrites.** Target <200ms p50. Cache aggressively; fall back to templates on timeout.
-- **Barge-in needs accessibility permissions.** Document setup; never auto-request.
-- **Anthropic ships native TTS.** If before v0.2 GA, wedge becomes Codex + persona + multi-agent. Heard still wins if theirs is a thin default narrator.
+- **Memory pressure on low-RAM Macs.** Already burned us once (8 GB OOM
+  via Kokoro daemon stacking). Mitigations shipped: file-locked spawn,
+  memory-pressure guard, Kokoro never bundled. Add canary: surface RAM
+  warning in first-launch onboarding if `total_memory < 12 GB`.
+- **Hook contract changes.** CC/Codex could break schemas. `heard doctor`
+  diagnoses.
+- **ElevenLabs API outage.** Fall back to Kokoro automatically if user
+  has the model installed; surface notification otherwise.
+- **Anthropic ships native TTS.** If before v0.3 GA, wedge becomes
+  Codex + persona + multi-agent; positioning still holds.
 
-## 12. Build order (commit-by-commit, v0.2)
+## 14. v0.3 build order
 
-1. Codex adapter skeleton + install/uninstall/status.
-2. PreToolUse/PostToolUse hooks for CC + default template pack.
-3. Codex tool-call wiring (or transcript-tail fallback).
-4. `heard run` universal terminal wrapper.
-5. `heard silence` command + hotkey docs.
-6. Persona module + Jarvis persona + Haiku BYOK rewriter + template fallback.
-7. Session-state cache (repo name, failure counter).
-8. Dynamic verbosity (length + density + wait-state signals).
-9. Config UX: presets, `heard tune` TUI, localhost web UI, per-project YAML.
-10. `heard demo` command + landing page + Homebrew tap.
-11. Opt-in telemetry for install counts.
+Each item is one logical commit / branch.
 
-## 13. Open questions
+1. **Restore Kokoro as opt-in backend** — new `heard/tts/kokoro.py`, daemon picks backend by config presence, lazy download
+2. **Memory canary on first launch** — onboarding warns on <12 GB RAM machines about Kokoro download
+3. **`heard demo` command** — scripted exchange, no install required
+4. **Visible error UI** — `NSUserNotification` on synth/spawn failures
+5. **Site copy alignment** — trim/update heard-website to match shipping product
+6. **README rewrite** — new install flow, backend choice, troubleshooting
+7. **GitHub Actions release pipeline** — tag → DMG → Releases
+8. **Cut a v0.3.0 tag** — first public OSS release
 
-- Persona default: ON (template mode) or OFF? **Lean: ON.** That's the product.
-- BYOK Haiku in v0.2 or ship without? **Lean: BYOK.** Managed key moves to Phase 2.
-- Name: keep "Heard" or rebrand? **Lean: keep — domain owned, reads well next to Wispr Flow.**
-- Which agent after CC + Codex? **Lean: Aider or Cursor-CLI, driven by community signal.**
+## 15. Open questions
+
+- Default backend when a user has neither key nor downloaded Kokoro?
+  **Lean: download Kokoro on first run with progress bar; user can quit
+  during download to switch to BYOK ElevenLabs.**
+- Mark Cursor adapter "coming soon" on website, or remove the card
+  entirely until built? **Lean: keep the card, mark "coming soon" — it
+  signals the roadmap and primes demand.**
+- Bundle a tiny pre-recorded sample for `heard demo` instead of synth at
+  runtime? **Lean: live synth — proves the install works.**
+
