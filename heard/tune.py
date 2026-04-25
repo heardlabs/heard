@@ -12,31 +12,11 @@ from rich.table import Table
 
 from heard import client, config
 from heard import persona as persona_mod
-from heard.tts.kokoro import KokoroTTS
+from heard.tts.elevenlabs import ElevenLabsTTS
 
 console = Console()
 
 SAMPLE_LINE = "I've finished the edit and committed the change, Sir."
-VOICE_GROUPS: list[tuple[str, str]] = [
-    ("am_", "American male"),
-    ("af_", "American female"),
-    ("bm_", "British male"),
-    ("bf_", "British female"),
-]
-
-
-def _grouped_voices(all_voices: list[str]) -> list[tuple[str, list[str]]]:
-    groups: list[tuple[str, list[str]]] = []
-    seen: set[str] = set()
-    for prefix, label in VOICE_GROUPS:
-        matches = [v for v in all_voices if v.startswith(prefix)]
-        if matches:
-            groups.append((label, matches))
-            seen.update(matches)
-    rest = [v for v in all_voices if v not in seen]
-    if rest:
-        groups.append(("Other", rest))
-    return groups
 
 
 def _prompt_choice(label: str, options: list[str], default: str | None = None) -> str:
@@ -60,25 +40,16 @@ def _prompt_choice(label: str, options: list[str], default: str | None = None) -
 
 
 def _pick_voice(current: str) -> str:
-    tts = KokoroTTS(config.MODELS_DIR)
-    tts.ensure_downloaded()
+    cfg = config.load()
+    tts = ElevenLabsTTS(api_key=cfg.get("elevenlabs_api_key", ""))
     voices = tts.list_voices()
-    groups = _grouped_voices(voices)
+    if not voices:
+        return current
 
-    console.print("\n[bold]1. Pick a voice[/bold]")
-    console.print("(each group shows a few voices; pick a group first)\n")
-
-    group_labels = [g[0] for g in groups]
-    current_group_label = next(
-        (label for label, vs in groups if current in vs),
-        group_labels[0] if group_labels else "Other",
-    )
-    picked_group_label = _prompt_choice("group", group_labels, default=current_group_label)
-    group_voices = next(vs for label, vs in groups if label == picked_group_label)
-
-    chosen = current if current in group_voices else group_voices[0]
+    console.print("\n[bold]1. Pick a voice[/bold]\n")
+    chosen = current if current in voices else voices[0]
     while True:
-        voice = _prompt_choice("voice", group_voices, default=chosen)
+        voice = _prompt_choice("voice", voices, default=chosen)
         if typer.confirm(f"Play a sample of {voice}?", default=True):
             client.ensure_daemon()
             client.send({"cmd": "reload"})
