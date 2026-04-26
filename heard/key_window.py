@@ -214,9 +214,27 @@ def prompt() -> dict[str, Any]:
 
     # Bring our app forward and make this window key so the input
     # actually receives keystrokes.
+    #
+    # LSUIElement=true (menu-bar app) starts the app at activation
+    # policy "Accessory", which prevents a borderless window from
+    # properly becoming key — text fields look interactive but don't
+    # receive keystrokes. Temporarily flip to Regular for the duration
+    # of the modal, then restore Accessory so the Dock icon doesn't
+    # linger after onboarding closes.
+    prev_policy = NSApp.activationPolicy()
+    try:
+        NSApp.setActivationPolicy_(0)  # NSApplicationActivationPolicyRegular
+    except Exception:
+        pass
     NSApp.activateIgnoringOtherApps_(True)
     window.makeKeyAndOrderFront_(None)
     window.makeFirstResponder_(webview)
 
-    NSApp.runModalForWindow_(window)
+    try:
+        NSApp.runModalForWindow_(window)
+    finally:
+        try:
+            NSApp.setActivationPolicy_(prev_policy)
+        except Exception:
+            pass
     return result
