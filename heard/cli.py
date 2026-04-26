@@ -94,18 +94,14 @@ def status() -> None:
 
 @app.command()
 def doctor() -> None:
-    """Diagnose install state."""
-    typer.echo(f"config dir:   {config.CONFIG_DIR}")
-    typer.echo(f"data dir:     {config.DATA_DIR}")
-    model_ok = (config.MODELS_DIR / "kokoro-v1.0.onnx").exists()
-    voices_ok = (config.MODELS_DIR / "voices-v1.0.bin").exists()
-    typer.echo(f"model:        {'present' if model_ok else 'missing (run: heard voices)'}")
-    typer.echo(f"voices:       {'present' if voices_ok else 'missing'}")
-    typer.echo(f"daemon:       {'alive' if client.is_daemon_alive() else 'stopped'}")
-    typer.echo(f"service:      {'installed' if service.is_installed() else 'not installed'}")
-    for name, adapter in ADAPTERS.items():
-        installed = "installed" if adapter.is_installed() else "not installed"
-        typer.echo(f"{name:<14}{installed}")
+    """End-to-end self-test: ping daemon, synth a real utterance,
+    play it. Reports PASS/FAIL per step with the actual error so a
+    bad SSL handshake or missing key surfaces here instead of in the
+    daemon log."""
+    from heard import doctor as doctor_mod
+
+    ok = doctor_mod.run()
+    raise typer.Exit(0 if ok else 1)
 
 
 @app.command()
