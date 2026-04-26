@@ -166,7 +166,16 @@ class HeardApp(rumps.App):
         explicit set_value calls makes the dispatch reliable.
         """
         def cb(_sender):
-            print(f"persona menu click: {name}", file=sys.stderr, flush=True)
+            # File-based trace so we can definitively verify whether the
+            # menu callback fires inside the py2app bundle. stderr from
+            # bundled apps doesn't show up in `log show`.
+            try:
+                from datetime import datetime
+                Path("/tmp/heard-menu-debug.log").open("a").write(
+                    f"{datetime.now().isoformat()} persona click: {name}\n"
+                )
+            except Exception:
+                pass
             try:
                 from heard import persona as persona_mod
                 meta = persona_mod.load_meta(name) or {}
@@ -175,7 +184,12 @@ class HeardApp(rumps.App):
                         config.set_value(k, meta[k])
                 config.set_value("persona", name)
             except Exception as e:
-                print(f"persona switch failed: {e}", file=sys.stderr, flush=True)
+                try:
+                    Path("/tmp/heard-menu-debug.log").open("a").write(
+                        f"persona switch error: {e}\n"
+                    )
+                except Exception:
+                    pass
             try:
                 client.send({"cmd": "reload"})
             except Exception:
