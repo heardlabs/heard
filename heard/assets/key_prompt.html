@@ -105,21 +105,56 @@
   }
   p .em { color: var(--ink); font-weight: 500; }
 
-  /* Screens — stacked, only one visible at a time */
+  /* Screens — stacked in same area, slide horizontally between steps.
+     Default state = "ahead" (offscreen-right, waiting to be reached).
+     .active = currently shown.
+     .past = "behind" (already visited, exited left). */
+  .screens-area {
+    position: relative;
+    flex: 1;
+    /* Clip the slide so screens don't bleed past the rounded card. */
+    overflow: hidden;
+    /* Negative inline margins recover the card's horizontal padding so
+       sliding screens use the full card width without re-introducing
+       padding on each one. */
+    margin: 0 -30px;
+    padding: 0 30px;
+  }
   .screen {
+    position: absolute;
+    inset: 0 30px;
     display: flex;
     flex-direction: column;
     gap: 14px;
     opacity: 0;
+    visibility: hidden;
     pointer-events: none;
-    transition: opacity 0.25s ease;
+    transform: translate3d(40px, 0, 0);
+    transition:
+      opacity 360ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 360ms;
+    will-change: opacity, transform;
   }
   .screen.active {
     opacity: 1;
+    visibility: visible;
     pointer-events: auto;
+    transform: translate3d(0, 0, 0);
+    transition:
+      opacity 360ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 0s;
   }
-  .screen.gone {
-    display: none;
+  .screen.past {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate3d(-40px, 0, 0);
+    transition:
+      opacity 360ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0s linear 360ms;
   }
 
   /* Input fields */
@@ -303,6 +338,7 @@
         <button class="skip-top" onclick="finish()">Skip</button>
       </div>
 
+      <div class="screens-area">
       <!-- ─────── Screen 1: API key ─────── -->
       <div class="screen active" id="screen-1">
         <h1>Add an API key to make me alive.</h1>
@@ -328,7 +364,7 @@
       </div>
 
       <!-- ─────── Screen 2: Voice ─────── -->
-      <div class="screen gone" id="screen-2">
+      <div class="screen" id="screen-2">
         <h1>Pick a voice.</h1>
         <p>
           By default I use <span class="em">Kokoro</span> — free, local,
@@ -358,7 +394,7 @@
       </div>
 
       <!-- ─────── Screen 3: Hotkey ─────── -->
-      <div class="screen gone" id="screen-3">
+      <div class="screen" id="screen-3">
         <h1>One key. One hand.</h1>
         <p>
           On the right side of your spacebar — your right
@@ -387,7 +423,7 @@
       </div>
 
       <!-- ─────── Screen 4: Agents ─────── -->
-      <div class="screen gone" id="screen-4">
+      <div class="screen" id="screen-4">
         <h1>Who should I narrate?</h1>
         <p>Pick the agents I should listen to. You can change this any time from the menu bar.</p>
 
@@ -415,6 +451,7 @@
           </button>
         </div>
       </div>
+      </div>
     </div>
   </div>
 
@@ -428,20 +465,19 @@
       dot.classList.remove('active', 'done');
       if (i < n) dot.classList.add('done');
       if (i === n) dot.classList.add('active');
+
       var screen = document.getElementById('screen-' + i);
-      screen.classList.toggle('active', i === n);
-      if (i === n) {
-        screen.classList.remove('gone');
-      } else {
-        // delay hiding to let fade-out finish
-        setTimeout(function (s) { return function() { if (!s.classList.contains('active')) s.classList.add('gone'); }; }(screen), 280);
-      }
+      // Three states: i < n → past (slid left), i === n → active
+      // (centered), i > n → default (off-screen right, waiting).
+      screen.classList.remove('active', 'past');
+      if (i < n) screen.classList.add('past');
+      else if (i === n) screen.classList.add('active');
     }
     if (n === 1) {
-      setTimeout(function () { document.getElementById('llm-key').focus(); }, 320);
+      setTimeout(function () { document.getElementById('llm-key').focus(); }, 380);
     }
     if (n === 2) {
-      setTimeout(function () { document.getElementById('el-key').focus(); }, 320);
+      setTimeout(function () { document.getElementById('el-key').focus(); }, 380);
     }
   }
   function goto(n) { setStep(n); }
