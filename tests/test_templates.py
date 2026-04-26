@@ -43,6 +43,30 @@ def test_mcp_tools_silent():
     assert templates.pre_tool_line("mcp__foo__bar", {"x": 1}) is None
 
 
+def test_skill_speaks_with_name():
+    line = templates.pre_tool_line("Skill", {"skill": "security-review"})
+    assert line == "Running the security-review skill."
+
+
+def test_skill_speaks_without_name():
+    assert templates.pre_tool_line("Skill", {}) == "Running a skill."
+
+
+def test_task_create_speaks_subject():
+    line = templates.pre_tool_line("TaskCreate", {"subject": "Migrate to v2"})
+    assert line == "Tracking: Migrate to v2."
+
+
+def test_send_message_uses_recipient():
+    line = templates.pre_tool_line("SendMessage", {"to": "reviewer-bot"})
+    assert line == "Messaging reviewer-bot."
+
+
+def test_query_and_planmode_tools_silent():
+    for name in ("TaskUpdate", "TaskList", "TaskGet", "ToolSearch", "ExitPlanMode", "EnterWorktree"):
+        assert templates.pre_tool_line(name, {}) is None, name
+
+
 def test_post_tool_silent_by_default():
     assert templates.post_tool_line("Edit", {"filePath": "/a", "success": True}) is None
 
