@@ -33,19 +33,14 @@ DATA_FILES = [
     (
         "heard/personas",
         [
-            os.path.join(ROOT, "heard/personas/jarvis.yaml"),
-            os.path.join(ROOT, "heard/personas/raw.yaml"),
+            os.path.join(ROOT, "heard/personas/aria.md"),
+            os.path.join(ROOT, "heard/personas/friday.md"),
+            os.path.join(ROOT, "heard/personas/jarvis.md"),
+            os.path.join(ROOT, "heard/personas/atlas.md"),
         ],
     ),
-    (
-        "heard/presets",
-        [
-            os.path.join(ROOT, "heard/presets/jarvis.yaml"),
-            os.path.join(ROOT, "heard/presets/ambient.yaml"),
-            os.path.join(ROOT, "heard/presets/silent.yaml"),
-            os.path.join(ROOT, "heard/presets/chatty.yaml"),
-        ],
-    ),
+    # heard/presets/ is now a thin shim that delegates to personas
+    # — no YAML files to bundle.
     (
         "heard/assets",
         [
