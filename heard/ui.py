@@ -219,9 +219,10 @@ class HeardApp(rumps.App):
         self.refresh(None)
 
     def _prompt_api_key(self) -> None:
-        """Three-step onboarding window. Saves whichever keys the user
-        provides into config; either way, marks the user as onboarded so
-        we never re-show this on subsequent launches."""
+        """Four-step onboarding window. Saves whichever keys the user
+        provides into config, installs hooks for the agents they
+        selected, and marks the user as onboarded so we never re-show
+        this on subsequent launches."""
         try:
             from heard import key_window
         except Exception as e:
@@ -251,6 +252,24 @@ class HeardApp(rumps.App):
         eleven = (result.get("elevenlabs") or "").strip()
         if eleven:
             config.set_value("elevenlabs_api_key", eleven)
+
+        # Agent hooks — install for each agent the user checked in step 4.
+        # We catch per-agent so a single failure doesn't abort the rest.
+        agents = result.get("agents") or []
+        if agents:
+            from heard.adapters import ADAPTERS
+            for agent_name in agents:
+                adapter = ADAPTERS.get(agent_name)
+                if adapter is None:
+                    print(f"unknown agent in onboarding: {agent_name!r}", file=sys.stderr)
+                    continue
+                try:
+                    adapter.install()
+                except Exception as e:
+                    print(
+                        f"failed to install hook for {agent_name}: {e}",
+                        file=sys.stderr,
+                    )
 
     def on_github(self, _sender) -> None:
         webbrowser.open("https://github.com/heardlabs/heard")
