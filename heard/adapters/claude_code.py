@@ -19,13 +19,13 @@ def _hook_command() -> str:
 
 def _load_settings() -> dict:
     if SETTINGS_PATH.exists():
-        return json.loads(SETTINGS_PATH.read_text())
+        return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
     return {}
 
 
 def _write_settings(settings: dict) -> None:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_PATH.write_text(json.dumps(settings, indent=2) + "\n")
+    SETTINGS_PATH.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
 
 
 def _install_event(settings: dict, event: str) -> None:

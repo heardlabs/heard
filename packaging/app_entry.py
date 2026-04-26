@@ -35,8 +35,14 @@ from heard.ui import HeardApp  # noqa: E402
 def _run_daemon() -> None:
     try:
         daemon_mod.Daemon().serve()
-    except Exception as e:
-        print(f"heard daemon crashed: {e}", file=sys.stderr, flush=True)
+    except Exception:
+        # Print the full traceback — without it, "daemon crashed" is
+        # untraceable in /tmp/heard-stderr or the menu-bar console
+        # log, and we lose the exact failing import chain.
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
 
 
 if __name__ == "__main__":

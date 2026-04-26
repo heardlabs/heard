@@ -35,7 +35,7 @@ def _hook_command() -> str:
 def _load_hooks() -> dict:
     if HOOKS_PATH.exists():
         try:
-            return json.loads(HOOKS_PATH.read_text())
+            return json.loads(HOOKS_PATH.read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
@@ -43,7 +43,7 @@ def _load_hooks() -> dict:
 
 def _write_hooks(data: dict) -> None:
     HOOKS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    HOOKS_PATH.write_text(json.dumps(data, indent=2) + "\n")
+    HOOKS_PATH.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def _install_event(data: dict, event: str) -> None:
@@ -105,7 +105,7 @@ def is_installed() -> bool:
 def _feature_flag_enabled() -> bool:
     if not CONFIG_PATH.exists():
         return False
-    text = CONFIG_PATH.read_text()
+    text = CONFIG_PATH.read_text(encoding="utf-8")
     # cheap check: look for codex_hooks = true anywhere under [features]
     pattern = re.compile(
         r"\[features\][^\[]*?codex_hooks\s*=\s*true",
