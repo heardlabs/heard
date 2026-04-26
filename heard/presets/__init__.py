@@ -1,22 +1,30 @@
-"""Bundled preset packs. Each is a YAML with a set of config overrides
-that `heard preset <name>` merges into the user config."""
+"""Preset shim — preserves the ``heard preset <name>`` CLI surface
+while the source of truth has moved to personas. A "preset" is now
+just a persona MD file; this module reads frontmatter and returns
+a config-overrides dict.
+
+Kept as a thin layer so the CLI doesn't have to know about MDs.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import yaml
-
-BUNDLED_DIR = Path(__file__).parent
+from heard import persona
 
 
 def list_bundled() -> list[str]:
-    return sorted(p.stem for p in BUNDLED_DIR.glob("*.yaml"))
+    """Names of personas available as presets — same listing as
+    ``heard.persona.list_bundled``, deduped across .md/.yaml."""
+    return persona.list_bundled()
 
 
 def load(name: str) -> dict:
-    path = BUNDLED_DIR / f"{name}.yaml"
-    if not path.exists():
+    """Return the frontmatter dict that ``heard preset <name>`` merges
+    into the user config. Always includes ``persona: <name>`` so the
+    persona switch fires alongside the voice/speed/verbosity overrides.
+    """
+    meta = persona.load_meta(name)
+    if not meta:
         raise FileNotFoundError(name)
-    data = yaml.safe_load(path.read_text()) or {}
-    return dict(data)
+    out = dict(meta)
+    out.setdefault("persona", name)
+    return out

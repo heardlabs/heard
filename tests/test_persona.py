@@ -13,18 +13,22 @@ def test_raw_returns_neutral_unchanged():
     assert out == "Running the test suite."
 
 
-def test_jarvis_template_uses_override():
+def test_tool_events_stay_clean_with_jarvis():
+    """Per the new persona MD design, "Sir" only lands on final
+    summaries — tool announcements stay neutral. Verifies the
+    rewrite() fallback honours that even when Haiku is unavailable."""
     p = persona.load("jarvis")
     with patch.object(persona, "_haiku_enabled", return_value=False):
         out = p.rewrite("tool_pre", "Editing auth.py.", "tool_edit", {"file": "auth.py"}, {})
-    assert out == "Editing auth.py, Sir."
+    assert out == "Editing auth.py."
+    assert "Sir" not in out
 
 
-def test_jarvis_template_fallback_suffixes_address():
+def test_jarvis_final_suffixes_address_when_haiku_off():
+    """When Haiku is disabled, finals fall back to neutral + address."""
     p = persona.load("jarvis")
     with patch.object(persona, "_haiku_enabled", return_value=False):
-        # tag with no override in templates → neutral with Sir suffix
-        out = p.rewrite("tool_pre", "Something unusual.", "unknown_tag", {}, {})
+        out = p.rewrite("final", "I've finished the migration.", "final_short", {}, {})
     assert out.endswith("Sir.")
 
 
@@ -33,19 +37,9 @@ def test_unknown_persona_falls_back_to_raw():
     assert p.is_raw is True
 
 
-def test_list_bundled_includes_jarvis_and_raw():
+def test_list_bundled_returns_four_personas():
     names = persona.list_bundled()
-    assert "jarvis" in names
-    assert "raw" in names
-
-
-def test_template_substitution():
-    p = persona.load("jarvis")
-    with patch.object(persona, "_haiku_enabled", return_value=False):
-        out = p.rewrite("tool_pre", "Fetching example.com.", "tool_webfetch", {"host": "example.com"}, {})
-    # jarvis templates don't override tool_webfetch with substitution, but let's
-    # at least check it returned something sensible
-    assert out
+    assert {"aria", "friday", "jarvis", "atlas"}.issubset(set(names))
 
 
 def test_tool_events_never_hit_haiku(monkeypatch):
@@ -70,21 +64,15 @@ def test_tool_events_never_hit_haiku(monkeypatch):
     assert called["n"] == 1
 
 
-def test_haiku_timeout_falls_back_to_template(monkeypatch):
+def test_haiku_failure_falls_back_to_neutral(monkeypatch):
+    """Haiku returning None (timeout, network, no key) on a final
+    event must fall back to neutral + address — not crash, not return
+    empty."""
     p = persona.load("jarvis")
-
-    def boom(*a, **kw):
-        raise TimeoutError("slow haiku")
-
     monkeypatch.setattr(persona, "_haiku_enabled", lambda: True)
-    monkeypatch.setattr(persona, "_haiku_rewrite", boom)
-    # _haiku_rewrite raises, but rewrite() swallows and falls back
-    # (note: in current impl the try/except is inside _haiku_rewrite itself;
-    # we patch it to None return via a different monkey)
     monkeypatch.setattr(persona, "_haiku_rewrite", lambda *a, **kw: None)
-    out = p.rewrite("tool_pre", "Running tests.", "tool_bash_test", {}, {})
-    # Should fall back to jarvis template for tool_bash_test
-    assert out == "Running the tests now."
+    out = p.rewrite("final", "Migration done.", "final_short", {}, {})
+    assert out == "Migration done, Sir."
 
 
 def test_suffix_address_skips_if_already_present():
