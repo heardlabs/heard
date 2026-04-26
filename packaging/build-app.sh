@@ -61,6 +61,22 @@ if [[ ! -f "$FRAMEWORKS/libffi.8.dylib" ]]; then
   echo "WARN: libffi.8.dylib not found next to the interpreter; the app may crash on launch." >&2
 fi
 
+# _ctypes.so's only rpath is @loader_path/../../ which resolves to
+# Contents/Resources/lib/pythonX.Y/ — NOT Frameworks/. Without a copy
+# of libffi at that path, every `import ctypes` fails inside the
+# bundle (and `import ctypes` is on the daemon's import chain via
+# audio_monitor → ctypes), so the daemon never starts. Stage a copy
+# next to lib-dynload so the rpath search succeeds.
+echo "==> staging libffi for _ctypes rpath"
+PY_VER=$("$PY" -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')")
+CTYPES_DIR="$BUNDLE/Contents/Resources/lib/$PY_VER"
+if [[ -d "$CTYPES_DIR" && -f "$FRAMEWORKS/libffi.8.dylib" ]]; then
+  cp "$FRAMEWORKS/libffi.8.dylib" "$CTYPES_DIR/libffi.8.dylib"
+  echo "   staged → $CTYPES_DIR/libffi.8.dylib"
+else
+  echo "WARN: couldn't stage libffi for _ctypes rpath ($CTYPES_DIR)." >&2
+fi
+
 # libsndfile patch: py2app packages soundfile into the zip archive but the
 # _soundfile_data/libsndfile_*.dylib can't be dlopen'd from inside a zip.
 # We copy it out to Contents/Resources/_soundfile_data/ where soundfile's
