@@ -32,6 +32,25 @@ HAIKU_MODEL = "claude-haiku-4-5"
 HAIKU_TIMEOUT_S = 2.5
 HAIKU_MAX_TOKENS = 160
 
+# Discipline rules prepended to every persona's system prompt before the
+# Haiku call. Keeping these out of the persona MD files means tweaking
+# the global narration policy is a one-line code change, and forking a
+# persona is purely about tone.
+_SHARED_NARRATION_RULES = """\
+You are narrating to a developer who is writing code while you speak.
+Their attention is the bottleneck — be brief.
+
+Rules that apply regardless of persona:
+- Lead with the outcome, not the journey.
+- Match the brevity of the input. If the agent wrote one sentence, you write
+  one. Don't expand.
+- File paths: name 1-3 by name; aggregate above that ("fourteen files in
+  src/auth").
+- Numbers always: line counts, test counts, sizes, durations.
+- Drop adverbs. Drop "I" unless the persona explicitly requires it.
+- One sentence per beat. Two for finals at most.
+"""
+
 
 @dataclass
 class Persona:
@@ -79,10 +98,19 @@ class Persona:
             if haiku:
                 return haiku
 
+        # Backwards compat: legacy YAML personas could ship a templates
+        # dict; new MD personas don't. If a fork ships one, honour it.
         tpl = self.template(tag, ctx)
         if tpl:
             return tpl
-        return _suffix_address(neutral, self.address)
+
+        # Address suffix only on finals — tool events stay clean.
+        # Each persona MD encodes "Sir appears only on summaries" in
+        # its system prompt; this enforces it at the template fallback
+        # path so the rule holds even when Haiku is unavailable.
+        if event_kind == "final":
+            return _suffix_address(neutral, self.address)
+        return neutral
 
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
@@ -241,11 +269,12 @@ def _haiku_rewrite(
         return None
 
     user_msg = _build_user_message(event_kind, neutral, tag, ctx, session)
+    full_system = _SHARED_NARRATION_RULES + "\n\n" + persona.system_prompt
     try:
         msg = client.messages.create(
             model=HAIKU_MODEL,
             max_tokens=HAIKU_MAX_TOKENS,
-            system=persona.system_prompt,
+            system=full_system,
             messages=[{"role": "user", "content": user_msg}],
             timeout=HAIKU_TIMEOUT_S,
         )
