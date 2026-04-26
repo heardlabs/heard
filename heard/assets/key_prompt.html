@@ -474,6 +474,24 @@
     if (e.target.closest('button, input, label, .field')) return;
     post('drag', {});
   });
+  // Belt-and-braces focus: clicking anywhere inside a .field forces focus
+  // onto the contained input. WKWebView in a borderless NSWindow
+  // sometimes doesn't propagate label→input the way a normal browser
+  // does, so we reach in and focus explicitly.
+  document.addEventListener('click', function (e) {
+    var field = e.target.closest('.field');
+    if (!field) return;
+    var input = field.querySelector('input');
+    if (input) input.focus();
+  });
+  // Auto-focus the LLM key field as soon as the window loads — no need
+  // for the user to click first.
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      var first = document.getElementById('llm-key');
+      if (first) first.focus();
+    }, 80);
+  });
 </script>
 </body>
 </html>
