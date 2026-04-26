@@ -8,7 +8,7 @@ Counterpart to input tools like [Wispr Flow](https://wisprflow.ai). Wispr handle
 
 ### Menu bar app (recommended)
 
-1. Download the latest `Heard-v*.zip` from [Releases](https://github.com/sodiumsun/heard/releases).
+1. Download the latest `Heard-v*.zip` from [Releases](https://github.com/heardlabs/heard/releases).
 2. Unzip and drag `Heard.app` into `/Applications`.
 3. **First launch:** right-click `Heard.app` → **Open** (it's an unsigned build, so macOS Gatekeeper will refuse a normal double-click — right-click bypasses that one time).
 4. The onboarding window walks you through three screens: API key (optional, powers in-character persona rewrites), voice (Kokoro free or paste an ElevenLabs key), and the silence/replay hotkey.

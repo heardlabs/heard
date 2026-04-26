@@ -253,7 +253,7 @@ class HeardApp(rumps.App):
             config.set_value("elevenlabs_api_key", eleven)
 
     def on_github(self, _sender) -> None:
-        webbrowser.open("https://github.com/sodiumsun/heard")
+        webbrowser.open("https://github.com/heardlabs/heard")
 
     def on_quit(self, _sender) -> None:
         rumps.quit_application()
