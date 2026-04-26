@@ -28,6 +28,7 @@ from AppKit import (
     NSWindow,
     NSWindowStyleMaskBorderless,
 )
+from Foundation import NSTimer
 from WebKit import (
     WKUserContentController,
     WKWebView,
@@ -212,29 +213,35 @@ def prompt() -> dict[str, Any]:
     window.center()
     state["window"] = window
 
-    # Bring our app forward and make this window key so the input
-    # actually receives keystrokes.
-    #
-    # LSUIElement=true (menu-bar app) starts the app at activation
-    # policy "Accessory", which prevents a borderless window from
-    # properly becoming key — text fields look interactive but don't
-    # receive keystrokes. Temporarily flip to Regular for the duration
-    # of the modal, then restore Accessory so the Dock icon doesn't
-    # linger after onboarding closes.
-    prev_policy = NSApp.activationPolicy()
-    try:
-        NSApp.setActivationPolicy_(0)  # NSApplicationActivationPolicyRegular
-    except Exception:
-        pass
+    # Tell the window which view should become first responder when the
+    # window goes key. For a borderless NSWindow embedding a WKWebView,
+    # makeFirstResponder_ alone is unreliable — the webview ends up
+    # nominally selected but the DOM never gets focus, so keystrokes
+    # bounce as system beeps. setInitialFirstResponder_ wires the
+    # responder chain at window-level, BEFORE the window goes key.
+    window.setInitialFirstResponder_(webview)
+
     NSApp.activateIgnoringOtherApps_(True)
     window.makeKeyAndOrderFront_(None)
     window.makeFirstResponder_(webview)
 
-    try:
-        NSApp.runModalForWindow_(window)
-    finally:
+    # Force-focus the LLM key input from native side, ~250 ms after the
+    # modal starts running. WKWebView treats programmatic focus() calls
+    # in JS as soft requests that can be ignored without a prior user
+    # gesture; the same focus() call dispatched via evaluateJavaScript
+    # AFTER the modal session is up bypasses that restriction. The
+    # block-form NSTimer keeps the closure alive via PyObjC.
+    def _force_focus(_timer):
         try:
-            NSApp.setActivationPolicy_(prev_policy)
+            webview.evaluateJavaScript_completionHandler_(
+                "var el = document.getElementById('llm-key');"
+                "if (el) { el.focus(); el.select && el.select(); }",
+                None,
+            )
         except Exception:
             pass
+
+    NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.25, False, _force_focus)
+
+    NSApp.runModalForWindow_(window)
     return result
