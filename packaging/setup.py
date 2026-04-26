@@ -85,6 +85,17 @@ OPTIONS = {
         "yaml",
         "platformdirs",
         "rich",
+        # The frozen Python ships without a CA bundle, so every HTTPS
+        # call fails CERTIFICATE_VERIFY_FAILED unless we bundle certifi
+        # and point SSL_CERT_FILE at it (see packaging/app_entry.py).
+        "certifi",
+        # requests / httpx complain at import time when these aren't
+        # discoverable; the warning was the first line of every daemon
+        # log run and the SDK silently degraded. Bundle them so the
+        # network stack is healthy from the first boot.
+        "charset_normalizer",
+        "idna",
+        "urllib3",
     ],
     "includes": ["pkg_resources", "WebKit"],
     "excludes": [
