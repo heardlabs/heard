@@ -119,7 +119,34 @@ def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narrati
             if q:
                 return Narration(tag="tool_question", text=q, ctx={"question": q})
         return None
-    if tn in ("TodoWrite", "ExitPlanMode", "EnterPlanMode"):
+    if tn == "Skill":
+        skill = (tool_input.get("skill") or "").strip()
+        text = f"Running the {skill} skill." if skill else "Running a skill."
+        return Narration(tag="tool_skill", text=text, ctx={"skill": skill})
+    if tn == "TaskCreate":
+        subj = (tool_input.get("subject") or "").strip()
+        text = f"Tracking: {subj}." if subj else "Adding a task."
+        return Narration(tag="tool_task_create", text=text, ctx={"subject": subj})
+    if tn == "SendMessage":
+        to = (tool_input.get("to") or "").strip()
+        text = f"Messaging {to}." if to else "Sending a message."
+        return Narration(tag="tool_send_message", text=text, ctx={"to": to})
+    # Silent on purpose: query/status tools (like Read), plan-mode
+    # transitions (the agent narrates its own beats around them), and
+    # MCP tools (their output shape isn't standardized).
+    if tn in (
+        "TodoWrite",
+        "TaskUpdate",
+        "TaskList",
+        "TaskGet",
+        "TaskOutput",
+        "TaskStop",
+        "ToolSearch",
+        "ExitPlanMode",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitWorktree",
+    ):
         return None
     if tn.startswith("mcp__"):
         return None
