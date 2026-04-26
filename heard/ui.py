@@ -50,6 +50,12 @@ class HeardApp(rumps.App):
     def _build_menu(self) -> None:
         self.status_item = rumps.MenuItem("…")
         self.status_item.set_callback(None)
+        # Second line surfaces the most recent synth failure so the
+        # user doesn't have to tail daemon.log to learn the product
+        # is silent because of (e.g.) an SSL handshake failure.
+        # Hidden until there's something to show.
+        self.error_item = rumps.MenuItem("")
+        self.error_item.set_callback(None)
 
         silence_item = rumps.MenuItem("Silence  ⌘⇧.", callback=self.on_silence)
 
@@ -87,10 +93,13 @@ class HeardApp(rumps.App):
         options_menu["Narrate tool calls"] = self.narrate_tools_item
         options_menu["Set API key…"] = rumps.MenuItem("Set API key…", callback=self.on_set_api_keys)
         options_menu["Open config file"] = rumps.MenuItem("Open config file", callback=self.on_open_config)
+        options_menu["Open daemon log"] = rumps.MenuItem("Open daemon log", callback=self.on_open_log)
+        options_menu["Restart daemon"] = rumps.MenuItem("Restart daemon", callback=self.on_restart_daemon)
         options_menu["GitHub"] = rumps.MenuItem("GitHub", callback=self.on_github)
 
         self.menu = [
             self.status_item,
+            self.error_item,
             None,
             silence_item,
             None,
@@ -107,7 +116,8 @@ class HeardApp(rumps.App):
 
     def refresh(self, _timer) -> None:
         cfg = config.load()
-        alive = client.is_daemon_alive()
+        status = client.get_status()
+        alive = bool(status) or client.is_daemon_alive()
 
         # First-launch onboarding: only if the user hasn't been through it
         # yet. The flag is set inside _prompt_api_key once the flow
@@ -117,14 +127,22 @@ class HeardApp(rumps.App):
             if not cfg.get("onboarded"):
                 self._first_launch_prompt()
 
-        # Icon stays constant; state communicated through the status_item
-        # text inside the dropdown. Keeps the menu bar tidy.
+        last_error = (status or {}).get("last_error") or None
+
         if not alive:
-            self.status_item.title = "daemon stopped"
+            self.status_item.title = "⚠ daemon stopped"
+        elif last_error:
+            self.status_item.title = f"⚠ {self._error_label(last_error.get('kind', ''))}"
         elif not cfg.get("narrate_tools", True):
             self.status_item.title = self._status_line(cfg, "muted")
         else:
             self.status_item.title = self._status_line(cfg, "on")
+
+        if last_error:
+            msg = (last_error.get("message") or "").strip()
+            self.error_item.title = msg[:80] if msg else ""
+        else:
+            self.error_item.title = ""
 
         active_persona = cfg.get("persona", "raw")
         for name, item in self.persona_menu.items():
@@ -144,6 +162,15 @@ class HeardApp(rumps.App):
         voice = cfg.get("voice", "—")
         verb = cfg.get("verbosity", "normal")
         return f"{state} · {persona} · {voice} · {verb}"
+
+    def _error_label(self, kind: str) -> str:
+        return {
+            "elevenlabs_auth": "ElevenLabs key invalid",
+            "ssl": "TLS handshake failed",
+            "elevenlabs_network": "ElevenLabs unreachable",
+            "synth_generic": "couldn't synthesise",
+            "memory_pressure": "system memory low",
+        }.get(kind, kind or "synth failed")
 
     # --- action callbacks ---------------------------------------------------
 
@@ -240,6 +267,41 @@ class HeardApp(rumps.App):
         if not path.exists():
             path.write_text("")
         subprocess.Popen(["open", str(path)])
+
+    def on_open_log(self, _sender) -> None:
+        import subprocess
+
+        path = Path(config.LOG_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text("")
+        subprocess.Popen(["open", str(path)])
+
+    def on_restart_daemon(self, _sender) -> None:
+        """Kill the running daemon (if any) and respawn — gives users a
+        recovery path that doesn't require a terminal pkill."""
+        import subprocess
+
+        try:
+            client.send({"cmd": "stop"})
+        except Exception:
+            pass
+        # Belt-and-suspenders: in the .app bundle the daemon runs in
+        # this same process, so a hard kill would take down the menu
+        # bar. Use pkill on the standalone case only.
+        if config.PID_PATH.exists():
+            try:
+                pid = int(config.PID_PATH.read_text().strip())
+                # Don't kill ourselves — only foreign daemons.
+                if pid and pid != __import__("os").getpid():
+                    subprocess.run(["kill", str(pid)], check=False)
+            except Exception:
+                pass
+        try:
+            client.ensure_daemon()
+        except Exception:
+            pass
+        self.refresh(None)
 
     def _first_launch_prompt(self) -> None:
         """Right-on-launch ask for an API key. Cancel = skip."""
