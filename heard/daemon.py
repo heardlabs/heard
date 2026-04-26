@@ -21,12 +21,35 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from heard import accessibility, audio_monitor, config, hotkey, notify, verbosity
 from heard import persona as persona_mod
 from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
+
+DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
+
+
+def _log(event: str, **fields: object) -> None:
+    """One structured line per event, parseable by eye and by grep.
+
+    Replaces the scattered print() calls that made silent drops
+    impossible to trace. Format keeps key=value pairs so a future
+    log-streaming script can pick this up without parsing English.
+    """
+    parts = [f"t={time.strftime('%H:%M:%S')}", f"ev={event}"]
+    for k, v in fields.items():
+        if v is None or v == "":
+            continue
+        s = str(v).replace("\n", " ")
+        if len(s) > 120:
+            s = s[:117] + "…"
+        if " " in s or "=" in s:
+            s = '"' + s.replace('"', "'") + '"'
+        parts.append(f"{k}={s}")
+    print(" ".join(parts), flush=True)
 
 
 def _split(text: str) -> list[str]:
@@ -51,10 +74,18 @@ class Daemon:
         self._current_proc: subprocess.Popen | None = None
         self._current_cancel: threading.Event | None = None
         self._last_spoken: str = ""
+        self._last_error: dict | None = None
         self._hotkey_listener: object | None = None
         self._audio_monitor: audio_monitor.AudioMonitor | None = None
         self._start_hotkey()
         self._start_audio_monitor()
+        _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+
+    def _record_error(self, kind: str, message: str) -> None:
+        """Capture the latest failure so the menu bar can show it.
+        Cleared on the next successful synth so a transient blip
+        doesn't stay visible forever."""
+        self._last_error = {"kind": kind, "message": message[:200], "ts": int(time.time())}
 
     def _start_hotkey(self, prompt_for_accessibility: bool = False) -> None:
         if not self.cfg.get("hotkey_enabled", True):
@@ -190,39 +221,50 @@ class Daemon:
             )
             os.close(fd)
             path = Path(path_str)
+            t0 = time.monotonic()
             try:
                 self.tts.synth_to_file(chunk, voice, speed, lang, path)
             except ElevenLabsError as e:
-                # Surface to the user — silent failure here means the
-                # narration just stops with no explanation. Most likely
-                # cause is an invalid key, so guide them there.
                 msg = str(e)
                 if "401" in msg or "invalid_api_key" in msg.lower():
+                    self._record_error("elevenlabs_auth", msg)
                     notify.notify(
                         "Heard — ElevenLabs key invalid",
                         "Your ElevenLabs key was rejected. Open Heard from the menu bar to fix it.",
                         kind="elevenlabs_auth",
                     )
+                elif "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
+                    # Distinct kind so the menu bar can suggest the
+                    # specific fix (reinstall / report).
+                    self._record_error("ssl", msg)
+                    notify.notify(
+                        "Heard — TLS verification failed",
+                        "The HTTPS handshake to ElevenLabs failed. Run `heard doctor`.",
+                        kind="ssl",
+                    )
                 else:
+                    self._record_error("elevenlabs_network", msg)
                     notify.notify(
                         "Heard — voice service unreachable",
                         "ElevenLabs didn't respond. Check your connection or your account.",
                         kind="elevenlabs_network",
                     )
-                print(f"synth error: {e}", file=sys.stderr, flush=True)
+                _log("synth_failed", backend=type(self.tts).__name__, err=msg)
                 path.unlink(missing_ok=True)
                 continue
             except Exception as e:
-                # Generic synth failure — Kokoro download issue, disk
-                # full, etc. One notification per session via dedup tag.
+                self._record_error("synth_generic", str(e))
                 notify.notify(
                     "Heard — couldn't generate audio",
                     "Run `heard doctor` for details.",
                     kind="synth_generic",
                 )
-                print(f"synth error: {e}", file=sys.stderr, flush=True)
+                _log("synth_failed", backend=type(self.tts).__name__, err=str(e))
                 path.unlink(missing_ok=True)
                 continue
+            synth_ms = int((time.monotonic() - t0) * 1000)
+            _log("synth_ok", backend=type(self.tts).__name__, ms=synth_ms, chars=len(chunk))
+            self._last_error = None  # successful synth clears the badge
             if cancel.is_set():
                 path.unlink(missing_ok=True)
                 return
@@ -300,18 +342,15 @@ class Daemon:
         session_id = sess_payload.get("id") or "default"
         cwd = sess_payload.get("cwd")
 
-        # resolve per-project config + persona for this event's cwd
         cfg = config.load(cwd=cwd)
         persona = self._persona_for(cfg)
-
-        # update session state
         session = self.sessions.touch(session_id, cwd=cwd)
 
-        # verbosity gate — drop early to avoid Haiku spend on silenced events
         if kind == "tool_pre":
             density = self.sessions.tool_density(session_id)
             if not verbosity.should_narrate_pre(cfg, tag, density):
                 self.sessions.record_tool_event(session_id)
+                _log("event_drop", kind=kind, tag=tag, reason="verbosity_pre", density=density)
                 return
             self.sessions.record_tool_event(session_id)
         elif kind == "tool_post":
@@ -319,17 +358,17 @@ class Daemon:
                 self.sessions.note_failure(session_id)
                 session = self.sessions.get(session_id)
             if not verbosity.should_narrate_post(cfg, tag):
+                _log("event_drop", kind=kind, tag=tag, reason="verbosity_post")
                 return
         elif kind == "final":
-            # length-based fallback summarization for template mode
             budget = verbosity.final_char_budget(cfg)
             if len(neutral) > budget and persona.is_raw:
                 neutral = verbosity.truncate_to_sentences(neutral, budget)
 
         if not neutral:
+            _log("event_drop", kind=kind, tag=tag, reason="empty_neutral")
             return
 
-        # persona rewrite
         final = persona.rewrite(
             event_kind=kind,
             neutral=neutral,
@@ -338,16 +377,17 @@ class Daemon:
             session=session,
         )
         if not final:
+            _log("event_drop", kind=kind, tag=tag, reason="persona_empty", persona=persona.name)
             return
 
-        # post-rewrite: if Haiku was skipped and final is still over budget,
-        # truncate so the user doesn't have to listen to a wall of text
         if kind == "final" and len(final) > verbosity.final_char_budget(cfg):
             final = verbosity.truncate_to_sentences(final, verbosity.final_char_budget(cfg))
 
-        # lightweight topic tracking
         self.sessions.note_topic(session_id, tag)
 
+        _log("event_speak", kind=kind, tag=tag, persona=persona.name, chars=len(final))
+        if DEBUG:
+            _log("event_speak_detail", text=final)
         self._start_speech(final, cfg=cfg, persona=persona)
 
     def _persona_for(self, cfg: dict) -> persona_mod.Persona:
@@ -356,17 +396,28 @@ class Daemon:
             return self.persona
         return persona_mod.load(name, config_dir=config.CONFIG_DIR)
 
-    def _handle(self, raw: str) -> None:
+    def _handle(self, raw: str) -> bytes | None:
+        """Handle one request. Returns response bytes for commands that
+        speak back (status), or None for fire-and-forget commands."""
         try:
             req = json.loads(raw)
         except Exception:
-            return
+            return None
         cmd = req.get("cmd", "speak")
         if cmd == "ping":
-            return
+            return None
+        if cmd == "status":
+            payload = {
+                "alive": True,
+                "backend": type(self.tts).__name__,
+                "persona": self.persona.name,
+                "narrate_tools": bool(self.cfg.get("narrate_tools", True)),
+                "last_error": self._last_error,
+            }
+            return json.dumps(payload).encode("utf-8")
         if cmd == "reload":
             self._reload_config()
-            return
+            return None
         if cmd == "request_accessibility":
             # Fired by the UI after onboarding finishes. Triggers the
             # macOS Accessibility prompt, then restarts the hotkey
@@ -380,19 +431,20 @@ class Daemon:
                     pass
                 self._hotkey_listener = None
             self._start_hotkey(prompt_for_accessibility=True)
-            return
+            return None
         if cmd == "stop":
             self._cancel_only()
-            return
+            return None
         if cmd == "replay":
             self._replay_last()
-            return
+            return None
         if cmd == "event":
             self._handle_event(req)
-            return
+            return None
 
         # default: plain speak (legacy {"text": "..."} path)
         self._start_speech(req.get("text") or "")
+        return None
 
     def serve(self) -> None:
         sock_path = str(config.SOCKET_PATH)
@@ -435,7 +487,12 @@ class Daemon:
                     if not chunk:
                         break
                     buf += chunk
-            self._handle(buf.decode("utf-8", errors="ignore"))
+                resp = self._handle(buf.decode("utf-8", errors="ignore"))
+                if resp is not None:
+                    try:
+                        conn.sendall(resp)
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"request error: {e}", file=sys.stderr, flush=True)
 

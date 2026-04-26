@@ -251,6 +251,46 @@ def send(payload: dict) -> None:
     s.close()
 
 
+def request(payload: dict, timeout_s: float = 2.0) -> dict:
+    """Send a payload and read a JSON response back. Used by commands
+    that need a reply (status, doctor self-test). The daemon waits for
+    our half-close before replying, so we shutdown(SHUT_WR) after
+    sending. Returns {} on any failure — callers treat that as
+    'daemon unreachable'."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout_s)
+    try:
+        s.connect(str(config.SOCKET_PATH))
+        s.sendall(json.dumps(payload).encode())
+        s.shutdown(socket.SHUT_WR)
+        buf = b""
+        while True:
+            chunk = s.recv(8192)
+            if not chunk:
+                break
+            buf += chunk
+    except Exception:
+        return {}
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+    if not buf:
+        return {}
+    try:
+        return json.loads(buf.decode("utf-8", errors="ignore"))
+    except Exception:
+        return {}
+
+
+def get_status() -> dict:
+    """Snapshot of daemon state. Empty dict if the daemon is down."""
+    if not is_daemon_alive():
+        return {}
+    return request({"cmd": "status"})
+
+
 def _send_with_retry(payload: dict) -> None:
     ensure_daemon()
     try:
