@@ -21,6 +21,8 @@ from AppKit import (
     NSBackingStoreBuffered,
     NSColor,
     NSMakeRect,
+    NSMenu,
+    NSMenuItem,
     NSObject,
     NSVisualEffectBlendingModeBehindWindow,
     NSVisualEffectStateActive,
@@ -45,6 +47,34 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 HTML_PATH = ASSETS_DIR / "key_prompt.html"
 
 WINDOW_W, WINDOW_H = 520, 500
+
+
+def _ensure_edit_menu() -> None:
+    """LSUIElement=true apps start with no main menu, which means Cmd-V
+    (and Cmd-C / Cmd-X / Cmd-A) never get routed into the responder
+    chain — typing works because raw keys hit WKWebView directly, but
+    clipboard shortcuts beep because there's no menu to translate them
+    into ``paste:`` / ``copy:`` / etc. Install a hidden minimal Edit
+    menu so those shortcuts dispatch normally. Idempotent: if a main
+    menu already exists, leave it alone."""
+    if NSApp.mainMenu() is not None:
+        return
+
+    main_menu = NSMenu.alloc().init()
+    edit_top = NSMenuItem.alloc().init()
+    main_menu.addItem_(edit_top)
+
+    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+    for title, selector, key in (
+        ("Cut", "cut:", "x"),
+        ("Copy", "copy:", "c"),
+        ("Paste", "paste:", "v"),
+        ("Select All", "selectAll:", "a"),
+    ):
+        edit_menu.addItemWithTitle_action_keyEquivalent_(title, selector, key)
+    edit_top.setSubmenu_(edit_menu)
+
+    NSApp.setMainMenu_(main_menu)
 
 
 def _total_system_memory_gb() -> float | None:
@@ -106,6 +136,12 @@ def prompt() -> dict[str, Any]:
     {action, llm, elevenlabs, agents}. action is 'finish' (with
     possibly empty keys if the user skipped) or 'cancel'. agents is
     a list of agent names the user wants hooks installed for."""
+    # Cmd-V / Cmd-C / Cmd-A only work if NSApp has a main menu wired
+    # to the standard editing selectors. LSUIElement apps don't get one
+    # by default; install a hidden minimal Edit menu before the modal
+    # runs so the API-key fields accept pasted clipboard content.
+    _ensure_edit_menu()
+
     result: dict[str, Any] = {
         "action": "cancel",
         "llm": "",
