@@ -136,21 +136,29 @@ def test_monitor_stop_is_idempotent():
 
 
 def test_monitor_callback_exception_does_not_kill_thread():
-    """A buggy callback shouldn't take down the poll loop — log + carry on."""
+    """A buggy callback shouldn't take down the poll loop — log + carry on.
+
+    Drives off an explicit threading.Event signal rather than a wall-
+    clock deadline. The previous timing-based version was flaky on CI
+    where thread scheduling runs slower than local."""
+    import threading
     fake = _FakeCA([False, True, True, False, True, True])
     fire_count = {"n": 0}
+    second_fire = threading.Event()
 
     def _boom():
         fire_count["n"] += 1
         if fire_count["n"] == 1:
             raise RuntimeError("first call boom")
+        second_fire.set()
 
     mon = audio_monitor.AudioMonitor(on_recording_started=_boom, poll_interval_s=0.005)
     mon._ca = fake
     mon.start()
-    deadline = time.monotonic() + 0.2
-    while fake.idx < len(fake.script) and time.monotonic() < deadline:
-        time.sleep(0.005)
+    # Wait up to 5s for the second fire — plenty of head-room for any
+    # CI runner scheduling, and we exit the moment we've proven the loop
+    # survived the first exception.
+    assert second_fire.wait(timeout=5.0), "second fire never arrived"
     mon.stop()
     assert fire_count["n"] == 2
 
