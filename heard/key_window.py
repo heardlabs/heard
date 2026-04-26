@@ -43,7 +43,7 @@ _VIBRANCY_MATERIAL = 21
 ASSETS_DIR = Path(__file__).parent / "assets"
 HTML_PATH = ASSETS_DIR / "key_prompt.html"
 
-WINDOW_W, WINDOW_H = 520, 460
+WINDOW_W, WINDOW_H = 520, 500
 
 
 def _total_system_memory_gb() -> float | None:
@@ -102,9 +102,15 @@ class _MessageHandler(NSObject):
 
 def prompt() -> dict[str, Any]:
     """Show the onboarding flow modally. Returns
-    {action, llm, elevenlabs}. action is 'finish' (with possibly empty
-    keys if the user skipped) or 'cancel'."""
-    result: dict[str, Any] = {"action": "cancel", "llm": "", "elevenlabs": ""}
+    {action, llm, elevenlabs, agents}. action is 'finish' (with
+    possibly empty keys if the user skipped) or 'cancel'. agents is
+    a list of agent names the user wants hooks installed for."""
+    result: dict[str, Any] = {
+        "action": "cancel",
+        "llm": "",
+        "elevenlabs": "",
+        "agents": [],
+    }
     state: dict[str, Any] = {"window": None, "stopped": False}
 
     def on_message(action: str, payload: dict) -> None:
@@ -124,6 +130,8 @@ def prompt() -> dict[str, Any]:
         result["action"] = action
         result["llm"] = (payload.get("llm") or "").strip()
         result["elevenlabs"] = (payload.get("elevenlabs") or "").strip()
+        agents_raw = (payload.get("agents") or "").strip()
+        result["agents"] = [a.strip() for a in agents_raw.split(",") if a.strip()] if agents_raw else []
         win = state.get("window")
         if win is not None and not state["stopped"]:
             state["stopped"] = True

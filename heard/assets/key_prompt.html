@@ -194,6 +194,31 @@
   }
   .hero .accent { color: var(--ink-dim); }
 
+  /* Agent picker (screen 4) — checkbox list of agents to install hooks for */
+  .agent-list {
+    display: flex; flex-direction: column; gap: 8px;
+    margin: 4px 0;
+  }
+  .agent-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    background: var(--field-bg);
+    border-radius: 14px;
+    box-shadow: 0 2px 8px rgba(60, 30, 50, 0.05);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .agent-row:hover { background: rgba(255, 255, 255, 0.95); }
+  .agent-row input[type="checkbox"] {
+    width: 18px; height: 18px;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+  .agent-meta { display: flex; flex-direction: column; gap: 2px; }
+  .agent-name { font-size: 13.5px; font-weight: 500; color: var(--ink); }
+  .agent-sub { font-size: 11px; color: var(--ink-faint); }
+
   /* Low-RAM notice — shown on screen 2 only when injected by Python */
   .ram-notice {
     background: rgba(255, 222, 173, 0.4);
@@ -253,6 +278,7 @@
       <div class="dot active" id="dot-1"></div>
       <div class="dot" id="dot-2"></div>
       <div class="dot" id="dot-3"></div>
+      <div class="dot" id="dot-4"></div>
     </div>
 
     <div class="card">
@@ -354,6 +380,36 @@
         </p>
         <div class="footer">
           <div class="legal">You'll find me in the menu bar from now on.</div>
+          <button class="next" onclick="goto(4)" aria-label="Continue">
+            <svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h8M8 4l4 4-4 4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ─────── Screen 4: Agents ─────── -->
+      <div class="screen gone" id="screen-4">
+        <h1>Who should I narrate?</h1>
+        <p>Pick the agents I should listen to. You can change this any time from the menu bar.</p>
+
+        <div class="agent-list">
+          <label class="agent-row">
+            <input type="checkbox" id="agent-claude-code" checked />
+            <div class="agent-meta">
+              <div class="agent-name">Claude Code</div>
+              <div class="agent-sub">Anthropic — installs to ~/.claude/settings.json</div>
+            </div>
+          </label>
+          <label class="agent-row">
+            <input type="checkbox" id="agent-codex" />
+            <div class="agent-meta">
+              <div class="agent-name">Codex</div>
+              <div class="agent-sub">OpenAI — installs to ~/.codex/config.toml</div>
+            </div>
+          </label>
+        </div>
+
+        <div class="footer">
+          <div class="legal">You can wire up more later — or unwire any of these — from the menu bar.</div>
           <button class="next" onclick="finish()" aria-label="Done">
             <svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3.5 3.5L13 5"/></svg>
           </button>
@@ -363,10 +419,11 @@
   </div>
 
 <script>
+  var TOTAL_STEPS = 4;
   var current = 1;
   function setStep(n) {
     current = n;
-    for (var i = 1; i <= 3; i++) {
+    for (var i = 1; i <= TOTAL_STEPS; i++) {
       var dot = document.getElementById('dot-' + i);
       dot.classList.remove('active', 'done');
       if (i < n) dot.classList.add('done');
@@ -396,11 +453,18 @@
   function finish() {
     var llm = (document.getElementById('llm-key') || {}).value || '';
     var el = (document.getElementById('el-key') || {}).value || '';
-    post('finish', { llm: llm.trim(), elevenlabs: el.trim() });
+    var agents = [];
+    if (document.getElementById('agent-claude-code') && document.getElementById('agent-claude-code').checked) {
+      agents.push('claude-code');
+    }
+    if (document.getElementById('agent-codex') && document.getElementById('agent-codex').checked) {
+      agents.push('codex');
+    }
+    post('finish', { llm: llm.trim(), elevenlabs: el.trim(), agents: agents.join(',') });
   }
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
-      if (current < 3) { e.preventDefault(); goto(current + 1); }
+      if (current < TOTAL_STEPS) { e.preventDefault(); goto(current + 1); }
       else { e.preventDefault(); finish(); }
     }
     if (e.key === 'Escape') { e.preventDefault(); finish(); }
