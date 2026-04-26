@@ -105,8 +105,25 @@ def doctor() -> None:
 
 
 @app.command()
-def daemon() -> None:
-    """Run the daemon in the foreground (usually invoked by the LaunchAgent)."""
+def daemon(
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Verbose per-event logging — full text, gate decisions, synth timings.",
+    ),
+) -> None:
+    """Run the daemon in the foreground.
+
+    Used by the LaunchAgent in normal operation. With --debug, the
+    daemon logs every gate decision and the actual text it's about to
+    speak — useful when iterating without tailing the log file.
+    """
+    import os
+
+    if debug:
+        # Set BEFORE importing the daemon module — DEBUG is read at
+        # module import time, not at run() invocation time.
+        os.environ["HEARD_DEBUG"] = "1"
     from heard import daemon as _daemon
 
     _daemon.run()
