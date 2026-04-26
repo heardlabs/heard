@@ -56,10 +56,18 @@ class HeardApp(rumps.App):
         # Persona submenu: clicking applies the persona's full frontmatter
         # (voice, speed, verbosity, narrate_tools) — collapses the old
         # Preset/Persona split now that personas ARE presets.
+        #
+        # IMPORTANT: assign the empty MenuItem to the parent first, then
+        # set the callback by going BACK through the parent menu. In
+        # py2app bundles, rumps' Menu.__setitem__ ends up swapping or
+        # rewrapping the item we built locally, which breaks the
+        # callback dispatch (clicks move the checkmark visually but
+        # never invoke the cb). Setting the callback on the
+        # parent-resolved item is what makes the click actually fire.
         self.persona_menu = rumps.MenuItem("Persona")
         for name in list_presets():
-            item = rumps.MenuItem(name, callback=self._mk_persona_cb(name))
-            self.persona_menu[name] = item
+            self.persona_menu[name] = rumps.MenuItem(name)
+            self.persona_menu[name].set_callback(self._mk_persona_cb(name))
 
         # Speed quick toggle — applies on top of the active persona's
         # speed without changing anything else.
@@ -158,6 +166,7 @@ class HeardApp(rumps.App):
         explicit set_value calls makes the dispatch reliable.
         """
         def cb(_sender):
+            print(f"persona menu click: {name}", file=sys.stderr, flush=True)
             try:
                 from heard import persona as persona_mod
                 meta = persona_mod.load_meta(name) or {}
