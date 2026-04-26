@@ -55,13 +55,23 @@ jobs:
         with:
           files: packaging/dist/Heard-*.zip
           body: |
-            ### Install
+            ### Install with one prompt (lazy mode)
+
+            Paste this into Claude Code, Codex, or your agent of choice:
+
+            > Install Heard so you narrate your responses to me. Run `pipx install heard && heard install claude-code && heard demo`. Then ask me for my ElevenLabs API key and set it via `heard config set elevenlabs_api_key`.
+
+            Your agent does the rest.
+
+            ---
+
+            ### Install manually (menu bar app)
 
             1. Download `Heard-${{ github.ref_name }}.zip` below
             2. Unzip
             3. Drag `Heard.app` into `/Applications`
             4. **First launch:** right-click `Heard.app` → **Open** (unsigned build, so macOS Gatekeeper will refuse a normal double-click — right-click bypasses that one time)
-            5. The onboarding window walks you through three screens: API key (optional, for the Jarvis persona), voice, and the silence/replay hotkey
+            5. The onboarding window walks you through three screens: API key (optional, for in-character persona rewrites), voice, and the silence/replay hotkey
             6. Run `heard install claude-code` in your terminal to wire Heard up to your agent
 
             ### Voice — two options
