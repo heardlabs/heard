@@ -140,7 +140,7 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def _persona_from_md(path: Path, name_hint: str) -> Persona:
-    meta, body = _parse_frontmatter(path.read_text())
+    meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
     return Persona(
         name=str(meta.get("name", name_hint)),
         voice=meta.get("voice"),
@@ -152,7 +152,7 @@ def _persona_from_md(path: Path, name_hint: str) -> Persona:
 
 def _persona_from_yaml(path: Path, name_hint: str) -> Persona:
     """Legacy YAML loader. Removed after v0.3.x — prefer ``.md``."""
-    data = yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return Persona(
         name=str(data.get("name", name_hint)),
         voice=data.get("voice"),
@@ -193,7 +193,7 @@ def load_meta(name: str, config_dir: Path | None = None) -> dict:
     for path, _loader in _candidate_paths(name, config_dir):
         if not path.exists():
             continue
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         if path.suffix == ".md":
             meta, _ = _parse_frontmatter(text)
             return dict(meta)

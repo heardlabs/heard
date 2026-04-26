@@ -37,45 +37,50 @@ BUNDLE="$HERE/dist/Heard.app"
 FRAMEWORKS="$BUNDLE/Contents/Frameworks"
 mkdir -p "$FRAMEWORKS"
 
-# libffi patch: py2app on Python 3.12/3.13 misses libffi.8.dylib even when
-# listed under `frameworks:`. We copy it directly from the interpreter's
-# prefix lib dir. Most supported layouts live at $sys.prefix/lib.
-echo "==> patching libffi"
+# Native dylibs that py2app misses: the bundled Python's _ctypes.so
+# and _ssl.so both link against @rpath/<lib>, but their LC_RPATH is
+# only @loader_path/../../, which resolves to
+# Contents/Resources/lib/pythonX.Y/. Without copies at that path the
+# bundle crashes on `import ctypes` / `import ssl` — which the
+# daemon hits early (audio_monitor → ctypes, tts/elevenlabs → ssl),
+# so the menu bar app fails to start.
+echo "==> patching native dylibs"
 PY_PREFIX=$("$PY" -c "import sys; print(sys.prefix)")
-# venvs point back at the real interpreter via sys.base_prefix
 PY_BASE=$("$PY" -c "import sys; print(sys.base_prefix)")
-
-for base in "$PY_PREFIX" "$PY_BASE"; do
-  for name in libffi.8.dylib libffi.dylib; do
-    candidate="$base/lib/$name"
-    if [[ -f "$candidate" ]]; then
-      if [[ ! -f "$FRAMEWORKS/$name" ]]; then
-        echo "   copying $candidate → $FRAMEWORKS/$name"
-        cp "$candidate" "$FRAMEWORKS/$name"
-      fi
-    fi
-  done
-done
-
-if [[ ! -f "$FRAMEWORKS/libffi.8.dylib" ]]; then
-  echo "WARN: libffi.8.dylib not found next to the interpreter; the app may crash on launch." >&2
-fi
-
-# _ctypes.so's only rpath is @loader_path/../../ which resolves to
-# Contents/Resources/lib/pythonX.Y/ — NOT Frameworks/. Without a copy
-# of libffi at that path, every `import ctypes` fails inside the
-# bundle (and `import ctypes` is on the daemon's import chain via
-# audio_monitor → ctypes), so the daemon never starts. Stage a copy
-# next to lib-dynload so the rpath search succeeds.
-echo "==> staging libffi for _ctypes rpath"
 PY_VER=$("$PY" -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')")
 CTYPES_DIR="$BUNDLE/Contents/Resources/lib/$PY_VER"
-if [[ -d "$CTYPES_DIR" && -f "$FRAMEWORKS/libffi.8.dylib" ]]; then
-  cp "$FRAMEWORKS/libffi.8.dylib" "$CTYPES_DIR/libffi.8.dylib"
-  echo "   staged → $CTYPES_DIR/libffi.8.dylib"
-else
-  echo "WARN: couldn't stage libffi for _ctypes rpath ($CTYPES_DIR)." >&2
-fi
+mkdir -p "$CTYPES_DIR"
+
+# Names dyld will search for via @rpath. libffi for ctypes; libssl +
+# libcrypto for the ssl module (needed for HTTPS, which every TTS
+# request uses).
+DYLIBS=(libffi.8.dylib libffi.dylib libssl.3.dylib libcrypto.3.dylib)
+
+for name in "${DYLIBS[@]}"; do
+  src=""
+  for base in "$PY_PREFIX" "$PY_BASE"; do
+    if [[ -f "$base/lib/$name" ]]; then
+      src="$base/lib/$name"
+      break
+    fi
+  done
+  if [[ -z "$src" ]]; then
+    case "$name" in
+      libffi.8.dylib|libssl.3.dylib|libcrypto.3.dylib)
+        echo "WARN: $name not found next to the interpreter; the app may crash on launch." >&2
+        ;;
+    esac
+    continue
+  fi
+  if [[ ! -f "$FRAMEWORKS/$name" ]]; then
+    cp "$src" "$FRAMEWORKS/$name"
+    echo "   $name → Frameworks/"
+  fi
+  if [[ ! -f "$CTYPES_DIR/$name" ]]; then
+    cp "$src" "$CTYPES_DIR/$name"
+    echo "   $name → Resources/lib/$PY_VER/"
+  fi
+done
 
 # libsndfile patch: py2app packages soundfile into the zip archive but the
 # _soundfile_data/libsndfile_*.dylib can't be dlopen'd from inside a zip.
