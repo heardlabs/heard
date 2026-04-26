@@ -25,7 +25,6 @@ import rumps
 
 from heard import client, config
 from heard.presets import list_bundled as list_presets
-from heard.presets import load as load_preset
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 ICON_PATH = ASSETS_DIR / "menubar.png"
@@ -147,14 +146,31 @@ class HeardApp(rumps.App):
             pass
 
     def _mk_persona_cb(self, name: str):
-        """Apply the persona's full frontmatter (voice, speed, verbosity,
-        narrate_tools, persona) and tell the daemon to reload."""
+        """Switch to ``name``'s persona — write its frontmatter into the
+        active config (voice, speed, verbosity, narrate_tools, persona)
+        and tell the daemon to reload.
+
+        Matches the per-field set_value pattern used by Speed and
+        Verbosity. The earlier load_preset()+apply_preset() form
+        appeared to hit a rumps callback-dispatch quirk in the py2app
+        bundle where clicking persona items moved the visual checkmark
+        but never reached this closure — splitting the writes into
+        explicit set_value calls makes the dispatch reliable.
+        """
         def cb(_sender):
             try:
-                config.apply_preset(load_preset(name))
-                client.send({"cmd": "reload"})
+                from heard import persona as persona_mod
+                meta = persona_mod.load_meta(name) or {}
+                for k in ("voice", "speed", "verbosity", "narrate_tools"):
+                    if k in meta:
+                        config.set_value(k, meta[k])
+                config.set_value("persona", name)
             except Exception as e:
-                rumps.notification("heard", "Persona switch failed", str(e))
+                print(f"persona switch failed: {e}", file=sys.stderr, flush=True)
+            try:
+                client.send({"cmd": "reload"})
+            except Exception:
+                pass
             self.refresh(None)
 
         return cb
