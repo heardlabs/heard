@@ -38,41 +38,48 @@ jobs:
           ./build-app.sh
 
       - name: Zip the bundle
+        # Build two zips with identical contents:
+        #   Heard-vX.Y.Z.zip  → versioned, for archival download
+        #   Heard.zip         → unversioned alias, so the lazy-install
+        #                       curl URL never has to know the version
         run: |
           cd packaging/dist
           zip -ry "Heard-${GITHUB_REF_NAME:-dev}.zip" Heard.app
+          cp "Heard-${GITHUB_REF_NAME:-dev}.zip" Heard.zip
 
       - name: Upload artifact (for workflow_dispatch / non-tag runs)
         if: "!startsWith(github.ref, 'refs/tags/')"
         uses: actions/upload-artifact@v4
         with:
           name: heard-app
-          path: packaging/dist/Heard-*.zip
+          path: |
+            packaging/dist/Heard-*.zip
+            packaging/dist/Heard.zip
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: packaging/dist/Heard-*.zip
+          files: |
+            packaging/dist/Heard-*.zip
+            packaging/dist/Heard.zip
           body: |
             ### Install with one prompt (lazy mode)
 
             Paste this into Claude Code, Codex, or your agent of choice:
 
-            > Install Heard so you narrate your responses to me. Run `pipx install heard && heard install claude-code && heard demo`. Then ask me for my ElevenLabs API key and set it via `heard config set elevenlabs_api_key`.
-
-            Your agent does the rest.
+            > Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
 
             ---
 
             ### Install manually (menu bar app)
 
-            1. Download `Heard-${{ github.ref_name }}.zip` below
+            1. Download `Heard-${{ github.ref_name }}.zip` below (or the unversioned `Heard.zip`)
             2. Unzip
             3. Drag `Heard.app` into `/Applications`
             4. **First launch:** right-click `Heard.app` → **Open** (unsigned build, so macOS Gatekeeper will refuse a normal double-click — right-click bypasses that one time)
-            5. The onboarding window walks you through three screens: API key (optional, for in-character persona rewrites), voice, and the silence/replay hotkey
-            6. Run `heard install claude-code` in your terminal to wire Heard up to your agent
+            5. The onboarding window walks you through four screens: API key (optional, for in-character persona rewrites), voice, the silence/replay hotkey, and which agents to wire up
+            6. Done — Heard is in the menu bar, hooks installed, ready to narrate
 
             ### Voice — two options
 
