@@ -5,7 +5,7 @@ description = "A voice companion for your AI coding agents. Heard speaks your ag
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11,<3.14"
-authors = [{ name = "heardhq" }]
+authors = [{ name = "Heard Labs" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -45,8 +45,8 @@ heard = "heard.cli:app"
 
 [project.urls]
 Homepage = "https://heard.dev"
-Repository = "https://github.com/heardhq/heard"
-Issues = "https://github.com/heardhq/heard/issues"
+Repository = "https://github.com/heardlabs/heard"
+Issues = "https://github.com/heardlabs/heard/issues"
 
 [build-system]
 requires = ["hatchling"]
