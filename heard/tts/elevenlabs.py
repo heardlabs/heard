@@ -17,9 +17,15 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+try:
+    import certifi  # type: ignore
+except ImportError:  # pragma: no cover - dev installs without certifi
+    certifi = None  # type: ignore
 
 API_BASE = "https://api.elevenlabs.io/v1"
 DEFAULT_MODEL_ID = "eleven_flash_v2_5"  # fastest tier; ~75ms TTFB
@@ -86,6 +92,15 @@ class ElevenLabsTTS:
         self.api_key = (api_key or "").strip()
         self.model_id = model_id
         self.timeout_s = timeout_s
+        # py2app's bundled Python ships without a CA bundle on the
+        # filesystem path Python's _ssl module compiled in, so the
+        # default SSL context can't verify api.elevenlabs.io and every
+        # synth fails with CERTIFICATE_VERIFY_FAILED. Build a context
+        # backed by certifi's PEM bundle and reuse it for every call.
+        if certifi is not None:
+            self._ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        else:
+            self._ssl_ctx = ssl.create_default_context()
 
     def is_configured(self) -> bool:
         return bool(self.api_key)
@@ -132,7 +147,7 @@ class ElevenLabsTTS:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout_s, context=self._ssl_ctx) as resp:
                 audio = resp.read()
         except urllib.error.HTTPError as e:
             detail = ""

@@ -12,11 +12,24 @@ defer the daemon start by ~1s via threading.Timer, after which NSApp's
 lazy init has settled and it's safe to touch CF from another thread.
 """
 
+import os
 import sys
 import threading
 
-from heard import daemon as daemon_mod
-from heard.ui import HeardApp
+# Point Python's SSL stack at certifi's CA bundle BEFORE any module
+# that performs HTTPS (anthropic, urllib in tts/elevenlabs, etc.) is
+# imported. The frozen Python inside the .app has no system CA path,
+# so without this every TTS request fails CERTIFICATE_VERIFY_FAILED.
+try:
+    import certifi  # type: ignore
+    _ca = certifi.where()
+    os.environ.setdefault("SSL_CERT_FILE", _ca)
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", _ca)
+except Exception:
+    pass
+
+from heard import daemon as daemon_mod  # noqa: E402
+from heard.ui import HeardApp  # noqa: E402
 
 
 def _run_daemon() -> None:
