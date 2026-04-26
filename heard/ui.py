@@ -288,10 +288,25 @@ class HeardApp(rumps.App):
         rumps.quit_application()
 
 
+def _refresh_existing_hooks() -> None:
+    """At launch, re-write any agent hook entries the user already has
+    so they pick up command changes from the new build (most notably
+    the PYTHONHOME-wrapped invocation needed for py2app bundles).
+    Idempotent — does nothing if no agent hooks exist."""
+    from heard.adapters import ADAPTERS
+    for name, adapter in ADAPTERS.items():
+        try:
+            if adapter.is_installed():
+                adapter.install()
+        except Exception as e:
+            print(f"hook refresh for {name} failed: {e}", file=sys.stderr)
+
+
 def run() -> None:
     # Ensure a daemon exists so refresh() isn't stuck on "stopped".
     try:
         client.ensure_daemon()
     except Exception as e:
         print(f"could not start daemon: {e}", file=sys.stderr)
+    _refresh_existing_hooks()
     HeardApp().run()
