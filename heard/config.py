@@ -83,7 +83,7 @@ def ensure_dirs() -> None:
 
 def _read_yaml(path: Path) -> dict[str, Any]:
     try:
-        with path.open() as f:
+        with path.open(encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
         return {}
@@ -117,8 +117,8 @@ def save(cfg: dict[str, Any]) -> None:
     """Persist non-default values to the global user config file."""
     ensure_dirs()
     user_cfg = {k: v for k, v in cfg.items() if DEFAULTS.get(k) != v}
-    with CONFIG_PATH.open("w") as f:
-        yaml.safe_dump(user_cfg, f, sort_keys=True)
+    with CONFIG_PATH.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(user_cfg, f, sort_keys=True, allow_unicode=True)
 
 
 def set_value(key: str, value: Any) -> None:

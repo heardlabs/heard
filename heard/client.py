@@ -222,14 +222,17 @@ def ensure_daemon() -> bool:
         except FileNotFoundError:
             pass
 
-        logf = open(config.LOG_PATH, "a")
-        subprocess.Popen(
-            [sys.executable, "-m", "heard.daemon"],
-            stdin=subprocess.DEVNULL,
-            stdout=logf,
-            stderr=logf,
-            start_new_session=True,
-        )
+        # Open logf in a context — Popen dups the fd into the child
+        # process, so closing on our side after spawn is safe and
+        # avoids leaking one parent-side FD per ensure_daemon call.
+        with open(config.LOG_PATH, "a", encoding="utf-8") as logf:
+            subprocess.Popen(
+                [sys.executable, "-m", "heard.daemon"],
+                stdin=subprocess.DEVNULL,
+                stdout=logf,
+                stderr=logf,
+                start_new_session=True,
+            )
         return _wait_for_daemon(20.0)
     finally:
         if acquired:
@@ -331,7 +334,7 @@ def send_event(
 def extract_last_assistant_text(transcript_path: str) -> str:
     last = ""
     try:
-        with open(transcript_path) as f:
+        with open(transcript_path, encoding="utf-8") as f:
             for line in f:
                 try:
                     msg = json.loads(line)
@@ -357,7 +360,7 @@ def extract_assistant_texts(transcript_path: str) -> list[str]:
     """
     out: list[str] = []
     try:
-        with open(transcript_path) as f:
+        with open(transcript_path, encoding="utf-8") as f:
             for line in f:
                 try:
                     msg = json.loads(line)
