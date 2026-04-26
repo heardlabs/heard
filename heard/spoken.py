@@ -12,8 +12,11 @@ which is more than enough for a single CC session's worth of messages.
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 
@@ -29,6 +32,55 @@ def _state_path(session_id: str) -> Path:
     sd.mkdir(parents=True, exist_ok=True)
     safe = _SESSION_ID_SAFE.sub("_", (session_id or "default")[:64]) or "default"
     return sd / f"{safe}.json"
+
+
+def _lock_path(session_id: str) -> Path:
+    """Lockfile sibling to the state file. Separate so flock semantics
+    aren't entangled with the json file's open/close lifecycle."""
+    sd = config.CONFIG_DIR / "sessions"
+    sd.mkdir(parents=True, exist_ok=True)
+    safe = _SESSION_ID_SAFE.sub("_", (session_id or "default")[:64]) or "default"
+    return sd / f"{safe}.lock"
+
+
+class _SessionLock:
+    """flock-based exclusive lock for the read-modify-write path. Two
+    concurrent hooks (e.g. CC + Codex, or parallel CC sessions) would
+    otherwise both load the same hashes, append different new ones,
+    and only the last writer's set survives — Heard then re-narrates
+    the dropped block. Best-effort: if we can't acquire the lock, we
+    proceed unlocked rather than blocking the user's hook."""
+
+    def __init__(self, session_id: str) -> None:
+        self._path = _lock_path(session_id)
+        self._fd: int | None = None
+
+    def __enter__(self) -> "_SessionLock":
+        try:
+            self._fd = os.open(str(self._path), os.O_CREAT | os.O_RDWR, 0o600)
+        except OSError:
+            self._fd = None
+            return self
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_EX)
+        except OSError as e:
+            if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                # Lock truly failed — give up, leave _fd open for close.
+                pass
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._fd is None:
+            return
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+        except Exception:
+            pass
+        try:
+            os.close(self._fd)
+        except Exception:
+            pass
+        self._fd = None
 
 
 def _hash(text: str) -> str:
@@ -65,11 +117,12 @@ def is_spoken(session_id: str, text: str) -> bool:
 
 def mark_spoken(session_id: str, text: str) -> None:
     h = _hash(text)
-    hashes = _load(session_id)
-    if h in hashes:
-        return
-    hashes.append(h)
-    _save(session_id, hashes)
+    with _SessionLock(session_id):
+        hashes = _load(session_id)
+        if h in hashes:
+            return
+        hashes.append(h)
+        _save(session_id, hashes)
 
 
 def filter_unspoken(session_id: str, texts: list[str]) -> list[str]:
