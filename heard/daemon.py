@@ -56,13 +56,15 @@ class Daemon:
         self._start_hotkey()
         self._start_audio_monitor()
 
-    def _start_hotkey(self) -> None:
+    def _start_hotkey(self, prompt_for_accessibility: bool = False) -> None:
         if not self.cfg.get("hotkey_enabled", True):
             return
-        # Fire macOS's native Accessibility permission dialog if we don't
-        # already have trust. No-op if trust was granted previously or if
-        # we're not on macOS. Prompts at most once per macOS session.
-        trusted = accessibility.ensure_trusted(prompt=True)
+        # Fire macOS's native Accessibility permission dialog ONLY when the
+        # caller asks for it — typically the UI's "request_accessibility"
+        # cmd after the user finishes onboarding. The default
+        # daemon-spawn path passes prompt_for_accessibility=False so the
+        # system dialog doesn't fire alongside the onboarding card.
+        trusted = accessibility.ensure_trusted(prompt=prompt_for_accessibility)
         if not trusted:
             print(
                 "heard: Accessibility permission pending — hotkeys will start "
@@ -364,6 +366,20 @@ class Daemon:
             return
         if cmd == "reload":
             self._reload_config()
+            return
+        if cmd == "request_accessibility":
+            # Fired by the UI after onboarding finishes. Triggers the
+            # macOS Accessibility prompt, then restarts the hotkey
+            # listener so it picks up the new trust grant. Decoupled
+            # from daemon spawn so the system dialog doesn't appear
+            # alongside the onboarding window.
+            if self._hotkey_listener is not None:
+                try:
+                    self._hotkey_listener.stop()
+                except Exception:
+                    pass
+                self._hotkey_listener = None
+            self._start_hotkey(prompt_for_accessibility=True)
             return
         if cmd == "stop":
             self._cancel_only()
