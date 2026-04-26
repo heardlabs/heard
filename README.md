@@ -11,10 +11,10 @@ Counterpart to input tools like [Wispr Flow](https://wisprflow.ai). Wispr handle
 1. Download the latest `Heard-v*.zip` from [Releases](https://github.com/sodiumsun/heard/releases).
 2. Unzip and drag `Heard.app` into `/Applications`.
 3. **First launch:** right-click `Heard.app` → **Open** (it's an unsigned build, so macOS Gatekeeper will refuse a normal double-click — right-click bypasses that one time).
-4. The onboarding window walks you through three screens: API key (optional, for the Jarvis persona), voice (Kokoro free or paste an ElevenLabs key), and the silence/replay hotkey.
+4. The onboarding window walks you through three screens: API key (optional, powers in-character persona rewrites), voice (Kokoro free or paste an ElevenLabs key), and the silence/replay hotkey.
 5. Run `heard install claude-code` (or `codex`) in your terminal to wire Heard up to your agent.
 
-The menu bar icon stays visible from then on. Click it for status, preset switching, and silence.
+The menu bar icon stays visible from then on. Click it to switch persona, dial speed (slow / normal / fast), tune verbosity, or silence.
 
 ### CLI only
 
@@ -50,9 +50,10 @@ On low-RAM Macs (under 12 GB) the onboarding window flags Kokoro as a stretch an
 ## What it does
 
 - **Narrates tool calls + intermediate prose.** "Looking at your test failures." "Three failures in auth.py." Hooks into `PreToolUse`, `PostToolUse`, and `Stop`. Surfaces every block of assistant text, not just the final summary.
-- **Jarvis persona.** Set `ANTHROPIC_API_KEY` (or paste it during onboarding) and apply the `jarvis` preset — Claude Haiku 4.5 rewrites each line into a dry, in-character butler. Falls back to neutral templates when no key is set, so the OSS experience is complete without a paid API.
+- **Four personas, ship-tunable.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator). Each is a single Markdown file with frontmatter — fork your own by dropping `coach.md` into `~/Library/Application Support/heard/personas/`. Set `ANTHROPIC_API_KEY` to upgrade from neutral templates to Claude Haiku-rewritten in-character lines.
 - **Tap-hold hotkey.** Tap your Right Option key to silence Heard mid-sentence. Long-press to replay the last narration. One-time Accessibility grant.
-- **Menu bar app.** Live status, preset switcher, silence button.
+- **Auto-pause on calls.** When any app starts capturing your mic (Zoom, Meet, FaceTime, Wispr, dictation), Heard goes silent automatically. Mirrors the macOS recording-indicator signal.
+- **Menu bar app.** Live status; one-click persona switching; speed dial; verbosity; silence.
 - **Per-project config.** Drop a `.heard.yaml` in a repo to override global settings inside that project — quiet at work, chatty on side projects.
 - **Works with any agent.** First-class adapters for Claude Code + Codex. `heard run <command>` wraps anything else (Aider, arbitrary CLIs) under a PTY and narrates idle-flushed output.
 
@@ -62,7 +63,7 @@ On low-RAM Macs (under 12 GB) the onboarding window flags Kokoro as a stretch an
 heard install <agent>           Install the hook (claude-code | codex)
 heard uninstall <agent>         Remove the hook
 heard demo                      Play a scripted ~20-second preview
-heard preset <name>             Apply preset (jarvis / ambient / silent / chatty)
+heard preset <name>             Switch persona (aria / friday / jarvis / atlas)
 heard tune                      Interactive voice/persona/verbosity walk
 heard ui                        Launch the menu bar app
 heard say "hello"               Speak text directly
@@ -78,33 +79,56 @@ heard doctor                    Diagnose problems
 heard service install           Auto-start the daemon on login
 ```
 
-## Presets
+## Personas
 
-| Preset   | Persona | Voice  | Verbosity | Tool narration                  |
-|----------|---------|--------|-----------|---------------------------------|
-| jarvis   | jarvis  | george | normal    | on                              |
-| chatty   | jarvis  | george | high      | on (everything)                 |
-| ambient  | raw     | george | low       | only long-running + failures    |
-| silent   | raw     | george | normal    | off (final responses only)      |
+Four built-in. Each is a single MD file (frontmatter + Haiku system prompt) under `heard/personas/`.
 
-Apply with `heard preset <name>`. Mix your own by editing `~/Library/Application Support/heard/config.yaml`.
+| Persona | Vibe | Voice | Speed |
+|---------|------|-------|-------|
+| **aria**   | Calm, direct, never editorial. Senior pair-programmer. | Rachel (female US) | 1.0 |
+| **friday** | Bright, breezy, three steps ahead. Sprinkles "boss". | Custom female | 1.0 |
+| **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. | Custom male British | 0.95 |
+| **atlas**  | Cinematic narrator. Greek tragedy applied to compile cycles. | Custom male, deep | 0.9 |
+
+Switch via:
+- The menu bar **Persona** submenu (one click)
+- `heard preset <name>` in the terminal
+- Editing `~/Library/Application Support/heard/config.yaml`
+
+**Fork your own:** drop `coach.md` (or any name) into `~/Library/Application Support/heard/personas/`. The user dir wins over bundled — same name shadows.
+
+```md
+---
+name: coach
+voice: rachel
+speed: 1.05
+verbosity: normal
+narrate_tools: true
+---
+
+You are a personal trainer narrating compile cycles. Brisk, encouraging.
+Never cheesy. Lift, don't motivate.
+```
+
+Then `heard preset coach` and the daemon picks it up.
 
 ## Configuration
 
 ```yaml
-voice: george                # ElevenLabs alias or 20-char voice_id
-speed: 1.05
-persona: jarvis              # raw | jarvis
+voice: rachel                # ElevenLabs alias or 20-char voice_id
+speed: 1.0
+persona: aria                # aria | friday | jarvis | atlas | <your fork>
 verbosity: normal            # low | normal | high
 narrate_tools: true
 narrate_tool_results: true
+auto_silence_on_mic: true    # auto-pause when any app captures the mic
 hotkey_mode: taphold         # taphold | combo
 hotkey_taphold_key: right_option
 hotkey_taphold_threshold_ms: 400
 skip_under_chars: 30         # ignore responses shorter than this
 flush_delay_ms: 800          # wait for transcript to settle before reading
 elevenlabs_api_key: ""       # paste your key to enable premium voice
-anthropic_api_key: ""        # paste your key to enable Jarvis persona
+anthropic_api_key: ""        # paste your key to enable persona rewrites
 ```
 
 Any repo can override by placing `.heard.yaml` in its root.
