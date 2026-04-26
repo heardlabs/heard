@@ -194,12 +194,80 @@ Launch on HN, dev Twitter, /r/LocalLLaMA, Product Hunt.
 **Trigger to advance:** 500 installs within 30 days AND unsolicited
 "can I pay you for X" messages.
 
-### Phase 2 — Pro tier ($9/mo, post-validation)
-Separate mini-PRD. Built on LemonSqueezy. Managed ElevenLabs
-passthrough, managed Haiku, extra personas, voice cloning, cloud sync.
+### Phase 2 — Pro tier ($9/mo, target v0.4)
+
+Pricing $9/mo (BYOK undercut). Stripe Payment Link is **already
+collected** on the website but currently fulfilment is manual / non-
+existent. v0.4 ships the actual Pro product. Concrete build list
+below — these are the pieces that must exist before Pro is honestly
+deliverable:
+
+**Backend infrastructure**
+1. Stripe webhook handler → DB row per subscription (active, cancelled,
+   past_due). Source-of-truth for "did this user pay?".
+2. License key OR account auth: Heard.app needs to prove "I'm Pro"
+   to the backend on every API call. Decision still open: license
+   key (simple, but no email auth) vs OAuth-style account login
+   (more code but matches Wispr / standard SaaS).
+3. ElevenLabs proxy: Heard backend holds one (or a few) ElevenLabs
+   key(s) and routes Pro users' narration through it. Per-user usage
+   accounting + rate-limiting + "out of credits" handling.
+4. Anthropic Haiku proxy: same pattern for persona rewrites.
+5. Cloud sync: per-user config blob (voice, persona, hotkey, etc.)
+   stored server-side, synced to all the user's Macs.
+6. Premium-persona distribution: Alfred / HAL / GLaDOS / etc. served
+   only to Pro users (download via authed API).
+7. Voice-cloning flow: receive sample → call ElevenLabs IVC API →
+   save voice_id to user record → Heard reads it on next narration.
+8. Customer email automation: welcome flow, dunning (failed payment),
+   renewal reminders. Resend or similar.
+
+**Heard.app integration**
+9. License/auth UI in onboarding: "Activate Pro" step that takes
+   the key (or logs the user in) and stores credentials.
+10. ElevenLabs/Haiku call routing: when Pro is active, route via
+    the proxy backend instead of using the user's BYOK keys.
+11. Cloud-sync hook in `_reload_config`.
+
+**Economics that must close before v0.4 launch**
+12. ElevenLabs cheapest commercial plan is $22/mo per user. At $9/mo
+    Pro, every customer loses ~$15/mo on EL alone. Two paths:
+    (a) Negotiate ElevenLabs Enterprise pricing (per-character bulk
+        rate) — needs ~50+ paying users to even start the conversation.
+    (b) Bump Pro to $25–30/mo to cover EL Creator + Haiku tokens with
+        margin. Honest but reduces conversion.
+    (c) Cap Pro narration usage hard (e.g. 100k characters/mo) so
+        ElevenLabs costs stay under $9/mo per user.
+    **Lean: (c) for v0.4 launch + (a) once volume justifies.**
+
+**Website + Stripe before v0.4 ships**
+13. Pause the Stripe Payment Link OR add a "waitlist deposit" notice
+    so customers know they're paying for early access, not immediate
+    fulfilment.
+14. Add a "Coming soon" pill on the Pro pricing card until backend
+    is ready.
+
+**v0.4 build order (commit-by-commit, target ~1 week of focused work)**
+
+1. Pause Stripe link / add Coming-Soon framing on website
+2. Pick auth approach (license key vs account login) and document
+3. Stripe webhook + minimal Postgres/SQLite for subscription state
+4. License-key generation + email-on-payment template
+5. Heard.app: license input UI + storage
+6. ElevenLabs proxy backend (Cloudflare Worker / Vercel function)
+7. Heard.app: route ElevenLabs through proxy when Pro active
+8. Anthropic Haiku proxy + Heard.app routing
+9. Cloud-sync endpoint + Heard.app integration
+10. Premium-persona delivery flow
+11. Voice-cloning: sample upload → IVC API → voice_id wiring
+12. Customer email automation (Resend / Loops)
+13. Re-enable Stripe link, drop "Coming soon" pill, ship v0.4
 
 ### Phase 3 — Team tier
-Only if a customer pre-pays. $19/user/mo. Shared org personas.
+Only if a customer pre-pays. $24/seat/mo. Privacy Mode (ZDR), shared
+team personas + voice clones, SSO, audit logs, MSA/DPA. Same backend
+as Pro plus tenant isolation + admin controls. Talk-to-us captures
+inbound today via the Formspree form on the pricing page.
 
 ## 11. Out of scope for v0.3
 
