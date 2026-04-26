@@ -271,6 +271,16 @@ class HeardApp(rumps.App):
                         file=sys.stderr,
                     )
 
+        # Now — and only now — fire the macOS Accessibility permission
+        # dialog. Deferred from daemon spawn so the system prompt doesn't
+        # appear behind the onboarding card. Screen 3 of onboarding
+        # promised "macOS will ask once for Accessibility access — click
+        # Allow," so this is the moment the user is expecting it.
+        try:
+            client.send({"cmd": "request_accessibility"})
+        except Exception:
+            pass
+
     def on_github(self, _sender) -> None:
         webbrowser.open("https://github.com/heardlabs/heard")
 
