@@ -7,8 +7,15 @@ Two modes:
     Claude Haiku with the persona system prompt. Times out fast and
     falls back to templates.
 
-Personas live as YAML in heard/personas/. Custom personas can be dropped
-into $CONFIG_DIR/personas/<name>.yaml and referenced by name in config.
+Personas live as Markdown with YAML frontmatter at
+``heard/personas/<name>.md``. Frontmatter carries the structured fields
+(voice, speed, verbosity, narrate_tools, address). The body is the
+Haiku system prompt — Markdown is the natural shape for prose with
+structure, and the file is forkable: drop a copy in
+``$CONFIG_DIR/personas/`` and edit to taste.
+
+YAML personas (``<name>.yaml``) are still loaded for one release of
+grace so existing forks keep working; remove after v0.3.x.
 """
 
 from __future__ import annotations
@@ -78,30 +85,104 @@ class Persona:
         return _suffix_address(neutral, self.address)
 
 
-def load(name: str, config_dir: Path | None = None) -> Persona:
-    """Load persona by name. Checks user config dir first, then bundled."""
-    candidates = []
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Split a Markdown file with YAML frontmatter into (meta, body).
+
+    A file without a ``---`` opening delimiter is treated as raw prose
+    with no metadata — that's still a valid persona, just one that lives
+    entirely as a system prompt.
+
+    Malformed YAML in the frontmatter does NOT raise; we treat it as a
+    file with no metadata and surface the whole thing as the prompt body.
+    Personas should never be load-blocking even if they're broken.
+    """
+    if not text.startswith("---\n"):
+        return {}, text.strip()
+    head, sep, body = text[4:].partition("\n---\n")
+    if not sep:
+        # No closing delimiter — treat as no frontmatter
+        return {}, text.strip()
+    try:
+        meta = yaml.safe_load(head) or {}
+    except yaml.YAMLError:
+        return {}, text.strip()
+    if not isinstance(meta, dict):
+        return {}, text.strip()
+    return meta, body.strip()
+
+
+def _persona_from_md(path: Path, name_hint: str) -> Persona:
+    meta, body = _parse_frontmatter(path.read_text())
+    return Persona(
+        name=str(meta.get("name", name_hint)),
+        voice=meta.get("voice"),
+        address=str(meta.get("address", "") or ""),
+        system_prompt=body or str(meta.get("system_prompt", "") or ""),
+        templates=meta.get("templates") or {},
+    )
+
+
+def _persona_from_yaml(path: Path, name_hint: str) -> Persona:
+    """Legacy YAML loader. Removed after v0.3.x — prefer ``.md``."""
+    data = yaml.safe_load(path.read_text()) or {}
+    return Persona(
+        name=str(data.get("name", name_hint)),
+        voice=data.get("voice"),
+        address=str(data.get("address", "") or ""),
+        system_prompt=str(data.get("system_prompt", "") or ""),
+        templates=data.get("templates") or {},
+    )
+
+
+def _candidate_paths(name: str, config_dir: Path | None) -> list[tuple[Path, callable]]:
+    """Return the search list of (path, loader) tuples in priority order.
+    User dir wins over bundled. ``.md`` wins over ``.yaml`` so editing a
+    fork's MD doesn't get shadowed by a leftover YAML."""
+    out: list[tuple[Path, callable]] = []
     if config_dir is not None:
-        candidates.append(config_dir / "personas" / f"{name}.yaml")
-    candidates.append(BUNDLED_DIR / f"{name}.yaml")
+        user_dir = config_dir / "personas"
+        out.append((user_dir / f"{name}.md", _persona_from_md))
+        out.append((user_dir / f"{name}.yaml", _persona_from_yaml))
+    out.append((BUNDLED_DIR / f"{name}.md", _persona_from_md))
+    out.append((BUNDLED_DIR / f"{name}.yaml", _persona_from_yaml))
+    return out
 
-    for path in candidates:
+
+def load(name: str, config_dir: Path | None = None) -> Persona:
+    """Load persona by name. User dir wins over bundled; ``.md`` wins
+    over ``.yaml`` at the same scope. Unknown name → raw fallback."""
+    for path, loader in _candidate_paths(name, config_dir):
         if path.exists():
-            data = yaml.safe_load(path.read_text()) or {}
-            return Persona(
-                name=data.get("name", name),
-                voice=data.get("voice"),
-                address=data.get("address", "") or "",
-                system_prompt=data.get("system_prompt", "") or "",
-                templates=data.get("templates") or {},
-            )
-
-    # Unknown persona → fall back to raw
+            return loader(path, name)
     return Persona(name="raw")
 
 
+def load_meta(name: str, config_dir: Path | None = None) -> dict:
+    """Return the full frontmatter dict for a persona. Used by the
+    ``heard persona <name>`` command (and the menu-bar Persona submenu)
+    to apply the bundle of config overrides — voice, speed, verbosity,
+    narrate_tools — that a persona declares alongside its prompt."""
+    for path, _loader in _candidate_paths(name, config_dir):
+        if not path.exists():
+            continue
+        text = path.read_text()
+        if path.suffix == ".md":
+            meta, _ = _parse_frontmatter(text)
+            return dict(meta)
+        return dict(yaml.safe_load(text) or {})
+    return {}
+
+
 def list_bundled() -> list[str]:
-    return sorted(p.stem for p in BUNDLED_DIR.glob("*.yaml"))
+    """Return persona names available in the bundled directory.
+    Deduped across ``.md`` and ``.yaml`` so a half-migrated tree doesn't
+    show the same name twice."""
+    names: set[str] = set()
+    for p in BUNDLED_DIR.glob("*.md"):
+        names.add(p.stem)
+    for p in BUNDLED_DIR.glob("*.yaml"):
+        names.add(p.stem)
+    return sorted(names)
 
 
 # --- Haiku path -------------------------------------------------------------
