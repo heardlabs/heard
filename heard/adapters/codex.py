@@ -28,7 +28,8 @@ EVENTS = ("Stop", "PreToolUse", "PostToolUse")
 
 
 def _hook_command() -> str:
-    return f"{sys.executable} -m heard.hook codex"
+    from heard.adapters import build_hook_command
+    return build_hook_command("codex")
 
 
 def _load_hooks() -> dict:
@@ -51,14 +52,16 @@ def _install_event(data: dict, event: str) -> None:
     if not arr:
         arr.append({"hooks": []})
     entry = arr[0].setdefault("hooks", [])
-    if not any(HOOK_MARKER in h.get("command", "") for h in entry):
-        entry.append(
-            {
-                "type": "command",
-                "command": _hook_command(),
-                "timeoutSec": 60,
-            }
-        )
+    # Strip + re-add so upgrades replace stale commands.
+    cleaned = [h for h in entry if HOOK_MARKER not in h.get("command", "")]
+    cleaned.append(
+        {
+            "type": "command",
+            "command": _hook_command(),
+            "timeoutSec": 60,
+        }
+    )
+    arr[0]["hooks"] = cleaned
 
 
 def install() -> None:

@@ -5,7 +5,6 @@ into ~/.claude/settings.json.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
@@ -14,7 +13,8 @@ EVENTS = ("Stop", "PreToolUse", "PostToolUse")
 
 
 def _hook_command() -> str:
-    return f"{sys.executable} -m heard.hook claude-code"
+    from heard.adapters import build_hook_command
+    return build_hook_command("claude-code")
 
 
 def _load_settings() -> dict:
@@ -34,14 +34,19 @@ def _install_event(settings: dict, event: str) -> None:
     if not arr:
         arr.append({"hooks": []})
     entry = arr[0].setdefault("hooks", [])
-    if not any(HOOK_MARKER in h.get("command", "") for h in entry):
-        entry.append(
-            {
-                "type": "command",
-                "command": _hook_command(),
-                "async": True,
-            }
-        )
+    # Strip any existing heard.hook entries first, then add the current
+    # one. This makes install() idempotent AND lets new app builds
+    # refresh stale commands left over from earlier installs (e.g. the
+    # pre-PYTHONHOME bundle invocation that crashed silently).
+    cleaned = [h for h in entry if HOOK_MARKER not in h.get("command", "")]
+    cleaned.append(
+        {
+            "type": "command",
+            "command": _hook_command(),
+            "async": True,
+        }
+    )
+    arr[0]["hooks"] = cleaned
 
 
 def install() -> None:
