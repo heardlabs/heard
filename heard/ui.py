@@ -24,7 +24,6 @@ from pathlib import Path
 import rumps
 
 from heard import client, config
-from heard import persona as persona_mod
 from heard.presets import list_bundled as list_presets
 from heard.presets import load as load_preset
 
@@ -55,15 +54,20 @@ class HeardApp(rumps.App):
 
         silence_item = rumps.MenuItem("Silence  ⌘⇧.", callback=self.on_silence)
 
-        self.preset_menu = rumps.MenuItem("Preset")
-        for name in list_presets():
-            item = rumps.MenuItem(name, callback=self._mk_preset_cb(name))
-            self.preset_menu[name] = item
-
+        # Persona submenu: clicking applies the persona's full frontmatter
+        # (voice, speed, verbosity, narrate_tools) — collapses the old
+        # Preset/Persona split now that personas ARE presets.
         self.persona_menu = rumps.MenuItem("Persona")
-        for name in persona_mod.list_bundled():
+        for name in list_presets():
             item = rumps.MenuItem(name, callback=self._mk_persona_cb(name))
             self.persona_menu[name] = item
+
+        # Speed quick toggle — applies on top of the active persona's
+        # speed without changing anything else.
+        self.speed_menu = rumps.MenuItem("Speed")
+        for label, value in (("Slow (0.85×)", 0.85), ("Normal (1.0×)", 1.0), ("Fast (1.15×)", 1.15)):
+            item = rumps.MenuItem(label, callback=self._mk_speed_cb(value))
+            self.speed_menu[label] = item
 
         self.verbosity_menu = rumps.MenuItem("Verbosity")
         for level in ("low", "normal", "high"):
@@ -83,8 +87,8 @@ class HeardApp(rumps.App):
             None,
             silence_item,
             None,
-            self.preset_menu,
             self.persona_menu,
+            self.speed_menu,
             self.verbosity_menu,
             None,
             options_menu,
@@ -115,11 +119,14 @@ class HeardApp(rumps.App):
         else:
             self.status_item.title = self._status_line(cfg, "on")
 
-        active_preset = cfg.get("persona", "raw")
-        for _name, item in self.preset_menu.items():
-            item.state = 0
+        active_persona = cfg.get("persona", "raw")
         for name, item in self.persona_menu.items():
-            item.state = 1 if name == active_preset else 0
+            item.state = 1 if name == active_persona else 0
+        active_speed = float(cfg.get("speed", 1.0))
+        for label, item in self.speed_menu.items():
+            # Match the speed value embedded in the label (e.g. "Slow (0.85×)")
+            value = float(label.split("(")[1].split("×")[0])
+            item.state = 1 if abs(value - active_speed) < 0.01 else 0
         active_verbosity = cfg.get("verbosity", "normal")
         for level, item in self.verbosity_menu.items():
             item.state = 1 if level == active_verbosity else 0
@@ -139,20 +146,24 @@ class HeardApp(rumps.App):
         except Exception:
             pass
 
-    def _mk_preset_cb(self, name: str):
+    def _mk_persona_cb(self, name: str):
+        """Apply the persona's full frontmatter (voice, speed, verbosity,
+        narrate_tools, persona) and tell the daemon to reload."""
         def cb(_sender):
             try:
                 config.apply_preset(load_preset(name))
                 client.send({"cmd": "reload"})
             except Exception as e:
-                rumps.notification("heard", "Preset failed", str(e))
+                rumps.notification("heard", "Persona switch failed", str(e))
             self.refresh(None)
 
         return cb
 
-    def _mk_persona_cb(self, name: str):
+    def _mk_speed_cb(self, value: float):
+        """Override the active persona's speed without touching anything
+        else — the user can dial pace independently of character."""
         def cb(_sender):
-            config.set_value("persona", name)
+            config.set_value("speed", value)
             try:
                 client.send({"cmd": "reload"})
             except Exception:
