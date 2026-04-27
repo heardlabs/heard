@@ -47,7 +47,14 @@ DEFAULTS: dict[str, Any] = {
     # turn this off is if you're explicitly debugging silently.
     "narrate_failures": True,
     "persona": "raw",
+    # Verbosity profile names (heard/profiles/<name>.yaml). Bundled:
+    # quiet / brief / normal / verbose. Custom: drop your own YAML in
+    # $CONFIG_DIR/profiles/<name>.yaml. swarm_verbosity applies to
+    # non-focus sessions when 2+ agents are active concurrently —
+    # default "brief" so background agents stay quiet without losing
+    # their critical signals.
     "verbosity": "normal",
+    "swarm_verbosity": "brief",
     "hotkey_enabled": True,
     # Hotkey mode:
     #   "taphold" — single key, tap = silence, hold ≥ threshold = replay.

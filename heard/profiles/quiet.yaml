@@ -1,0 +1,18 @@
+# Quiet — failures and questions only.
+#
+# Five dimensions; edit any to tune what "Quiet" means for you.
+# pre_tool   — silent | digest | per_tool   (how tool calls narrate)
+# post_success — silent | speak             (whether tool successes speak)
+# prose      — silent | speak               (assistant intermediate text — "white dots")
+# final_budget — int chars                  (how much of a long final to speak)
+# burst_threshold — int events / 30 s        (only for pre_tool=per_tool: route excess to digest)
+#
+# Failures and wait-state questions always pierce regardless of profile.
+
+name: quiet
+description: Errors and questions only.
+pre_tool: silent
+post_success: silent
+prose: silent
+final_budget: 200
+burst_threshold: 0

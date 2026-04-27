@@ -24,6 +24,7 @@ from pathlib import Path
 import rumps
 
 from heard import client, config
+from heard import verbosity as verbosity_mod
 from heard.presets import list_bundled as list_presets
 
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -101,15 +102,19 @@ class HeardApp(rumps.App):
             item = rumps.MenuItem(label, callback=self._mk_speed_cb(value))
             self.speed_menu[label] = item
 
-        # Verbosity labels include a one-line hint of what each level
-        # actually does, so users don't need to read the README to
-        # understand the choice. The state-refresh logic still checks
-        # the ACTIVE level by extracting the leading word.
+        # Verbosity profiles. Labels include a one-line hint of each
+        # profile's behaviour so users don't need to read docs to
+        # understand the choice. The state-refresh logic checks the
+        # ACTIVE profile by extracting the leading word.
+        #
+        # Profile YAML files live in heard/profiles/; power users can
+        # drop their own in $CONFIG_DIR/profiles/ to override.
         self.verbosity_menu = rumps.MenuItem("Verbosity")
         for label in (
-            "low — errors only",
-            "normal",
-            "high — everything",
+            "quiet — errors only",
+            "brief — prose only, tools summarised",
+            "normal — per-tool + bursts summarised",
+            "verbose — speak everything",
         ):
             level = label.split()[0]
             item = rumps.MenuItem(label, callback=self._mk_verbosity_cb(level))
@@ -210,7 +215,9 @@ class HeardApp(rumps.App):
             # Match the speed value embedded in the label (e.g. "Slow (0.85×)")
             value = float(label.split("(")[1].split("×")[0])
             item.state = 1 if abs(value - active_speed) < 0.01 else 0
-        active_verbosity = cfg.get("verbosity", "normal")
+        # Resolve through verbosity.level so legacy "low"/"high"
+        # config values display as "quiet"/"verbose" in the menu.
+        active_verbosity = verbosity_mod.level(cfg)
         for label, item in self.verbosity_menu.items():
             level = label.split()[0]
             item.state = 1 if level == active_verbosity else 0

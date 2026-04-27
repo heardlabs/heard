@@ -135,12 +135,14 @@ def _pick_speed(current: float) -> float:
 
 def _pick_verbosity(current: str) -> str:
     console.print("\n[bold]4. Pick a verbosity[/bold]")
-    console.print("low = only big events + failures. normal = default. high = everything.\n")
-    return _prompt_choice(
-        "verbosity",
-        ["low", "normal", "high"],
-        default=current if current in ("low", "normal", "high") else "normal",
+    console.print(
+        "quiet = errors only. brief = prose only, tools summarised. "
+        "normal = per-tool + bursts summarised. verbose = everything.\n"
     )
+    levels = ["quiet", "brief", "normal", "verbose"]
+    legacy = {"low": "quiet", "high": "verbose"}
+    cur = legacy.get((current or "").lower(), current) or "normal"
+    return _prompt_choice("verbosity", levels, default=cur if cur in levels else "normal")
 
 
 def run() -> None:

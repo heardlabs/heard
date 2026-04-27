@@ -39,6 +39,15 @@ DATA_FILES = [
             os.path.join(ROOT, "heard/personas/atlas.md"),
         ],
     ),
+    (
+        "heard/profiles",
+        [
+            os.path.join(ROOT, "heard/profiles/quiet.yaml"),
+            os.path.join(ROOT, "heard/profiles/brief.yaml"),
+            os.path.join(ROOT, "heard/profiles/normal.yaml"),
+            os.path.join(ROOT, "heard/profiles/verbose.yaml"),
+        ],
+    ),
     # heard/presets/ is now a thin shim that delegates to personas
     # — no YAML files to bundle.
     (
