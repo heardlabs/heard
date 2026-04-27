@@ -166,6 +166,45 @@ class Daemon:
 
         threading.Thread(target=_poll, daemon=True).start()
 
+    def _kokoro_fallback_to(
+        self, text: str, voice: str, speed: float, lang: str, path: Path
+    ) -> bool:
+        """Try to synth via Kokoro into ``path``. Returns True on
+        success. Used as a graceful-degradation backstop when the
+        primary backend (ElevenLabs) fails on the network side and
+        the local model happens to be on disk.
+
+        Critically: we never trigger a download here. If the user
+        hasn't opted into Kokoro via the Options → Download voice
+        model menu, this returns False and the caller surfaces the
+        original ElevenLabs error. We don't want a "voice unreachable"
+        moment to silently turn into a 30-second 350 MB download.
+        """
+        try:
+            from heard.tts.kokoro import KokoroTTS
+        except Exception:
+            return False
+        try:
+            kokoro = KokoroTTS(config.MODELS_DIR)
+            if not kokoro.is_downloaded():
+                return False
+            # Kokoro outputs WAV; rename so afplay's downstream
+            # subprocess sees the right extension. The path was minted
+            # with the primary backend's AUDIO_EXT.
+            new_path = path.with_suffix(getattr(KokoroTTS, "AUDIO_EXT", ".wav"))
+            kokoro.synth_to_file(text, voice, speed, lang, new_path)
+            if new_path != path:
+                # afplay handles either extension fine, but ensure the
+                # file the caller's path points to has the audio.
+                try:
+                    new_path.replace(path)
+                except OSError:
+                    return False
+            return True
+        except Exception as e:
+            _log("kokoro_fallback_failed", err=str(e))
+            return False
+
     def _record_error(self, kind: str, message: str) -> None:
         """Capture the latest failure so the menu bar can show it.
         Cleared on the next successful synth so a transient blip
@@ -361,32 +400,46 @@ class Daemon:
                 e = None
             if isinstance(e, ElevenLabsError):
                 msg = str(e)
-                if "401" in msg or "invalid_api_key" in msg.lower():
-                    self._record_error("elevenlabs_auth", msg)
+                # PRD §13: when ElevenLabs is unreachable AND the user
+                # has Kokoro on disk, automatically fall back so the
+                # narration goes out instead of disappearing entirely.
+                # Auth failures DON'T trigger fallback — that's a
+                # config bug the user needs to fix, and silently
+                # routing through Kokoro hides it.
+                is_auth = "401" in msg or "invalid_api_key" in msg.lower()
+                if not is_auth and self._kokoro_fallback_to(chunk, voice, speed, lang, path):
                     notify.notify(
-                        "Heard — ElevenLabs key invalid",
-                        "Your ElevenLabs key was rejected. Open Heard from the menu bar to fix it.",
-                        kind="elevenlabs_auth",
+                        "Heard — using local voice",
+                        "ElevenLabs is unreachable. Falling back to the local model for now.",
+                        kind="elevenlabs_fallback",
                     )
-                elif "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
-                    # Distinct kind so the menu bar can suggest the
-                    # specific fix (reinstall / report).
-                    self._record_error("ssl", msg)
-                    notify.notify(
-                        "Heard — TLS verification failed",
-                        "The HTTPS handshake to ElevenLabs failed. Run `heard doctor`.",
-                        kind="ssl",
-                    )
+                    _log("synth_fallback_kokoro", err=msg)
+                    # Fall through to playback below — file is on disk.
                 else:
-                    self._record_error("elevenlabs_network", msg)
-                    notify.notify(
-                        "Heard — voice service unreachable",
-                        "ElevenLabs didn't respond. Check your connection or your account.",
-                        kind="elevenlabs_network",
-                    )
-                _log("synth_failed", backend=type(self.tts).__name__, err=msg)
-                path.unlink(missing_ok=True)
-                continue
+                    if is_auth:
+                        self._record_error("elevenlabs_auth", msg)
+                        notify.notify(
+                            "Heard — ElevenLabs key invalid",
+                            "Your ElevenLabs key was rejected. Open Heard from the menu bar to fix it.",
+                            kind="elevenlabs_auth",
+                        )
+                    elif "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
+                        self._record_error("ssl", msg)
+                        notify.notify(
+                            "Heard — TLS verification failed",
+                            "The HTTPS handshake to ElevenLabs failed. Run `heard doctor`.",
+                            kind="ssl",
+                        )
+                    else:
+                        self._record_error("elevenlabs_network", msg)
+                        notify.notify(
+                            "Heard — voice service unreachable",
+                            "ElevenLabs didn't respond. Check your connection or your account.",
+                            kind="elevenlabs_network",
+                        )
+                    _log("synth_failed", backend=type(self.tts).__name__, err=msg)
+                    path.unlink(missing_ok=True)
+                    continue
             elif e is not None:
                 self._record_error("synth_generic", str(e))
                 notify.notify(
