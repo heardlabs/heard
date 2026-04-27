@@ -423,6 +423,49 @@ class HeardApp(rumps.App):
         except Exception:
             pass
 
+        # Free-tier path: no ElevenLabs key. Pre-download the Kokoro
+        # model in the background so the user's first narration plays
+        # immediately, instead of blocking 30-60 s on a 350 MB
+        # download with no UI feedback the moment a CC tool fires.
+        if not eleven:
+            self._predownload_kokoro_async()
+
+    def _predownload_kokoro_async(self) -> None:
+        """Kick off the Kokoro model download on a daemon thread so
+        the menu bar stays responsive. Notifies on start + completion
+        so the user knows the bar is downloading the voice model
+        rather than just sitting silent."""
+        import threading
+
+        from heard.notify import notify
+
+        def _run() -> None:
+            try:
+                from heard.tts.kokoro import KokoroTTS
+
+                tts = KokoroTTS(config.MODELS_DIR)
+                if tts.is_downloaded():
+                    return
+                notify(
+                    "Heard — downloading voice model",
+                    "Setting up local TTS (~350 MB). First narration will play in a minute or two.",
+                    kind="kokoro_download_start",
+                )
+                tts.ensure_downloaded(progress=False)
+                notify(
+                    "Heard — voice model ready",
+                    "Local TTS is set up. Your next narration will play instantly.",
+                    kind="kokoro_download_done",
+                )
+            except Exception as e:
+                notify(
+                    "Heard — voice model download failed",
+                    f"{e}. You can paste an ElevenLabs key in the menu instead.",
+                    kind="kokoro_download_failed",
+                )
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def on_github(self, _sender) -> None:
         webbrowser.open("https://github.com/heardlabs/heard")
 
