@@ -149,3 +149,40 @@ def clear(session_id: str) -> None:
             p.unlink()
         except Exception:
             pass
+    op = _offset_path(session_id)
+    if op.exists():
+        try:
+            op.unlink()
+        except Exception:
+            pass
+
+
+def _offset_path(session_id: str) -> Path:
+    """Sibling file holding the last byte offset we processed in the
+    transcript JSONL. Lets PreToolUse / Stop hooks skip over lines
+    they already parsed instead of re-walking the whole transcript
+    on every event."""
+    sd = config.CONFIG_DIR / "sessions"
+    sd.mkdir(parents=True, exist_ok=True)
+    safe = _SESSION_ID_SAFE.sub("_", (session_id or "default")[:64]) or "default"
+    return sd / f"{safe}.offset"
+
+
+def get_offset(session_id: str) -> int:
+    """Return the last byte offset we've processed in the transcript.
+    0 if unknown — caller falls back to a full read."""
+    p = _offset_path(session_id)
+    if not p.exists():
+        return 0
+    try:
+        return int(p.read_text(encoding="utf-8").strip() or "0")
+    except Exception:
+        return 0
+
+
+def set_offset(session_id: str, offset: int) -> None:
+    p = _offset_path(session_id)
+    try:
+        p.write_text(str(int(offset)), encoding="utf-8")
+    except Exception:
+        pass
