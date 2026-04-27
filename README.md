@@ -4,11 +4,32 @@
 
 Counterpart to input tools like [Wispr Flow](https://wisprflow.ai). Wispr handles what you say *to* your agent; Heard handles what it says back.
 
-[heard.dev](https://heard.dev) · [Latest release](https://github.com/heardlabs/heard/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/heardlabs/heard?label=release&color=0aa)](https://github.com/heardlabs/heard/releases/latest)
+[![PyPI](https://img.shields.io/pypi/v/heard.svg)](https://pypi.org/project/heard/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/heardlabs/heard/blob/main/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/heardlabs/heard?style=social)](https://github.com/heardlabs/heard)
+
+[heard.dev](https://heard.dev) · [Releases](https://github.com/heardlabs/heard/releases/latest) · [Issues](https://github.com/heardlabs/heard/issues)
+
+## See and hear it run
+
+<!-- TODO before merge: drop a 20-30s screen recording (Claude Code session with Heard narrating, audio on) at docs/assets/heard-demo.mp4. GitHub renders <video> tags with a relative src inline. -->
+
+<video src="docs/assets/heard-demo.mp4" controls muted width="100%"></video>
+
+> Want to try a voice before installing? Scroll to **[Personas](#personas)** — each row links to a 5-second sample.
 
 ## Install
 
-### Menu bar app (recommended)
+### Have your agent install it (recommended)
+
+If you're already inside Claude Code, Codex, or any agent — paste this and it does the rest:
+
+> Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
+
+The agent runs the install, the onboarding window pops up on your Mac, and you fill in API key / voice / hotkey. Hooks for the calling agent install automatically.
+
+### Menu bar app (manual)
 
 1. Download the latest `Heard-v*.zip` from [Releases](https://github.com/heardlabs/heard/releases/latest).
 2. Unzip and drag `Heard.app` into `/Applications`.
@@ -18,23 +39,15 @@ Counterpart to input tools like [Wispr Flow](https://wisprflow.ai). Wispr handle
 
 The menu bar icon stays visible from then on. Click it to switch persona, dial speed (Normal / Fast / Hyper), tune verbosity, pin a focus session, or silence.
 
-### One-line install (lazy mode)
-
-Paste this into Claude Code, Codex, or your agent of choice:
-
-> Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
-
 ### CLI only
 
 ```bash
-pipx install heard
-# or
-uv tool install heard
-
-heard install claude-code
+pipx install heard           # or: uv tool install heard
+heard install claude-code    # wires the hook into ~/.claude/settings.json
+heard demo                   # ~15s preview of the current voice + persona
 ```
 
-Your next Claude Code response will be narrated. Run `heard demo` first to preview the voice + persona before wiring up an agent.
+Your next Claude Code response will be narrated.
 
 ## Voice — two backends
 
