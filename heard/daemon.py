@@ -76,10 +76,29 @@ def _maybe_rotate_log() -> None:
 
 
 def _split(text: str) -> list[str]:
-    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    """Split long narration into synth-able chunks.
+
+    Most events fit comfortably in a single ElevenLabs synth call
+    (their input cap is ~5000 chars; Flash v2.5 returns first audio
+    in ~75ms regardless of length). Splitting was inserting an
+    audible inter-process gap between every sentence — afplay exits,
+    Popen of the next afplay starts, decoder primes — so a four-
+    sentence final read with three jarring silences instead of
+    natural sentence pauses inside a single audio stream.
+
+    Now: anything ≤ 800 chars goes as one chunk. Beyond that we
+    sentence-split (for genuinely long monologues), and beyond
+    sentence boundaries we comma/semicolon-split as a last resort.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    if len(text) <= 800:
+        return [text]
+    parts = re.split(r"(?<=[.!?])\s+", text)
     out: list[str] = []
     for p in parts:
-        if len(p) <= 220:
+        if len(p) <= 800:
             out.append(p)
         else:
             out.extend(re.split(r"(?<=[,;:])\s+", p))
