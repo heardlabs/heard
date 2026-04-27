@@ -240,20 +240,105 @@ def config_get(key: str | None = typer.Argument(None)) -> None:
         typer.echo(cfg.get(key, ""))
 
 
+_VALID_VERBOSITY = ("low", "normal", "high")
+_VALID_HOTKEY_MODE = ("taphold", "combo")
+_BOOL_KEYS = (
+    "narrate_tools",
+    "narrate_tool_results",
+    "hotkey_enabled",
+    "auto_silence_on_mic",
+    "onboarded",
+)
+
+
+def _validate(key: str, value: str) -> object:
+    """Coerce + bounds-check a config value. Raises typer.BadParameter
+    on invalid input so the CLI exits cleanly with a useful message
+    (instead of silently writing 'speed: -2.0' or 'persona: ghost')."""
+    # Persona must resolve to something on disk — bundled or user dir.
+    if key == "persona":
+        names = list_presets()
+        # User-dir personas are also valid; check filesystem.
+        user_dir = config.CONFIG_DIR / "personas"
+        if user_dir.exists():
+            for p in user_dir.glob("*.md"):
+                names.append(p.stem)
+        if value not in names and value != "raw":
+            raise typer.BadParameter(
+                f"Unknown persona {value!r}. Available: raw, {', '.join(sorted(set(names)))}."
+            )
+        return value
+
+    if key == "verbosity":
+        v = value.lower()
+        if v not in _VALID_VERBOSITY:
+            raise typer.BadParameter(
+                f"verbosity must be one of {', '.join(_VALID_VERBOSITY)}; got {value!r}."
+            )
+        return v
+
+    if key == "hotkey_mode":
+        v = value.lower()
+        if v not in _VALID_HOTKEY_MODE:
+            raise typer.BadParameter(
+                f"hotkey_mode must be one of {', '.join(_VALID_HOTKEY_MODE)}; got {value!r}."
+            )
+        return v
+
+    if key == "speed":
+        try:
+            f = float(value)
+        except ValueError:
+            raise typer.BadParameter(f"speed must be a number; got {value!r}.") from None
+        # ElevenLabs voice_settings.speed is [0.7, 1.2]; Kokoro is wider
+        # but the daemon clamps at synth time anyway. Reject the
+        # obviously-bad inputs here so the user notices immediately.
+        if not (0.5 <= f <= 2.0):
+            raise typer.BadParameter(f"speed out of range; expected 0.5–2.0, got {f}.")
+        return f
+
+    if key in ("skip_under_chars", "flush_delay_ms", "hotkey_taphold_threshold_ms"):
+        try:
+            i = int(value)
+        except ValueError:
+            raise typer.BadParameter(f"{key} must be an integer; got {value!r}.") from None
+        if i < 0:
+            raise typer.BadParameter(f"{key} cannot be negative; got {i}.")
+        if key == "hotkey_taphold_threshold_ms" and i < 100:
+            raise typer.BadParameter(
+                f"hotkey_taphold_threshold_ms < 100ms is unusable (it'd trigger on every keypress); got {i}."
+            )
+        return i
+
+    if key in _BOOL_KEYS:
+        v = value.lower()
+        if v in ("true", "yes", "1"):
+            return True
+        if v in ("false", "no", "0"):
+            return False
+        raise typer.BadParameter(f"{key} must be true or false; got {value!r}.")
+
+    # Unrecognised key — soft warn so the user notices a typo, but
+    # don't block: power users may add custom keys consumed by their
+    # own forks.
+    if key not in config.DEFAULTS:
+        typer.echo(
+            f"warning: {key!r} is not a known config key (typo?). Setting anyway.",
+            err=True,
+        )
+
+    # Free-form string keys (voice, lang, *_api_key, hotkey_silence,
+    # hotkey_replay, hotkey_taphold_key, etc.) just pass through.
+    return value
+
+
 @config_app.command("set")
 def config_set(key: str, value: str) -> None:
-    """Set a config value. Types are inferred (ints, floats, booleans)."""
-    typed: object = value
-    if value.lower() in ("true", "false"):
-        typed = value.lower() == "true"
-    else:
-        try:
-            typed = int(value)
-        except ValueError:
-            try:
-                typed = float(value)
-            except ValueError:
-                pass
+    """Set a config value. Validates known keys (persona, speed,
+    verbosity, hotkey_mode, booleans) and rejects out-of-range values
+    so an accidental ``heard config set speed -2.0`` doesn't silently
+    break TTS."""
+    typed = _validate(key, value)
     config.set_value(key, typed)
     typer.echo(f"{key} = {typed}")
     try:
