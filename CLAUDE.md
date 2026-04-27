@@ -56,56 +56,61 @@ history.append (after successful play)
 | `heard/cli.py` | Typer CLI: `install`, `demo`, `tune`, `voices`, `say`, `silence`, `replay`, `history`, `improve`, `doctor`, `config get/set`, `service install/uninstall`. |
 | `packaging/setup.py` + `build-app.sh` + `app_entry.py` | py2app build. Bundles certifi, charset_normalizer, idna, urllib3, libssl/libcrypto/libffi (the frozen Python's @rpath quirks). `app_entry.py` sets `SSL_CERT_FILE` before any HTTPS-using import. |
 
-## Owner-only tools — NOT in the public CLI
+## Owner-only tools — hidden from `heard --help`
 
-Some Heard machinery is for the maintainer (Christian) only — used to
-iterate on the product across all users. **These are deliberately NOT
-exposed in `heard --help` and must not be added back.**
+Some Heard CLI commands are for the maintainer (Christian) only.
+**They live in `heard/cli.py` with `hidden=True` so they don't appear
+in `heard --help`, but they remain runnable** — Christian types
+`heard improve` from his source checkout exactly as he always has.
 
-| Tool | Where | Purpose |
+| Command | Hidden flag | Purpose |
 |---|---|---|
-| `python scripts/improve.py` | `scripts/improve.py` | Build a Claude Code session primer from spoken history. Maintainer pastes into CC, has the conversation, applies edits, commits, pushes. Improvements ship to all users via the next release. |
-| `python scripts/improve.py --done` | same | Advance the history checkpoint, prune consumed entries, clean up legacy report files. |
+| `heard improve` | `@app.command(hidden=True)` | Build a Claude Code session primer from spoken history. Maintainer pastes into CC, has the conversation, applies edits, commits, pushes. Improvements ship to all users via the next release. |
+| `heard improve --done` | same | Advance the history checkpoint, prune consumed entries, clean up legacy report files. |
 
-**Why owner-only:** The improvement loop assumes the user can commit +
-push code so fixes ship to everyone via the next release. Users on a
-packaged `.app` install can't — edits to bundled files (`templates.py`,
-`persona.py`) get wiped on every upgrade. Keeping these tools out of
-the public CLI prevents users from discovering a feature that doesn't
-really work for them.
+**Why hidden, not public:** The improvement loop assumes the user can
+commit + push code so fixes ship to everyone via the next release.
+Users on a packaged `.app` install can't — edits to bundled files
+(`templates.py`, `persona.py`) get wiped on every upgrade. Hiding
+keeps the muscle memory for the maintainer while preventing users
+from discovering a feature that doesn't really work for them.
 
-**For future Claude Code sessions in this repo:** do not add these
-tools to `heard/cli.py`. If asked to "improve", "rate", or "judge"
-spoken output, the answer is `scripts/improve.py`, not a new public
-command. The public CLI is for end-user features only (install, demo,
-`heard history` view, doctor, etc.).
+**For future Claude Code sessions in this repo:**
+- DO NOT remove `hidden=True` from `improve_cmd`.
+- DO NOT advertise `heard improve` in the README, public docs, or
+  `heard --help`.
+- DO NOT split `_IMPROVE_RUBRIC` out into a separate `scripts/` file
+  that we'd need to keep in sync.
+- If asked to "improve", "rate", or "judge" spoken output, the answer
+  is `heard improve` — same as today, just hidden from the listing.
 
 ### How the maintainer's improve loop works
 
 ```
-python scripts/improve.py
+heard improve
   → reads since-last-checkpoint from history.jsonl
   → builds prompt (rubric + N most-recent utterances + instructions)
   → copies to clipboard via pbcopy + prints to stdout
   → maintainer pastes into Claude Code, has the conversation, applies edits
 
-python scripts/improve.py --done
+heard improve --done
   → advances checkpoint
   → prunes consumed entries from history.jsonl
-  → cleans up old report files (legacy artifact from prior design)
+  → cleans up old report files (legacy artifact from a prior design)
 ```
 
-Pipe-friendly: `python scripts/improve.py | pbcopy` and
-`python scripts/improve.py | claude` both work. The interactive form
-(in a tty) prints AND auto-copies for convenience.
+Pipe-friendly: `heard improve | pbcopy` and `heard improve | claude`
+both work. The interactive form (in a tty) prints AND auto-copies
+for convenience.
 
-**The rubric lives in `scripts/improve.py` as `_IMPROVE_RUBRIC`.** That's
-the file to edit when refining what CC focuses on during the session.
-It currently emphasises tense correctness (present in-flight, past for
-finals), brevity (1 sentence ideal), no markdown / code read-aloud,
-and specific failure modes ("Running a shell command" too generic,
-file paths read verbatim, persona breaking character). Edits to the
-rubric take effect on the next run — no daemon restart needed.
+**The rubric lives in `heard/cli.py` as `_IMPROVE_RUBRIC`** — colocated
+with the `improve_cmd` function. That's the file to edit when refining
+what CC focuses on during the session. It currently emphasises tense
+correctness (present in-flight, past for finals), brevity (1 sentence
+ideal), no markdown / code read-aloud, and specific failure modes
+("Running a shell command" too generic, file paths read verbatim,
+persona breaking character). Edits to the rubric take effect on the
+next run — no daemon restart needed.
 
 ## Hot-patch workflow
 

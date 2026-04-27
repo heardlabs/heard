@@ -343,6 +343,212 @@ def _parse_iso_ts(ts: str) -> float | None:
         return None
 
 
+# --- Maintainer-only: heard improve -----------------------------------
+#
+# Hidden from `heard --help` (hidden=True) so end users don't see it in
+# the listing, but still works for Christian (`heard improve`). Why
+# hidden instead of public: the loop only really pays off for the
+# maintainer, who can commit + push edits so improvements ship to all
+# users via the next release. Users on a packaged .app install can't —
+# bundled file edits get wiped on every upgrade.
+#
+# Future Claude Code sessions: do NOT remove `hidden=True` and do NOT
+# advertise this command in the README. See CLAUDE.md > "Owner-only
+# tools" for the full rationale.
+
+_IMPROVE_RUBRIC = """\
+You are reviewing the spoken-text output of a voice companion called
+Heard. Heard narrates AI coding agents (Claude Code, Codex) aloud to a
+developer who's working alongside the agent. The narration is
+delivered as TTS, so it has to sound natural read aloud.
+
+Heard's design rules:
+- Lead with the outcome, not the journey.
+- Match the brevity of the input. One sentence per beat. Two for
+  finals at most.
+- Tense matters: PRESENT for in-flight work (intermediate prose,
+  tool announcements). PAST for completed finals and post-tool
+  narration.
+- File paths: name 1-3 by name; aggregate above three
+  ("fourteen files in src/auth").
+- Drop adverbs. Drop "I" unless the persona explicitly requires it.
+- No markdown, no code read aloud.
+- Failures from background agents pierce with "Agent <name>:".
+
+Failure modes to call out:
+- "Running a shell command" too often (genericness)
+- Reading file paths verbatim with slashes and extensions
+- Persona breaking character mid-utterance
+- Over-elaborating short neutral text into wordy prose
+- Tense mistakes ("I edit auth.py" instead of "editing auth.py")
+- Markdown / code structure leaking into the spoken text
+- Robotic transitions between background-agent pierces and focus
+
+You will receive ~50–100 utterances from a real session. For each
+you have: kind, tag, neutral (pre-rewrite), spoken (post-rewrite),
+persona, profile, repo.
+
+Your output should be a markdown report with three sections:
+
+## Aggregate patterns
+The top 3 issues across the corpus. Name each, give a count or
+percentage, explain why it matters.
+
+## Specific examples
+5–10 illuminating cases. For each: quote the neutral and spoken,
+explain what's wrong, and propose what would be better.
+
+## Suggested fixes
+Concrete changes tied to specific files. Pick from:
+- `heard/personas/<name>.md` — persona character / tone rules
+- `heard/profiles/<name>.yaml` — verbosity profile dimensions
+- `heard/templates.py` — per-tool narration templates (Bash verb
+  detection, file paths, etc.)
+- `heard/persona.py` `_SHARED_NARRATION_RULES` — the cross-persona
+  framing every Haiku rewrite gets
+
+Format each suggestion as:
+```
+File: heard/personas/jarvis.md
+BEFORE: <existing line or block>
+AFTER:  <proposed replacement>
+WHY:    <one-line rationale>
+```
+
+Be specific. Be opinionated. Don't hedge. Skip generic advice
+("be more concise") in favour of precise edits.
+"""
+
+
+def _improve_format_corpus(records: list[dict]) -> str:
+    lines: list[str] = []
+    for i, r in enumerate(records, 1):
+        lines.append(f"--- entry {i} ---")
+        for k in ("kind", "tag", "persona", "profile", "repo_name", "neutral", "spoken"):
+            v = r.get(k)
+            if v is None or v == "":
+                continue
+            lines.append(f"{k}: {v}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _improve_build_prompt(records: list[dict]) -> str:
+    return f"""\
+You are helping me improve the spoken output of Heard, a voice companion that
+narrates AI coding agents. You're running inside the heard repo
+(`~/Desktop/Projects/heard`). Its `CLAUDE.md` is already loaded with the
+architecture map and conventions — follow them (`encoding="utf-8"` on file IO,
+commit-per-logical-step, `Co-Authored-By: Claude Opus 4.7 (1M context)`
+trailer).
+
+# Your job
+
+1. Read the corpus of recent utterances below.
+2. Identify the top 3 patterns where the spoken output could improve.
+3. Propose specific edits anchored to ONE of these files:
+   - `heard/personas/<name>.md` — persona character / tone
+   - `heard/profiles/<name>.yaml` — verbosity profile dimensions
+   - `heard/templates.py` — per-tool narration templates
+   - `heard/persona.py` `_SHARED_NARRATION_RULES` — cross-persona rules
+4. PAUSE and wait for me to pick which suggestions to apply.
+5. After each approved edit:
+   - run `ruff check heard/ tests/` and `pytest -q`
+   - show me the diff
+6. When I say "commit", commit with a clear message + Co-Authored-By trailer.
+
+# Rubric
+
+{_IMPROVE_RUBRIC}
+
+# Corpus ({len(records)} recent utterances)
+
+{_improve_format_corpus(records)}
+
+Start by giving me your top 3 patterns + first 3 suggested edits. Wait for me
+to confirm before editing anything.
+"""
+
+
+@app.command(name="improve", hidden=True)
+def improve_cmd(
+    limit: int = typer.Option(100, "-n", "--limit"),
+    done: bool = typer.Option(False, "--done"),
+    keep: bool = typer.Option(False, "--keep"),
+) -> None:
+    """[Maintainer only] Build a Claude Code session primer from spoken
+    history; copy to clipboard + print. Paste into CC, have the
+    conversation, apply edits. `--done` advances the history checkpoint
+    and prunes consumed entries.
+    """
+    import shutil
+    import sys
+
+    if done:
+        _improve_done(keep=keep)
+        return
+
+    records, _end = history.iter_since_checkpoint()
+    if not records:
+        typer.echo(
+            "No new utterances since last improve run. "
+            "Run Heard for a while, then come back.",
+            err=True,
+        )
+        return
+
+    if len(records) > limit:
+        records = records[-limit:]
+    prompt = _improve_build_prompt(records)
+    piped = not sys.stdout.isatty()
+    if piped:
+        typer.echo(prompt, nl=False)
+        return
+    typer.echo(prompt)
+    pbcopy = shutil.which("pbcopy")
+    if pbcopy:
+        try:
+            subprocess.run([pbcopy], input=prompt, text=True, check=False)
+            typer.echo(
+                f"\n— prompt copied to clipboard ({len(records)} utterances). "
+                "Paste it into Claude Code.",
+                err=True,
+            )
+        except Exception:
+            pass
+    typer.echo(
+        "When you're done in CC, run `heard improve --done` to advance "
+        "the history checkpoint.",
+        err=True,
+    )
+
+
+def _improve_done(keep: bool = False) -> None:
+    _records, end_offset = history.iter_since_checkpoint()
+    if not keep and end_offset > 0:
+        history.commit_checkpoint_and_prune(end_offset)
+        typer.echo("History pruned through the current session.")
+    elif keep:
+        typer.echo("--keep specified; history preserved.")
+    else:
+        typer.echo("Nothing to prune — history was already empty.")
+    improvements_dir = config.CONFIG_DIR / "improvements"
+    if improvements_dir.exists():
+        deleted = 0
+        for f in improvements_dir.glob("*.md"):
+            try:
+                f.unlink()
+                deleted += 1
+            except Exception:
+                pass
+        if deleted:
+            typer.echo(f"Deleted {deleted} old report file(s) from {improvements_dir}.")
+        try:
+            improvements_dir.rmdir()
+        except OSError:
+            pass
+
+
 @app.command()
 def stop() -> None:
     """Cancel current speech AND shut down the daemon."""
