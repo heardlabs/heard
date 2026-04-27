@@ -124,7 +124,7 @@ class Daemon:
         # tool announcements; oldest is dropped when full. Drained by
         # a single worker thread, so utterances play sequentially
         # instead of preempting each other.
-        self._queue: list[tuple[str, dict | None, persona_mod.Persona | None]] = []
+        self._queue: list[tuple[str, dict | None, persona_mod.Persona | None, str]] = []
         self._queue_lock = threading.Lock()
         self._queue_cv = threading.Condition(self._queue_lock)
         self._speech_worker: threading.Thread | None = None
@@ -449,6 +449,7 @@ class Daemon:
         text: str,
         cfg: dict | None = None,
         persona: persona_mod.Persona | None = None,
+        session_id: str = "",
     ) -> None:
         """Queue an utterance behind whatever's currently playing.
 
@@ -462,12 +463,29 @@ class Daemon:
         speak (long monologue + a burst of tool calls), the oldest
         entry is dropped — better to drop one stale announcement than
         keep the user listening for thirty seconds of catch-up.
+
+        Multi-session priority: when a new event arrives from a
+        different session_id than what's queued, the queued items
+        from older sessions get dropped. Two CC sessions running in
+        parallel terminals would otherwise interleave their narration
+        through Heard's single audio output; the freshest-session-wins
+        rule means whichever terminal you're actively driving is the
+        one Heard tracks. Items still play to completion (we don't
+        cancel the in-flight one), but the queue clears.
         """
         text = (text or "").strip()
         if not text:
             return
         with self._queue_cv:
-            self._queue.append((text, cfg, persona))
+            if session_id and self._queue:
+                # Drop queued items from any session that isn't this
+                # one — user has switched contexts.
+                before = len(self._queue)
+                self._queue = [e for e in self._queue if e[3] == session_id]
+                dropped = before - len(self._queue)
+                if dropped:
+                    _log("queue_drop_other_session", dropped=dropped, session=session_id)
+            self._queue.append((text, cfg, persona, session_id))
             if len(self._queue) > self._queue_max:
                 dropped = len(self._queue) - self._queue_max
                 self._queue = self._queue[-self._queue_max:]
@@ -492,7 +510,7 @@ class Daemon:
             with self._queue_cv:
                 if not self._queue:
                     return
-                text, cfg, persona = self._queue.pop(0)
+                text, cfg, persona, _session_id = self._queue.pop(0)
                 cancel = threading.Event()
                 self._current_cancel = cancel
             self._speak(text, cancel, cfg=cfg, persona=persona)
@@ -581,7 +599,7 @@ class Daemon:
         _log("event_speak", kind=kind, tag=tag, persona=persona.name, chars=len(final))
         if DEBUG:
             _log("event_speak_detail", text=final)
-        self._start_speech(final, cfg=cfg, persona=persona)
+        self._start_speech(final, cfg=cfg, persona=persona, session_id=session_id)
 
     def _persona_for(self, cfg: dict) -> persona_mod.Persona:
         name = cfg.get("persona", "raw")

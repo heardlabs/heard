@@ -250,6 +250,54 @@ def test_silence_interrupts_in_flight_synth(tmp_path, monkeypatch):
     synth_proceed.set()
 
 
+def test_new_session_drops_queued_items_from_other_sessions(tmp_path, monkeypatch):
+    """Two CC sessions running in parallel terminals share Heard's
+    one audio output. When the user switches focus to a different
+    session, queued narration from the OLD session shouldn't keep
+    playing — the freshest session wins the queue."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    started_a = threading.Event()
+    proceed_a = threading.Event()
+    spoken: list[str] = []
+    spoken_lock = threading.Lock()
+
+    def fake_speak(text, cancel, cfg=None, persona=None):
+        if text == "session-A-first":
+            started_a.set()
+            proceed_a.wait(timeout=2.0)
+        if cancel.is_set():
+            return
+        with spoken_lock:
+            spoken.append(text)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    daemon._start_speech("session-A-first", session_id="A")
+    daemon._start_speech("session-A-second", session_id="A")
+    daemon._start_speech("session-A-third", session_id="A")
+    started_a.wait(timeout=1.0)
+
+    # New session arrives. A's queued items (second + third) drop;
+    # A-first is in flight and continues to completion.
+    daemon._start_speech("session-B-first", session_id="B")
+    proceed_a.set()
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        with daemon._queue_cv:
+            if not daemon._queue and (
+                daemon._speech_worker is None or not daemon._speech_worker.is_alive()
+            ):
+                break
+        time.sleep(0.02)
+
+    assert "session-A-first" in spoken  # already-playing not preempted
+    assert "session-B-first" in spoken  # newcomer plays
+    assert "session-A-second" not in spoken
+    assert "session-A-third" not in spoken
+
+
 def test_silence_clears_queue(tmp_path, monkeypatch):
     """The silence hotkey should zero out queued events, not just
     cancel the in-flight one."""
