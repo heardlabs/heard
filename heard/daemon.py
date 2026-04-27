@@ -85,7 +85,11 @@ class Daemon:
         self._queue_lock = threading.Lock()
         self._queue_cv = threading.Condition(self._queue_lock)
         self._speech_worker: threading.Thread | None = None
-        self._queue_max = 3
+        # 5 leaves room for "long prose + 4 quick tool calls" without
+        # dropping early announcements. 3 was too tight in practice;
+        # bursts during a normal turn would silently lose the first
+        # one or two beats.
+        self._queue_max = 5
         self._start_hotkey()
         self._start_audio_monitor()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
