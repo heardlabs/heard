@@ -32,9 +32,18 @@ from collections.abc import Sequence
 from heard import client, config, markdown
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[=>]")
-IDLE_FLUSH_MS = 1500
+# Bumped from 1500ms — agents routinely think for >1.5s mid-response,
+# and the wrapper was flushing partial output as if it were 'final',
+# which caused Heard to speak half-thoughts. 3s is closer to a
+# real "the agent is waiting on me" pause and survives normal API
+# latency.
+IDLE_FLUSH_MS = 3000
 MAX_BUFFER = 8000
 SESSION_ID = "heard-run"
+# Debounce: collapse a burst of keystrokes into a single barge-in
+# silence command. Without this we sent {"cmd": "stop"} on every
+# byte the user typed (10 chars → 10 socket connections).
+BARGE_IN_DEBOUNCE_S = 1.0
 
 
 def _strip_ansi(s: str) -> str:
@@ -113,6 +122,7 @@ def run(argv: Sequence[str]) -> int:
 
     buf: list[str] = []
     last_child_write = time.time()
+    last_barge_in = 0.0
 
     try:
         while True:
@@ -149,11 +159,19 @@ def run(argv: Sequence[str]) -> int:
                 except OSError:
                     indata = b""
                 if indata:
-                    # user typed — that's a barge-in signal
-                    try:
-                        client.send({"cmd": "stop"})
-                    except Exception:
-                        pass
+                    # User typed — barge-in signal. Debounce so a burst
+                    # of keystrokes ('git status' = 10 chars) doesn't
+                    # fan out into 10 socket connections asking the
+                    # daemon to silence. One stop per 1s window is
+                    # enough; the daemon's queue + cancel handle the
+                    # rest.
+                    now = time.time()
+                    if now - last_barge_in >= BARGE_IN_DEBOUNCE_S:
+                        last_barge_in = now
+                        try:
+                            client.send({"cmd": "stop"})
+                        except Exception:
+                            pass
                     os.write(fd, indata)
 
             if buf and (time.time() - last_child_write) * 1000 >= IDLE_FLUSH_MS:
