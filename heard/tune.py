@@ -42,38 +42,62 @@ def _prompt_choice(label: str, options: list[str], default: str | None = None) -
 def _pick_voice(current: str) -> str:
     cfg = config.load()
     tts = ElevenLabsTTS(api_key=cfg.get("elevenlabs_api_key", ""))
-    voices = tts.list_voices()
+    aliases = tts.list_voices()
 
-    # If the user's current voice is a custom ElevenLabs ID (set by a
-    # persona — e.g. jarvis ships with Fahco4VZzobUeiPqni1S), it
-    # won't be in the alias list. Prepend it so picking the
-    # "default" doesn't silently destroy the persona's voice. Marked
-    # with the (current) suffix in the choice list for clarity.
-    if current and current not in voices:
-        voices = [current] + voices
-    if not voices:
+    # Pull the full library from ElevenLabs once so the user can pick
+    # premium / cloned / professional voices that aren't in our
+    # seven-alias shortcut table. The fetch is best-effort — if it
+    # fails (no key, network), we fall back to aliases + current.
+    library_by_id: dict[str, str] = {}
+    if cfg.get("elevenlabs_api_key", ""):
+        console.print("[dim]Fetching your ElevenLabs library...[/dim]")
+        for v in tts.fetch_voice_library():
+            library_by_id[v["id"]] = v["name"]
+
+    # Display labels: aliases as their friendly name, library voice IDs
+    # as "<id>  <name>" so the user sees what each ID actually is. The
+    # picker maps the chosen label back to the underlying value below.
+    label_to_value: dict[str, str] = {}
+    for alias in aliases:
+        label_to_value[alias] = alias
+    for vid, name in library_by_id.items():
+        label = f"{vid}  ({name})"
+        label_to_value[label] = vid
+
+    # Make sure the current voice always appears, even if it's a
+    # custom ID and the library fetch came back empty.
+    if current and current not in label_to_value.values():
+        label_to_value[current] = current
+
+    if not label_to_value:
         return current
 
+    labels = list(label_to_value)
+
     console.print("\n[bold]2. Pick a voice[/bold]\n")
-    chosen = current if current in voices else voices[0]
+    current_label = next(
+        (label for label, value in label_to_value.items() if value == current),
+        labels[0],
+    )
+    chosen_label = current_label
     while True:
-        voice = _prompt_choice("voice", voices, default=chosen)
-        if typer.confirm(f"Play a sample of {voice}?", default=True):
+        chosen_label = _prompt_choice("voice", labels, default=chosen_label)
+        voice_value = label_to_value[chosen_label]
+        if typer.confirm(f"Play a sample of {chosen_label}?", default=True):
             client.ensure_daemon()
             # Order matters: write config FIRST, then reload daemon,
             # then speak. The previous order (reload → set_value →
             # speak) reloaded with the OLD voice and then played the
             # sample with whatever the daemon was on before — so the
             # 'sample' was always the prior selection, never the new one.
-            config.set_value("voice", voice)
+            config.set_value("voice", voice_value)
             try:
                 client.send({"cmd": "reload"})
             except Exception:
                 pass
             client.speak(SAMPLE_LINE)
-        if typer.confirm(f"Keep {voice}?", default=True):
-            return voice
-        chosen = voice
+        if typer.confirm(f"Keep {chosen_label}?", default=True):
+            return voice_value
 
 
 def _pick_persona(current: str) -> str:
