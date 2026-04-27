@@ -66,3 +66,40 @@ def test_feature_flag_off_when_missing(tmp_path):
     config_file.write_text("[other]\nkey = true\n")
     with patch.object(codex, "CONFIG_PATH", config_file):
         assert codex._feature_flag_enabled() is False
+
+
+def test_feature_flag_no_space_form(tmp_path):
+    """Earlier the regex required `codex_hooks\\s*=\\s*true`. The TOML
+    parser handles `codex_hooks=true` without spaces too."""
+    config_file = tmp_path / "config.toml"
+    config_file.write_text("[features]\ncodex_hooks=true\n")
+    with patch.object(codex, "CONFIG_PATH", config_file):
+        assert codex._feature_flag_enabled() is True
+
+
+def test_feature_flag_subtable_form_does_not_match(tmp_path):
+    """`[features.codex_hooks]` is a sub-table, not a boolean. The
+    old regex matched it accidentally; tomllib correctly distinguishes."""
+    config_file = tmp_path / "config.toml"
+    config_file.write_text("[features.codex_hooks]\nenabled = true\n")
+    with patch.object(codex, "CONFIG_PATH", config_file):
+        assert codex._feature_flag_enabled() is False
+
+
+def test_feature_flag_handles_other_keys_in_features(tmp_path):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        "[features]\n"
+        "model_v2 = true\n"
+        "codex_hooks = true\n"
+        "telemetry = false\n"
+    )
+    with patch.object(codex, "CONFIG_PATH", config_file):
+        assert codex._feature_flag_enabled() is True
+
+
+def test_feature_flag_malformed_toml_returns_false(tmp_path):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text("[features\ncodex_hooks = true\n")  # missing ]
+    with patch.object(codex, "CONFIG_PATH", config_file):
+        assert codex._feature_flag_enabled() is False
