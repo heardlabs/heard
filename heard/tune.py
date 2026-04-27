@@ -54,7 +54,7 @@ def _pick_voice(current: str) -> str:
     if not voices:
         return current
 
-    console.print("\n[bold]1. Pick a voice[/bold]\n")
+    console.print("\n[bold]2. Pick a voice[/bold]\n")
     chosen = current if current in voices else voices[0]
     while True:
         voice = _prompt_choice("voice", voices, default=chosen)
@@ -77,7 +77,7 @@ def _pick_voice(current: str) -> str:
 
 
 def _pick_persona(current: str) -> str:
-    console.print("\n[bold]2. Pick a persona[/bold]")
+    console.print("\n[bold]1. Pick a persona[/bold]")
     console.print("raw = pass-through. jarvis = British, dry, first-person.\n")
     names = persona_mod.list_bundled()
     return _prompt_choice("persona", names, default=current if current in names else "raw")
@@ -123,13 +123,24 @@ def run() -> None:
     cfg = config.load()
     console.print("\n[bold cyan]heard tune[/bold cyan] — walk through the core settings.\n")
 
-    voice = _pick_voice(cfg.get("voice", "am_onyx"))
+    # Persona first, voice second. Personas ship with their own voice
+    # in the MD frontmatter, and that voice WINS at speak time. If we
+    # asked for voice first, the user's choice would silently get
+    # overridden the moment we wrote the persona — making "Pick a
+    # voice" feel broken on next narration.
+    #
+    # Ordered like this, the persona pick seeds the voice prompt's
+    # default, so the user explicitly sees "current = <persona's
+    # voice>" and can either keep it or pick something else.
     persona = _pick_persona(cfg.get("persona", "raw"))
+    persona_meta = persona_mod.load_meta(persona) or {}
+    voice_default = persona_meta.get("voice") or cfg.get("voice", "george")
+    voice = _pick_voice(voice_default)
     speed = _pick_speed(float(cfg.get("speed", 1.0)))
     verb = _pick_verbosity(cfg.get("verbosity", "normal"))
 
-    config.set_value("voice", voice)
     config.set_value("persona", persona)
+    config.set_value("voice", voice)
     config.set_value("speed", speed)
     config.set_value("verbosity", verb)
     try:
@@ -138,8 +149,8 @@ def run() -> None:
         pass
 
     console.print(
-        f"\n[green]Saved.[/green] voice=[bold]{voice}[/bold]  "
-        f"persona=[bold]{persona}[/bold]  speed=[bold]{speed}×[/bold]  "
+        f"\n[green]Saved.[/green] persona=[bold]{persona}[/bold]  "
+        f"voice=[bold]{voice}[/bold]  speed=[bold]{speed}×[/bold]  "
         f"verbosity=[bold]{verb}[/bold]"
     )
     console.print("Run [cyan]heard say \"hello\"[/cyan] to sanity-check.\n")
