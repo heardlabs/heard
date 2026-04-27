@@ -658,22 +658,40 @@ class Daemon:
 
         if kind == "tool_pre":
             density = self.sessions.tool_density(session_id)
-            if not verbosity.should_narrate_pre(cfg, tag, density):
-                self.sessions.record_tool_event(session_id)
+            self.sessions.record_tool_event(session_id)
+            v_decision = verbosity.classify_pre(cfg, tag, density)
+            if v_decision == "drop":
                 _log("event_drop", kind=kind, tag=tag, reason="verbosity_pre", density=density)
                 return
-            self.sessions.record_tool_event(session_id)
+            if v_decision == "digest":
+                # Profile says digest (Brief always, Normal under
+                # burst). Stash for the next prose-arrival to drain.
+                self.router.add_to_digest(session_id, kind, tag, neutral, ctx)
+                _log("event_deferred", kind=kind, tag=tag, reason="verbosity_digest", density=density)
+                return
         elif kind == "tool_post":
             if tag in ("tool_post_failure", "tool_post_command_failed"):
                 self.sessions.note_failure(session_id)
                 session = self.sessions.get(session_id)
-            if not verbosity.should_narrate_post(cfg, tag):
+            if verbosity.classify_post(cfg, tag) != "speak":
                 _log("event_drop", kind=kind, tag=tag, reason="verbosity_post")
                 return
-        elif kind == "final":
-            budget = verbosity.final_char_budget(cfg)
-            if len(neutral) > budget and persona.is_raw:
-                neutral = verbosity.truncate_to_sentences(neutral, budget)
+        elif kind in ("intermediate", "final"):
+            if verbosity.classify_prose(cfg) != "speak":
+                _log("event_drop", kind=kind, tag=tag, reason="profile_prose_silent")
+                return
+            if kind == "final":
+                budget = verbosity.final_char_budget(cfg)
+                if len(neutral) > budget and persona.is_raw:
+                    neutral = verbosity.truncate_to_sentences(neutral, budget)
+            # Drain pending tool digest for this session BEFORE the
+            # prose plays — gives the user a coherent "Made 3 edits,
+            # ran tests. OK, all green." narrative instead of stale
+            # tool announcements queueing up behind the prose.
+            summary = self.router.drain_session_summary(session_id)
+            if summary:
+                _log("digest_inline", session=session_id, chars=len(summary))
+                neutral = f"{summary} {neutral}"
 
         if not neutral:
             _log("event_drop", kind=kind, tag=tag, reason="empty_neutral")

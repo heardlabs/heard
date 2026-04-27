@@ -314,7 +314,7 @@ def config_get(
         typer.echo(cfg.get(key, ""))
 
 
-_VALID_VERBOSITY = ("low", "normal", "high")
+_VALID_VERBOSITY = ("quiet", "brief", "normal", "verbose", "low", "high")
 _VALID_HOTKEY_MODE = ("taphold", "combo")
 _BOOL_KEYS = (
     "narrate_tools",
@@ -347,11 +347,11 @@ def _validate(key: str, value: str) -> object:
             )
         return value
 
-    if key == "verbosity":
+    if key in ("verbosity", "swarm_verbosity"):
         v = value.lower()
         if v not in _VALID_VERBOSITY:
             raise typer.BadParameter(
-                f"verbosity must be one of {', '.join(_VALID_VERBOSITY)}; got {value!r}."
+                f"{key} must be one of {', '.join(_VALID_VERBOSITY)}; got {value!r}."
             )
         return v
 

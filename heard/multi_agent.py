@@ -364,6 +364,23 @@ class MultiAgentRouter:
                     info.pending_digest.clear()
             return out
 
+    def drain_session_summary(self, session_id: str) -> str | None:
+        """Drain ONE session's pending digest and format it as a
+        spoken summary. Used by the daemon when intermediate prose
+        arrives — we play the tool summary first ("3 edits, ran the
+        tests"), then the prose ("OK, all green"), so the user gets
+        a coherent narrative instead of a wall of "editing X.py.
+        editing Y.py..." preceding the prose."""
+        with self._lock:
+            info = self._sessions.get(session_id)
+            if info is None or not info.pending_digest:
+                return None
+            events = list(info.pending_digest)
+            info.pending_digest.clear()
+        # _format_session_summary is module-level, takes both args.
+        # Call it OUTSIDE the lock — pure function, no shared state.
+        return _format_session_summary(info, events)
+
     # --- introspection for menu UI ----------------------------------------
 
     def format_digest(

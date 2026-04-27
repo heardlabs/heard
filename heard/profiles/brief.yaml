@@ -1,0 +1,13 @@
+# Brief — prose only; tool calls accumulate and summarise on next prose arrival.
+#
+# Default for swarm mode (non-focus sessions). The agent's reasoning
+# voices in full; the work it's doing collapses into a one-line
+# summary when the next white-dot prose arrives.
+
+name: brief
+description: Prose only; tool calls summarised before the next prose.
+pre_tool: digest
+post_success: silent
+prose: speak
+final_budget: 600
+burst_threshold: 0

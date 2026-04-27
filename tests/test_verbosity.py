@@ -6,8 +6,11 @@ def test_level_normalizes_unknown():
 
 
 def test_level_respects_config():
-    assert verbosity.level({"verbosity": "low"}) == "low"
-    assert verbosity.level({"verbosity": "high"}) == "high"
+    # Legacy "low"/"high" map to the new profile names. Existing
+    # config.yaml files keep working without migration.
+    assert verbosity.level({"verbosity": "low"}) == "quiet"
+    assert verbosity.level({"verbosity": "high"}) == "verbose"
+    assert verbosity.level({"verbosity": "brief"}) == "brief"
 
 
 def test_should_narrate_pre_low_keeps_long_running():
@@ -24,13 +27,46 @@ def test_should_narrate_pre_question_always_speaks():
     assert verbosity.should_narrate_pre(cfg_dense, "tool_question", density=999) is True
 
 
-def test_should_narrate_pre_normal_drops_on_burst():
+def test_should_narrate_pre_normal_routes_burst_to_digest():
+    """At normal verbosity, density >5 in 30s used to silently drop
+    routine pre-tool announcements. New behaviour: route them to the
+    multi-agent digest queue so they're summarised on the next prose
+    arrival ("3 edits, ran tests."), not lost. classify_pre returns
+    'speak'/'drop'/'digest' explicitly; the legacy bool wrapper
+    treats digest as truthy."""
     cfg = {"narrate_tools": True, "verbosity": "normal"}
-    # under threshold: narrate regular tools
-    assert verbosity.should_narrate_pre(cfg, "tool_edit", density=3) is True
-    # over threshold: drop regular tools, keep long-running
-    assert verbosity.should_narrate_pre(cfg, "tool_edit", density=10) is False
-    assert verbosity.should_narrate_pre(cfg, "tool_bash_test", density=10) is True
+    # Below threshold: speak each tool.
+    assert verbosity.classify_pre(cfg, "tool_edit", density=3) == "speak"
+    # Above threshold for a regular tool: digest.
+    assert verbosity.classify_pre(cfg, "tool_edit", density=10) == "digest"
+    # Long-running tools always speak — even at high density.
+    assert verbosity.classify_pre(cfg, "tool_bash_test", density=10) == "speak"
+
+
+def test_brief_profile_digests_routine_speaks_long_running():
+    """Brief profile: pre_tool=digest. Routine tools accumulate;
+    long-running ones still speak immediately."""
+    cfg = {"narrate_tools": True, "verbosity": "brief"}
+    assert verbosity.classify_pre(cfg, "tool_edit", density=0) == "digest"
+    assert verbosity.classify_pre(cfg, "tool_bash_test", density=0) == "speak"
+
+
+def test_verbose_profile_speaks_post_success():
+    """Only verbose narrates post-tool successes. Normal stays silent
+    on success (failures speak via narrate_failures regardless)."""
+    cfg_normal = {"narrate_tools": True, "narrate_tool_results": True, "verbosity": "normal"}
+    cfg_verbose = {"narrate_tools": True, "narrate_tool_results": True, "verbosity": "verbose"}
+    assert verbosity.classify_post(cfg_normal, "tool_post_success") == "drop"
+    assert verbosity.classify_post(cfg_verbose, "tool_post_success") == "speak"
+
+
+def test_quiet_drops_prose_speaks_long_running():
+    """Quiet drops intermediate prose entirely AND drops routine
+    tool calls; long-running tags pierce through anyway."""
+    cfg = {"narrate_tools": True, "verbosity": "quiet"}
+    assert verbosity.classify_prose(cfg) == "drop"
+    assert verbosity.classify_pre(cfg, "tool_edit", density=0) == "drop"
+    assert verbosity.classify_pre(cfg, "tool_bash_test", density=0) == "speak"
 
 
 def test_should_narrate_pre_high_always_speaks():

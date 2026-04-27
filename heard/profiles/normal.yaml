@@ -1,0 +1,13 @@
+# Normal — per-tool announcements, prose voiced, bursts summarised.
+#
+# Default for solo mode. Each tool call narrates ("Editing auth.py")
+# unless 5+ events fire in 30 s — overflow goes to the digest queue
+# and emits a summary on the next prose arrival.
+
+name: normal
+description: Per-tool announcements; prose voiced; bursts summarised.
+pre_tool: per_tool
+post_success: silent
+prose: speak
+final_budget: 600
+burst_threshold: 5

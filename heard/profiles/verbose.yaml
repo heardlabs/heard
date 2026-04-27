@@ -1,0 +1,12 @@
+# Verbose — speak everything, no throttling.
+#
+# Every tool call narrates. Successes speak too. Long finals get the
+# full 2 000-character budget. No digest deferral. Loudest mode.
+
+name: verbose
+description: Speak everything, no throttling.
+pre_tool: per_tool
+post_success: speak
+prose: speak
+final_budget: 2000
+burst_threshold: 9999
