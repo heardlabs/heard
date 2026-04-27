@@ -11,13 +11,14 @@ Returns True iff every required step passes.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from heard import client, config, service
-from heard.adapters import ADAPTERS
+from heard.adapters import ADAPTERS, claude_code as cc_adapter
 
 CHECK = "✓"
 CROSS = "✗"
@@ -42,7 +43,65 @@ def _step_install_state() -> None:
         installed = adapter.is_installed()
         _line(name, CHECK if installed else DASH,
               "installed" if installed else "not installed")
+    _check_cc_hook_command()
     print()
+
+
+def _check_cc_hook_command() -> None:
+    """The CC hook command embeds a python interpreter path. If the
+    user installed via pipx and later upgraded, the venv path
+    changes and the embedded python no longer exists — Heard goes
+    silent with no clue. Surface that here."""
+    if not cc_adapter.SETTINGS_PATH.exists():
+        return
+    try:
+        settings = json.loads(cc_adapter.SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        _line("cc hook", CROSS, f"couldn't parse {cc_adapter.SETTINGS_PATH}")
+        return
+
+    hook_cmd = ""
+    for entry in settings.get("hooks", {}).get("Stop", []):
+        for h in entry.get("hooks", []):
+            if cc_adapter.HOOK_MARKER in h.get("command", ""):
+                hook_cmd = h["command"]
+                break
+        if hook_cmd:
+            break
+    if not hook_cmd:
+        return  # adapter not installed; already covered above
+
+    py = _extract_python_from_hook(hook_cmd)
+    if not py:
+        return
+    if Path(py).exists():
+        _line("cc hook python", CHECK, f"{py} exists")
+    else:
+        _line(
+            "cc hook python", CROSS,
+            f"{py} missing — re-run `heard install claude-code` or `heard ui`",
+        )
+
+
+def _extract_python_from_hook(cmd: str) -> str | None:
+    """Pull the python interpreter path back out of the hook command
+    we wrote. Two shapes to handle:
+
+      "/path/to/python" -m heard.hook claude-code
+      PYTHONHOME="..." "/Applications/Heard.app/.../python" -m heard.hook claude-code
+    """
+    import shlex
+
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return None
+    for tok in tokens:
+        if "=" in tok and not tok.startswith("-"):
+            continue  # env-var prefix
+        if tok.endswith("python") or tok.endswith("python3") or "/python" in tok:
+            return tok
+    return None
 
 
 def _step_daemon() -> bool:
