@@ -229,14 +229,45 @@ def stop() -> None:
             pass
 
 
+_SECRET_KEY_SUFFIXES = ("_api_key", "_token", "_secret")
+
+
+def _redact(value: str) -> str:
+    """Show '<redacted, NN chars, last 4: …xxxx>' so the user can
+    confirm a key looks right without exposing the full value."""
+    s = str(value)
+    if not s:
+        return ""
+    return f"<redacted, {len(s)} chars, last 4: …{s[-4:]}>"
+
+
 @config_app.command("get")
-def config_get(key: str | None = typer.Argument(None)) -> None:
-    """Show config value(s)."""
+def config_get(
+    key: str | None = typer.Argument(None),
+    show_secrets: bool = typer.Option(
+        False,
+        "--show-secrets",
+        help="Print API keys / tokens in full. Off by default to keep "
+        "credentials out of pasted debug output.",
+    ),
+) -> None:
+    """Show config value(s).
+
+    API keys are redacted by default — without this guard, piping
+    ``heard config get`` into a debug paste leaks credentials.
+    Pass ``--show-secrets`` to opt in (or query a single key by name).
+    """
     cfg = config.load()
     if key is None:
         for k, v in sorted(cfg.items()):
-            typer.echo(f"{k} = {v}")
+            if not show_secrets and any(k.endswith(s) for s in _SECRET_KEY_SUFFIXES):
+                typer.echo(f"{k} = {_redact(v)}")
+            else:
+                typer.echo(f"{k} = {v}")
     else:
+        # Querying a specific key by name is an explicit ask — the user
+        # typed the key name, so they know what they're requesting.
+        # Don't redact in that path.
         typer.echo(cfg.get(key, ""))
 
 
