@@ -56,12 +56,6 @@ class HeardApp(rumps.App):
     def _build_menu(self) -> None:
         self.status_item = rumps.MenuItem("…")
         self.status_item.set_callback(None)
-        # Second line surfaces the most recent synth failure so the
-        # user doesn't have to tail daemon.log to learn the product
-        # is silent because of (e.g.) an SSL handshake failure.
-        # Hidden until there's something to show.
-        self.error_item = rumps.MenuItem("")
-        self.error_item.set_callback(None)
 
         # Silence + Replay labels are filled in live from config in
         # refresh() — the static "⌘⇧." was misleading because the
@@ -143,7 +137,6 @@ class HeardApp(rumps.App):
 
         self.menu = [
             self.status_item,
-            self.error_item,
             None,
             self.silence_item,
             self.replay_item,
@@ -191,12 +184,6 @@ class HeardApp(rumps.App):
         else:
             self.status_item.title = self._status_line(cfg, "on")
 
-        if last_error:
-            msg = (last_error.get("message") or "").strip()
-            self.error_item.title = msg[:80] if msg else ""
-        else:
-            self.error_item.title = ""
-
         active_persona = cfg.get("persona", "raw")
         for name, item in self.persona_menu.items():
             item.state = 1 if name == active_persona else 0
@@ -231,10 +218,14 @@ class HeardApp(rumps.App):
         )
 
     def _status_line(self, cfg: dict, state: str) -> str:
-        persona = cfg.get("persona", "raw")
-        voice = cfg.get("voice", "—")
-        verb = cfg.get("verbosity", "normal")
-        return f"{state} · {persona} · {voice} · {verb}"
+        # Voice IDs (e.g. Fahco4VZzobUeiPqni1S) leaked into the status
+        # line through the voice= field — useful for debugging, ugly
+        # for daily use. Dropped. Title-cased values for readability:
+        # "On · Jarvis · Normal" reads cleanly; "on · jarvis · normal"
+        # looked like log output.
+        persona = (cfg.get("persona") or "raw").capitalize()
+        verb = (cfg.get("verbosity") or "normal").capitalize()
+        return f"{state.capitalize()} · {persona} · {verb}"
 
     def _error_label(self, kind: str) -> str:
         return {
