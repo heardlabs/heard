@@ -24,7 +24,7 @@ import threading
 import time
 from pathlib import Path
 
-from heard import accessibility, audio_monitor, config, hotkey, notify, verbosity
+from heard import accessibility, audio_monitor, config, history, hotkey, notify, verbosity
 from heard import multi_agent as multi_agent_mod
 from heard import persona as persona_mod
 from heard.session import SessionStore
@@ -130,7 +130,9 @@ class Daemon:
         # tool announcements; oldest is dropped when full. Drained by
         # a single worker thread, so utterances play sequentially
         # instead of preempting each other.
-        self._queue: list[tuple[str, dict | None, persona_mod.Persona | None, str, str | None]] = []
+        self._queue: list[
+            tuple[str, dict | None, persona_mod.Persona | None, str, str | None, dict]
+        ] = []
         self._queue_lock = threading.Lock()
         self._queue_cv = threading.Condition(self._queue_lock)
         self._speech_worker: threading.Thread | None = None
@@ -559,6 +561,7 @@ class Daemon:
         persona: persona_mod.Persona | None = None,
         session_id: str = "",
         voice_override: str | None = None,
+        history_meta: dict | None = None,
     ) -> None:
         """Queue an utterance behind whatever's currently playing.
 
@@ -594,7 +597,7 @@ class Daemon:
                 dropped = before - len(self._queue)
                 if dropped:
                     _log("queue_drop_other_session", dropped=dropped, session=session_id)
-            self._queue.append((text, cfg, persona, session_id, voice_override))
+            self._queue.append((text, cfg, persona, session_id, voice_override, history_meta or {}))
             if len(self._queue) > self._queue_max:
                 dropped = len(self._queue) - self._queue_max
                 self._queue = self._queue[-self._queue_max:]
@@ -619,7 +622,7 @@ class Daemon:
             with self._queue_cv:
                 if not self._queue:
                     return
-                text, cfg, persona, _session_id, voice_override = self._queue.pop(0)
+                text, cfg, persona, session_id, voice_override, hmeta = self._queue.pop(0)
                 cancel = threading.Event()
                 self._current_cancel = cancel
             self._speak(text, cancel, cfg=cfg, persona=persona, voice=voice_override)
@@ -628,6 +631,22 @@ class Daemon:
                     self._current_cancel = None
                 if not cancel.is_set():
                     self._last_spoken = text
+                    # Log to spoken history. Synth ms is captured in
+                    # _speak's _log line; we don't repeat it here —
+                    # this record captures the user-facing fact that
+                    # the utterance played to completion. Wraps the
+                    # meta dict the caller passed and adds run-time
+                    # values (the actual voice used, the spoken text).
+                    if hmeta:
+                        history.append(
+                            {
+                                **hmeta,
+                                "session_id": session_id or hmeta.get("session_id") or "",
+                                "spoken": text,
+                                "voice": voice_override or self._voice(cfg, persona),
+                                "persona": persona.name if persona else hmeta.get("persona", ""),
+                            }
+                        )
 
     def _replay_last(self) -> None:
         """Long-press replay: 'I missed that, say it again'. Has to
@@ -761,12 +780,25 @@ class Daemon:
         _log("event_speak", kind=kind, tag=tag, persona=persona.name, chars=len(final))
         if DEBUG:
             _log("event_speak_detail", text=final)
+        # Bundle the context the spoken-history log needs after the
+        # utterance plays. Captured here while we still have the
+        # neutral text + tag + cwd; the queue carries it through.
+        info = self.router._sessions.get(session_id)  # noqa: SLF001
+        history_meta = {
+            "kind": kind,
+            "tag": tag,
+            "neutral": neutral,
+            "profile": cfg.get("verbosity", "normal"),
+            "repo_name": getattr(info, "repo_name", "") or "",
+            "cwd": cwd or "",
+        }
         self._start_speech(
             final,
             cfg=cfg,
             persona=persona,
             session_id=session_id,
             voice_override=decision.voice_override,
+            history_meta=history_meta,
         )
 
     def _persona_for(self, cfg: dict) -> persona_mod.Persona:
