@@ -19,14 +19,17 @@ import time
 # Each step is (kind, tag, neutral). 'tag' is what the persona layer
 # uses to pick context; we keep them short_*/long_* like real events.
 SCRIPT: list[tuple[str, str, str]] = [
+    # Intermediate beats are present-tense (work in flight); the final
+    # is past-tense (work is done). Matches the tense rules added to
+    # the persona prompts so the demo doesn't fight Haiku rewrites.
     ("intermediate", "intermediate_short", "Looking at your test failures now."),
     (
         "intermediate",
         "intermediate_short",
         "Three failures in auth.py — all from the new session-token format.",
     ),
-    ("intermediate", "intermediate_short", "Patched the helper. Re-running the suite."),
-    ("intermediate", "intermediate_short", "All green. Committing the fix."),
+    ("intermediate", "intermediate_short", "Patching the helper. Re-running the suite."),
+    ("intermediate", "intermediate_short", "Tests are green. Committing the fix."),
     ("final", "final_short", "Done. You should be good to merge."),
 ]
 
