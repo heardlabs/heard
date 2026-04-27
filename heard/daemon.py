@@ -77,6 +77,15 @@ class Daemon:
         self._last_error: dict | None = None
         self._hotkey_listener: object | None = None
         self._audio_monitor: audio_monitor.AudioMonitor | None = None
+        # Speech queue. Bounded so we don't accumulate a wall of stale
+        # tool announcements; oldest is dropped when full. Drained by
+        # a single worker thread, so utterances play sequentially
+        # instead of preempting each other.
+        self._queue: list[tuple[str, dict | None, persona_mod.Persona | None]] = []
+        self._queue_lock = threading.Lock()
+        self._queue_cv = threading.Condition(self._queue_lock)
+        self._speech_worker: threading.Thread | None = None
+        self._queue_max = 3
         self._start_hotkey()
         self._start_audio_monitor()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
@@ -305,31 +314,66 @@ class Daemon:
         cfg: dict | None = None,
         persona: persona_mod.Persona | None = None,
     ) -> None:
-        with self._lock:
-            if self._current_cancel is not None:
-                self._current_cancel.set()
-            self._kill_current()
+        """Queue an utterance behind whatever's currently playing.
 
+        Previously this cancelled the in-flight speech and replaced it
+        with the new one — that produced the "Spawning a deeper pass…"
+        cut-off-by-"Running a shell command" experience when prose and
+        tool announcements arrived back-to-back. Now we serialize:
+        prose finishes, then the tool announcement plays.
+
+        The queue is bounded; if events accumulate faster than we can
+        speak (long monologue + a burst of tool calls), the oldest
+        entry is dropped — better to drop one stale announcement than
+        keep the user listening for thirty seconds of catch-up.
+        """
         text = (text or "").strip()
         if not text:
             return
         self._last_spoken = text
-        cancel = threading.Event()
-        with self._lock:
-            self._current_cancel = cancel
-        threading.Thread(
-            target=self._speak, args=(text, cancel), kwargs={"cfg": cfg, "persona": persona}, daemon=True
-        ).start()
+        with self._queue_cv:
+            self._queue.append((text, cfg, persona))
+            if len(self._queue) > self._queue_max:
+                dropped = len(self._queue) - self._queue_max
+                self._queue = self._queue[-self._queue_max:]
+                _log("queue_drop", dropped=dropped)
+            if self._speech_worker is None or not self._speech_worker.is_alive():
+                self._speech_worker = threading.Thread(
+                    target=self._drain_queue, daemon=True
+                )
+                self._speech_worker.start()
+            self._queue_cv.notify()
+
+    def _drain_queue(self) -> None:
+        """Single-consumer worker. Pops one utterance at a time and
+        speaks it through completion, so the next event in the queue
+        only starts after the current chunk's afplay returns."""
+        while True:
+            with self._queue_cv:
+                if not self._queue:
+                    return
+                text, cfg, persona = self._queue.pop(0)
+                cancel = threading.Event()
+                self._current_cancel = cancel
+            self._speak(text, cancel, cfg=cfg, persona=persona)
+            with self._queue_cv:
+                if self._current_cancel is cancel:
+                    self._current_cancel = None
 
     def _replay_last(self) -> None:
         if self._last_spoken:
             self._start_speech(self._last_spoken)
 
     def _cancel_only(self) -> None:
-        with self._lock:
+        """Silence: kill the current utterance AND drop everything
+        queued behind it. If the user hits silence, they want quiet —
+        not the next four queued tool announcements playing in
+        sequence over the next five seconds."""
+        with self._queue_cv:
             if self._current_cancel is not None:
                 self._current_cancel.set()
             self._kill_current()
+            self._queue.clear()
 
     # --- event handling -----------------------------------------------------
 
