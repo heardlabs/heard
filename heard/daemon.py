@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from heard import accessibility, audio_monitor, config, hotkey, notify, verbosity
+from heard import multi_agent as multi_agent_mod
 from heard import persona as persona_mod
 from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
@@ -112,6 +113,11 @@ class Daemon:
         self.cfg = config.load()
         self.tts = self._make_tts()
         self.sessions = SessionStore()
+        # Multi-agent router. Decides per-event whether to speak,
+        # drop, or defer to a digest summary, based on how many
+        # sessions are active. Single-session use case is unchanged
+        # (router falls through to "speak" on every event).
+        self.router = multi_agent_mod.MultiAgentRouter()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
@@ -615,6 +621,8 @@ class Daemon:
         cfg = config.load(cwd=cwd)
         persona = self._persona_for(cfg)
         session = self.sessions.touch(session_id, cwd=cwd)
+        # Note this event so the router knows the session is active.
+        self.router.note_event(session_id, cwd or "")
 
         if kind == "tool_pre":
             density = self.sessions.tool_density(session_id)
@@ -639,6 +647,20 @@ class Daemon:
             _log("event_drop", kind=kind, tag=tag, reason="empty_neutral")
             return
 
+        # Multi-agent routing. In SOLO mode (single session) this is a
+        # no-op pass-through. In SWARM (2+ active) we drop routine
+        # events from non-focus sessions and prefix critical pierces
+        # with "Agent <name>:". In PINNED, only the pinned session
+        # gets unconditional play; others still pierce on critical.
+        decision = self.router.classify(kind=kind, tag=tag, session_id=session_id)
+        if decision.action == "drop":
+            _log("event_drop", kind=kind, tag=tag, session=session_id, reason="multi_agent_drop")
+            return
+        if decision.action == "defer_to_digest":
+            self.router.add_to_digest(session_id, kind, tag, neutral, ctx)
+            _log("event_deferred", kind=kind, tag=tag, session=session_id)
+            return
+
         final = persona.rewrite(
             event_kind=kind,
             neutral=neutral,
@@ -652,6 +674,12 @@ class Daemon:
 
         if kind == "final" and len(final) > verbosity.final_char_budget(cfg):
             final = verbosity.truncate_to_sentences(final, verbosity.final_char_budget(cfg))
+
+        # Apply the router's label prefix (e.g. "Agent api: ") AFTER
+        # persona rewrite + truncation so it survives both. Empty in
+        # solo / focus paths.
+        if decision.label_prefix:
+            final = decision.label_prefix + final
 
         self.sessions.note_topic(session_id, tag)
 
