@@ -192,6 +192,64 @@ def test_replay_preempts_current_and_queue(tmp_path, monkeypatch):
     assert "earlier-line" in spoken
 
 
+def test_silence_interrupts_in_flight_synth(tmp_path, monkeypatch):
+    """Tapping silence while ElevenLabs is mid-synth must take effect
+    immediately — earlier we waited for the HTTP round-trip to
+    complete (1-3 s on slow networks) before the cancel registered.
+
+    The synth runs on a side thread; the worker polls cancel every
+    100 ms and returns on first set. We simulate a slow synth and
+    assert the worker exits well within the synth's wall-clock time.
+    """
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    synth_started = threading.Event()
+    synth_proceed = threading.Event()
+    synth_finished = threading.Event()
+
+    def slow_synth(text, voice, speed, lang, out_path):
+        synth_started.set()
+        synth_proceed.wait(timeout=5.0)
+        # Simulate the network finally returning (or, in the cancel
+        # case, finishing after we've already moved on).
+        out_path.write_bytes(b"fake-audio")
+        synth_finished.set()
+
+    monkeypatch.setattr(daemon.tts, "synth_to_file", slow_synth)
+    # Skip afplay — we never get there in this test.
+    daemon._kill_current = lambda: None  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        "heard.daemon.subprocess.Popen",
+        lambda *a, **kw: pytest.fail("afplay should not be invoked when cancelled mid-synth"),
+    )
+
+    cancel = threading.Event()
+
+    def run_speak() -> None:
+        daemon._speak("hello world", cancel)
+
+    speaker = threading.Thread(target=run_speak, daemon=True)
+    speaker.start()
+
+    # Wait until we know synth has actually started its blocking call.
+    assert synth_started.wait(timeout=1.0), "synth never started"
+
+    # Cancel mid-flight; speaker must exit quickly even though the
+    # synth is still blocked.
+    t0 = time.monotonic()
+    cancel.set()
+    speaker.join(timeout=1.0)
+    elapsed_ms = (time.monotonic() - t0) * 1000
+
+    assert not speaker.is_alive(), "_speak didn't return after cancel"
+    assert elapsed_ms < 500, (
+        f"_speak took {elapsed_ms:.0f}ms after cancel; should be <500ms"
+    )
+    # The orphan synth thread keeps running in the background.
+    # Release it so the test ends cleanly; we don't assert on it.
+    synth_proceed.set()
+
+
 def test_silence_clears_queue(tmp_path, monkeypatch):
     """The silence hotkey should zero out queued events, not just
     cancel the in-flight one."""
