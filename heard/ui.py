@@ -200,29 +200,6 @@ class HeardApp(rumps.App):
 
     # --- action callbacks ---------------------------------------------------
 
-    def _reopen_menu(self) -> None:
-        """Re-pop the menu after a state-change click. NSMenu's default
-        is to dismiss on every item activation, but our checkmark-style
-        items (persona, speed, verbosity, on/off toggles) feel broken
-        that way — pick jarvis, menu vanishes, you have to reopen to
-        see the checkmark moved. macOS's own Bluetooth and Sound menus
-        stay open until you click outside; we mimic that.
-
-        performSelector:withObject:afterDelay: schedules a click on the
-        status bar button after the current dismissal animation
-        unwinds. 0.1 s is the smallest delay where the re-open is
-        reliable on every dismissal speed I've tested.
-        """
-        try:
-            button = self._nsapp.nsstatusitem.button()
-            if button is None:
-                return
-            button.performSelector_withObject_afterDelay_(
-                "performClick:", None, 0.1
-            )
-        except Exception:
-            pass
-
     def on_silence(self, _sender) -> None:
         try:
             client.send({"cmd": "stop"})
@@ -256,7 +233,6 @@ class HeardApp(rumps.App):
             except Exception:
                 pass
             self.refresh(None)
-            self._reopen_menu()
 
         return cb
 
@@ -270,7 +246,6 @@ class HeardApp(rumps.App):
             except Exception:
                 pass
             self.refresh(None)
-            self._reopen_menu()
 
         return cb
 
@@ -282,7 +257,6 @@ class HeardApp(rumps.App):
             except Exception:
                 pass
             self.refresh(None)
-            self._reopen_menu()
 
         return cb
 
@@ -295,7 +269,6 @@ class HeardApp(rumps.App):
         except Exception:
             pass
         self.refresh(None)
-        self._reopen_menu()
 
     def on_toggle_results(self, _sender) -> None:
         cfg = config.load()
@@ -306,7 +279,6 @@ class HeardApp(rumps.App):
         except Exception:
             pass
         self.refresh(None)
-        self._reopen_menu()
 
     def on_toggle_auto_silence(self, _sender) -> None:
         """Marquee feature in the README ('Auto-pause on calls') had
@@ -320,7 +292,6 @@ class HeardApp(rumps.App):
         except Exception:
             pass
         self.refresh(None)
-        self._reopen_menu()
 
     def on_open_config(self, _sender) -> None:
         import subprocess
