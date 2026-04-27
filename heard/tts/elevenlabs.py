@@ -82,6 +82,10 @@ class ElevenLabsTTS:
     # File extension the daemon should mint a tempfile with. Each backend
     # picks its own native format so we never re-encode.
     AUDIO_EXT = ".mp3"
+    # ElevenLabs voice_settings.speed caps at 1.2. The daemon uses this
+    # to decide when to layer afplay -r on top of synth for higher
+    # effective speeds (e.g. the "Brisk" preset at 1.7×).
+    MAX_NATIVE_SPEED = 1.2
 
     def __init__(
         self,

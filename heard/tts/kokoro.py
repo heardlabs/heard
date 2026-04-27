@@ -58,6 +58,11 @@ class KokoroTTS:
     # File extension the daemon should mint a tempfile with. Kokoro
     # writes WAV via soundfile — afplay handles it natively.
     AUDIO_EXT = ".wav"
+    # Kokoro can synthesise at any speed natively (it just resamples
+    # the model output). No need for afplay-rate post-processing
+    # within the user-facing range, so the daemon never adds -r for
+    # this backend.
+    MAX_NATIVE_SPEED = 4.0
 
     def __init__(self, models_dir: Path):
         self.model_path = models_dir / "kokoro-v1.0.onnx"
