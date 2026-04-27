@@ -17,9 +17,13 @@ knowing:
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover - heard requires 3.11+ anyway
+    tomllib = None  # type: ignore
 
 HOOKS_PATH = Path.home() / ".codex" / "hooks.json"
 CONFIG_PATH = Path.home() / ".codex" / "config.toml"
@@ -103,12 +107,28 @@ def is_installed() -> bool:
 
 
 def _feature_flag_enabled() -> bool:
-    if not CONFIG_PATH.exists():
+    """True iff ``codex_hooks = true`` is set under ``[features]``.
+
+    Uses tomllib so all of these resolve correctly:
+
+      [features]                   [features.codex_hooks]
+      codex_hooks = true           # not what we want — wrong shape
+
+      [features]                   features.codex_hooks=true
+      codex_hooks=true             # inline, no spaces
+
+    The earlier regex-only check missed the no-space form and
+    couldn't distinguish a [features.codex_hooks] sub-table from
+    the boolean we actually wanted.
+    """
+    if not CONFIG_PATH.exists() or tomllib is None:
         return False
-    text = CONFIG_PATH.read_text(encoding="utf-8")
-    # cheap check: look for codex_hooks = true anywhere under [features]
-    pattern = re.compile(
-        r"\[features\][^\[]*?codex_hooks\s*=\s*true",
-        re.DOTALL,
-    )
-    return bool(pattern.search(text))
+    try:
+        with CONFIG_PATH.open("rb") as f:
+            data = tomllib.load(f)
+    except Exception:
+        return False
+    features = data.get("features")
+    if not isinstance(features, dict):
+        return False
+    return features.get("codex_hooks") is True
