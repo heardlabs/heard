@@ -278,9 +278,42 @@ class Daemon:
             os.close(fd)
             path = Path(path_str)
             t0 = time.monotonic()
-            try:
-                self.tts.synth_to_file(chunk, voice, speed, lang, path)
-            except ElevenLabsError as e:
+            # Run synth on a side thread so the silence hotkey isn't
+            # held hostage by a slow ElevenLabs round-trip. Without
+            # this, tapping silence during a 2-second HTTPS call meant
+            # the daemon kept synthesising before the cancel took
+            # effect — easy to misread as "silence is broken."
+            #
+            # On cancel we abandon the thread; ElevenLabs' urllib
+            # request isn't cleanly interruptible, but the thread
+            # finishes naturally, the temp file leaks to /tmp (cleaned
+            # by the OS), and the user perceives instant silence.
+            synth_result: dict[str, object] = {"err": None, "done": False}
+
+            def _synth_in_thread() -> None:
+                try:
+                    self.tts.synth_to_file(chunk, voice, speed, lang, path)
+                except Exception as e:
+                    synth_result["err"] = e
+                finally:
+                    synth_result["done"] = True
+
+            synth_thread = threading.Thread(target=_synth_in_thread, daemon=True)
+            synth_thread.start()
+            while not synth_result["done"]:
+                if cancel.is_set():
+                    _log("synth_abandoned", reason="cancel_during_synth")
+                    # Tempfile leaks intentionally — cleaning here
+                    # would race the orphan thread's write. /tmp gets
+                    # swept by the OS.
+                    return
+                synth_thread.join(timeout=0.1)
+
+            if synth_result["err"] is not None:
+                e = synth_result["err"]
+            else:
+                e = None
+            if isinstance(e, ElevenLabsError):
                 msg = str(e)
                 if "401" in msg or "invalid_api_key" in msg.lower():
                     self._record_error("elevenlabs_auth", msg)
@@ -308,7 +341,7 @@ class Daemon:
                 _log("synth_failed", backend=type(self.tts).__name__, err=msg)
                 path.unlink(missing_ok=True)
                 continue
-            except Exception as e:
+            elif e is not None:
                 self._record_error("synth_generic", str(e))
                 notify.notify(
                     "Heard — couldn't generate audio",
