@@ -41,6 +41,12 @@ class HeardApp(rumps.App):
         else:
             super().__init__("Heard", title="Heard", quit_button=None)
         self._first_launch_checked = False
+        # Tracks whether the daemon has ever answered status. Until it
+        # does, we show "starting…" instead of "daemon stopped" — the
+        # menu polls every 3 s but the daemon takes 1-3 s to come up
+        # the first time, and "stopped" makes a fresh user think
+        # they're already broken.
+        self._daemon_ever_alive = False
         self._build_menu()
         self.refresh(None)
         rumps.Timer(self.refresh, 3).start()
@@ -128,6 +134,8 @@ class HeardApp(rumps.App):
         cfg = config.load()
         status = client.get_status()
         alive = bool(status) or client.is_daemon_alive()
+        if alive:
+            self._daemon_ever_alive = True
 
         # First-launch onboarding: only if the user hasn't been through it
         # yet. The flag is set inside _prompt_api_key once the flow
@@ -140,7 +148,13 @@ class HeardApp(rumps.App):
         last_error = (status or {}).get("last_error") or None
 
         if not alive:
-            self.status_item.title = "⚠ daemon stopped"
+            # Distinguish cold start (daemon hasn't come up yet, ~1-3 s
+            # window after launch) from a true crash (was alive, now
+            # isn't). "starting…" reads correctly during the gap;
+            # "daemon stopped" reads like a hard failure.
+            self.status_item.title = (
+                "⚠ daemon stopped" if self._daemon_ever_alive else "starting…"
+            )
         elif last_error:
             self.status_item.title = f"⚠ {self._error_label(last_error.get('kind', ''))}"
         elif not cfg.get("narrate_tools", True):
