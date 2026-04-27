@@ -44,8 +44,46 @@ def _step_install_state() -> None:
         _line(name, CHECK if installed else DASH,
               "installed" if installed else "not installed")
     _check_cc_hook_command()
+    _check_launchagent_python()
     _check_accessibility()
     print()
+
+
+def _check_launchagent_python() -> None:
+    """Sister of _check_cc_hook_command: if the LaunchAgent is
+    installed but its embedded interpreter path no longer exists
+    (user uninstalled the source venv, upgraded pipx, etc.), the
+    daemon silently fails to start at every login. Surface that
+    here so the user has a single place to see it."""
+    if not service.is_installed():
+        return
+    try:
+        plist_text = service.PLIST_PATH.read_text(encoding="utf-8")
+    except Exception:
+        _line("launchagent", CROSS, f"couldn't read {service.PLIST_PATH}")
+        return
+    py = _extract_path_after_program_arguments(plist_text)
+    if not py:
+        return
+    if Path(py).exists():
+        _line("launchagent python", CHECK, f"{py} exists")
+    else:
+        _line(
+            "launchagent python", CROSS,
+            f"{py} missing — re-run `heard service install` to refresh the plist",
+        )
+
+
+def _extract_path_after_program_arguments(plist_text: str) -> str | None:
+    """Pull the first <string> inside <array> after <key>ProgramArguments.
+    Cheap parser — avoids dragging in plistlib for one field."""
+    import re
+
+    m = re.search(
+        r"<key>\s*ProgramArguments\s*</key>\s*<array>\s*<string>([^<]+)</string>",
+        plist_text,
+    )
+    return m.group(1).strip() if m else None
 
 
 def _check_accessibility() -> None:
