@@ -102,23 +102,34 @@ class HeardApp(rumps.App):
             item = rumps.MenuItem(label, callback=self._mk_speed_cb(value))
             self.speed_menu[label] = item
 
-        # Verbosity profiles. Labels include a one-line hint of each
-        # profile's behaviour so users don't need to read docs to
-        # understand the choice. The state-refresh logic checks the
-        # ACTIVE profile by extracting the leading word.
+        # Verbosity profiles. The top-level "Verbosity" submenu sets
+        # `verbosity` (used in solo mode and for focus sessions in
+        # swarm). A nested "Swarm" submenu sets `swarm_verbosity` —
+        # tucked away because most single-agent users won't ever
+        # touch it, but discoverable for the multi-agent case.
         #
         # Profile YAML files live in heard/profiles/; power users can
         # drop their own in $CONFIG_DIR/profiles/ to override.
         self.verbosity_menu = rumps.MenuItem("Verbosity")
-        for label in (
+        verbosity_labels = (
             "quiet — errors only",
             "brief — prose only, tools summarised",
             "normal — per-tool + bursts summarised",
             "verbose — speak everything",
-        ):
+        )
+        for label in verbosity_labels:
             level = label.split()[0]
             item = rumps.MenuItem(label, callback=self._mk_verbosity_cb(level))
             self.verbosity_menu[label] = item
+
+        # Swarm verbosity (nested). Same four levels but writes to
+        # `swarm_verbosity`. Only matters when 2+ agents are active.
+        self.swarm_verbosity_menu = rumps.MenuItem("Swarm (background agents)")
+        for label in verbosity_labels:
+            level = label.split()[0]
+            item = rumps.MenuItem(label, callback=self._mk_swarm_verbosity_cb(level))
+            self.swarm_verbosity_menu[label] = item
+        self.verbosity_menu["Swarm (background agents)"] = self.swarm_verbosity_menu
 
         self.narrate_tools_item = rumps.MenuItem("Narrate tool calls", callback=self.on_toggle_tools)
         self.narrate_results_item = rumps.MenuItem(
@@ -217,10 +228,23 @@ class HeardApp(rumps.App):
             item.state = 1 if abs(value - active_speed) < 0.01 else 0
         # Resolve through verbosity.level so legacy "low"/"high"
         # config values display as "quiet"/"verbose" in the menu.
+        # Skip the nested "Swarm" submenu — it has its own checkmark
+        # logic below.
         active_verbosity = verbosity_mod.level(cfg)
         for label, item in self.verbosity_menu.items():
+            if label.startswith("Swarm"):
+                continue
             level = label.split()[0]
             item.state = 1 if level == active_verbosity else 0
+
+        # Swarm verbosity submenu — same checkmark logic but reads
+        # the swarm_verbosity config key (default brief).
+        from heard import profile as profile_mod
+
+        swarm_level = profile_mod._normalize(cfg.get("swarm_verbosity") or "brief")
+        for label, item in self.swarm_verbosity_menu.items():
+            level = label.split()[0]
+            item.state = 1 if level == swarm_level else 0
         self.narrate_tools_item.state = 1 if cfg.get("narrate_tools", True) else 0
         self.narrate_results_item.state = 1 if cfg.get("narrate_tool_results", True) else 0
         self.narrate_failures_item.state = 1 if cfg.get("narrate_failures", True) else 0
@@ -390,6 +414,17 @@ class HeardApp(rumps.App):
     def _mk_verbosity_cb(self, level: str):
         def cb(_sender):
             config.set_value("verbosity", level)
+            try:
+                client.send({"cmd": "reload"})
+            except Exception:
+                pass
+            self.refresh(None)
+
+        return cb
+
+    def _mk_swarm_verbosity_cb(self, level: str):
+        def cb(_sender):
+            config.set_value("swarm_verbosity", level)
             try:
                 client.send({"cmd": "reload"})
             except Exception:
