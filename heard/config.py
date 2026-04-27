@@ -114,9 +114,15 @@ def load(cwd: str | Path | None = None) -> dict[str, Any]:
 
 
 def save(cfg: dict[str, Any]) -> None:
-    """Persist non-default values to the global user config file."""
+    """Persist non-default values to the global user config file.
+
+    Strict: only keys defined in DEFAULTS get written. Earlier we
+    accepted any key, which let ``apply_preset`` leak persona-internal
+    frontmatter (``name``, ``address``) into config.yaml. The strict
+    pass auto-cleans any such pollution the next time anything saves.
+    """
     ensure_dirs()
-    user_cfg = {k: v for k, v in cfg.items() if DEFAULTS.get(k) != v}
+    user_cfg = {k: v for k, v in cfg.items() if k in DEFAULTS and DEFAULTS[k] != v}
     with CONFIG_PATH.open("w", encoding="utf-8") as f:
         yaml.safe_dump(user_cfg, f, sort_keys=True, allow_unicode=True)
 

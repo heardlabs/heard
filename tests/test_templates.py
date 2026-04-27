@@ -123,6 +123,47 @@ def test_post_tool_speaks_on_failure():
     assert "fail" in line.lower()
 
 
-def test_post_tool_bash_nonzero_exit():
+def test_post_tool_bash_nonzero_exit_no_stderr():
     line = templates.post_tool_line("Bash", {"exit_code": 1})
-    assert line == "Command failed."
+    assert line == "Command failed with exit code 1."
+
+
+def test_post_tool_bash_surfaces_stderr_tail():
+    line = templates.post_tool_line(
+        "Bash",
+        {
+            "exit_code": 1,
+            "stderr": "make: *** [test] Error 2\n",
+        },
+    )
+    assert line is not None
+    assert "Command failed" in line
+    assert "make: *** [test] Error 2" in line
+
+
+def test_post_tool_bash_picks_last_line_of_stderr():
+    line = templates.post_tool_line(
+        "Bash",
+        {
+            "exit_code": 1,
+            "stderr": "warning: x\nwarning: y\nfatal: actual cause here\n",
+        },
+    )
+    assert "fatal: actual cause here" in line
+    assert "warning: x" not in line
+
+
+def test_compound_command_uses_trailing_verb():
+    # cd src && grep foo  → "grep", not "cd"
+    line = templates.pre_tool_line("Bash", {"command": "cd src && grep -rn foo ."})
+    assert line == "Searching the codebase."
+
+
+def test_compound_command_pipe():
+    line = templates.pre_tool_line("Bash", {"command": "ps aux | grep python"})
+    assert line == "Searching the codebase."
+
+
+def test_compound_command_semicolon():
+    line = templates.pre_tool_line("Bash", {"command": "cd build; make clean"})
+    assert line == "Building."
