@@ -54,7 +54,7 @@ def test_queue_serialises_utterances(tmp_path, monkeypatch):
     spoken: list[str] = []
     speak_lock = threading.Lock()
 
-    def fake_speak(text, cancel, cfg=None, persona=None):
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
         time.sleep(0.05)  # simulate playback so concurrent events stack
         if cancel.is_set():
             return
@@ -86,7 +86,7 @@ def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
 
     spoken: list[str] = []
 
-    def fake_speak(text, cancel, cfg=None, persona=None):
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
         time.sleep(0.05)
         spoken.append(text)
 
@@ -121,7 +121,7 @@ def test_last_spoken_stamps_after_speak_not_enqueue(tmp_path, monkeypatch):
     or queued-but-still-waiting line could win the replay."""
     daemon = _make_daemon(tmp_path, monkeypatch)
 
-    def fake_speak(text, cancel, cfg=None, persona=None):
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
         time.sleep(0.05)
 
     daemon._speak = fake_speak  # type: ignore[method-assign]
@@ -155,7 +155,7 @@ def test_replay_preempts_current_and_queue(tmp_path, monkeypatch):
     spoken: list[str] = []
     spoken_lock = threading.Lock()
 
-    def fake_speak(text, cancel, cfg=None, persona=None):
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
         if text == "A":
             started_a.set()
             proceed_a.wait(timeout=2.0)
@@ -262,7 +262,7 @@ def test_new_session_drops_queued_items_from_other_sessions(tmp_path, monkeypatc
     spoken: list[str] = []
     spoken_lock = threading.Lock()
 
-    def fake_speak(text, cancel, cfg=None, persona=None):
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
         if text == "session-A-first":
             started_a.set()
             proceed_a.wait(timeout=2.0)
@@ -307,7 +307,7 @@ def test_silence_clears_queue(tmp_path, monkeypatch):
     proceed = threading.Event()
     spoken: list[str] = []
 
-    def fake_speak(text, cancel, cfg=None, persona=None):
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
         started.set()
         # Block the worker so we have time to enqueue + cancel.
         proceed.wait(timeout=2.0)

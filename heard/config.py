@@ -80,6 +80,20 @@ DEFAULTS: dict[str, Any] = {
     # in via `heard config set auto_resume_on_mic_release true` when
     # you want the cut-off narration to come back automatically.
     "auto_resume_on_mic_release": False,
+    # Multi-agent (parallel CC sessions): when 2+ are firing events
+    # concurrently, non-focus events accumulate and a periodic
+    # digest summarises them. On by default — when you only have one
+    # session active, it's a no-op. Off if you'd rather just drop
+    # background events outright.
+    "multi_agent_digest_enabled": True,
+    "multi_agent_digest_interval_s": 60,
+    # repo_name → ElevenLabs voice_id. Lets you give each project's
+    # agent a distinct voice so two agents talking sequentially are
+    # immediately distinguishable. Edit YAML directly:
+    #   agent_voices:
+    #     api: <voice_id>
+    #     web: <voice_id>
+    "agent_voices": {},
     # Set to True after the user finishes the welcome flow (or skips it),
     # so we never re-prompt them.
     "onboarded": False,
