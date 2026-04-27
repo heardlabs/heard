@@ -82,7 +82,7 @@ class HeardApp(rumps.App):
             self.persona_menu[name].set_callback(self._mk_persona_cb(name))
 
         # Speed quick toggle — applies on top of the active persona's
-        # speed without changing anything else. "Brisk" (1.7×) goes
+        # speed without changing anything else. "Hyper" (1.5×) goes
         # beyond ElevenLabs' native 1.2 cap by layering afplay -r on
         # top of synth — for catching up on agent output without
         # spending the time to listen at conversational pace.
@@ -90,7 +90,7 @@ class HeardApp(rumps.App):
         for label, value in (
             ("Normal (1.0×)", 1.0),
             ("Fast (1.15×)", 1.15),
-            ("Brisk (1.7×)", 1.7),
+            ("Hyper (1.5×)", 1.5),
         ):
             item = rumps.MenuItem(label, callback=self._mk_speed_cb(value))
             self.speed_menu[label] = item
