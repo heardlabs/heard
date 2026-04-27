@@ -58,24 +58,38 @@ history.append (after successful play)
 
 ## Owner-only improvement loop
 
-The user runs `heard improve` after using Heard for a while. It:
-1. Reads `~/Library/Application Support/heard/history.jsonl` since the
-   last checkpoint.
-2. Sends the corpus to **Sonnet** (`claude-sonnet-4-6`) with a rubric.
-3. Saves a markdown report to `~/Library/Application Support/heard/improvements/`.
-4. Auto-opens via `open` (lands in user's `.md` editor).
-5. Prunes consumed entries from the log.
+The user runs `heard improve` after using Heard for a while. It is
+NOT a one-shot LLM judge — it builds a Claude Code session primer
+(rubric + corpus + working instructions) and copies it to the
+clipboard. The user pastes it into a CC session and the rest is a
+back-and-forth: CC reads, suggests, pauses for approval, applies
+edits with its own tool use, runs `ruff + pytest`, shows diffs.
 
-The user reads the report, drags it into Claude Code (Opus) — "apply
-these changes" — reviews diffs, commits, pushes through the release
-pipeline. Improvements ship to all users via the next tag.
+```
+heard improve
+  → reads since-last-checkpoint from history.jsonl
+  → builds prompt (rubric + N most-recent utterances + instructions)
+  → copies to clipboard via pbcopy + prints to stdout
+  → user pastes into Claude Code, has the conversation, applies edits
+heard improve --done
+  → advances checkpoint
+  → prunes consumed entries from history.jsonl
+  → cleans up old report files (legacy artifact from prior design)
+```
+
+Pipe-friendly: `heard improve | pbcopy` and `heard improve | claude`
+both work. The interactive form (`heard improve` in a tty) prints
+AND auto-copies for the user.
 
 **The rubric lives in `heard/cli.py` as `_IMPROVE_RUBRIC`.** That's the
-file to edit when refining what the judge cares about. It currently
-emphasises tense correctness (present in-flight, past for finals),
-brevity (1 sentence ideal), no markdown / code read-aloud, and
-specific failure modes ("Running a shell command" too generic, file
-paths read verbatim, persona breaking character).
+file to edit when refining what CC focuses on during the session. It
+currently emphasises tense correctness (present in-flight, past for
+finals), brevity (1 sentence ideal), no markdown / code read-aloud,
+and specific failure modes ("Running a shell command" too generic,
+file paths read verbatim, persona breaking character). Edits to the
+rubric take effect on the next `heard improve` run — no daemon
+restart needed (the rubric is owned by the CLI process, not the
+daemon).
 
 ## Hot-patch workflow
 

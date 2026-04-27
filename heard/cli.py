@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 
 import typer
@@ -280,7 +281,6 @@ def history_cmd(
     something sounded off.
     """
     import re
-    import time
 
     records = history.iter_all()
     if not records:
@@ -423,115 +423,163 @@ def _format_corpus(records: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _build_improve_prompt(records: list[dict]) -> str:
+    """Assemble the CC-session primer: rubric + corpus + working
+    instructions. Designed to be pasted as the OPENING message of a
+    Claude Code conversation, not consumed by a one-shot judge.
+    Phrased as a back-and-forth so CC pauses for confirmation
+    before applying any edit."""
+    return f"""\
+You are helping me improve the spoken output of Heard, a voice companion that
+narrates AI coding agents. You're running inside the heard repo
+(`~/Desktop/Projects/heard`). Its `CLAUDE.md` is already loaded with the
+architecture map and conventions — follow them (`encoding="utf-8"` on file IO,
+commit-per-logical-step, `Co-Authored-By: Claude Opus 4.7 (1M context)`
+trailer).
+
+# Your job
+
+1. Read the corpus of recent utterances below.
+2. Identify the top 3 patterns where the spoken output could improve.
+3. Propose specific edits anchored to ONE of these files:
+   - `heard/personas/<name>.md` — persona character / tone
+   - `heard/profiles/<name>.yaml` — verbosity profile dimensions
+   - `heard/templates.py` — per-tool narration templates
+   - `heard/persona.py` `_SHARED_NARRATION_RULES` — cross-persona rules
+4. PAUSE and wait for me to pick which suggestions to apply.
+5. After each approved edit:
+   - run `ruff check heard/ tests/` and `pytest -q`
+   - show me the diff
+6. When I say "commit", commit with a clear message + Co-Authored-By trailer.
+
+# Rubric
+
+{_IMPROVE_RUBRIC}
+
+# Corpus ({len(records)} recent utterances)
+
+{_format_corpus(records)}
+
+Start by giving me your top 3 patterns + first 3 suggested edits. Wait for me
+to confirm before editing anything.
+"""
+
+
 @app.command(name="improve")
 def improve_cmd(
     limit: int = typer.Option(
         100,
         "-n",
         "--limit",
-        help="Cap on utterances to analyse (most recent). Defaults to 100.",
+        help="Cap on utterances included in the prompt (most recent). Defaults to 100.",
+    ),
+    done: bool = typer.Option(
+        False,
+        "--done",
+        help="Mark a finished improve session: advance the history checkpoint, "
+        "prune consumed entries, clean up old report files.",
     ),
     keep: bool = typer.Option(
         False,
         "--keep",
-        help="Don't prune analysed entries from history.jsonl after the run.",
+        help="With --done: skip the history prune so you can re-run on the same corpus.",
     ),
 ) -> None:
-    """Owner-only retrospective. Reads spoken history since the last
-    improve run, asks Sonnet for tone / quality critique, and saves
-    a markdown report you can feed to Claude Code (Opus) to apply
-    the suggested edits.
+    """Build a Claude Code primer from the spoken history and copy it
+    to your clipboard. Paste it into a Claude Code session — CC reads
+    the corpus + rubric, proposes specific edits, pauses for your
+    approval, then applies them with its own tool use (file edits,
+    tests, git commit).
 
-    On success the analysed entries are pruned so the log doesn't
-    accumulate. Pass ``--keep`` if you want to re-run on the same
-    corpus.
+    Pipe-friendly: ``heard improve | pbcopy`` or ``heard improve | claude``
+    both work. When stdout is a terminal we ALSO auto-copy via pbcopy
+    so the simple ``heard improve`` invocation needs no piping.
+
+    When you're done with the CC session, run ``heard improve --done``
+    to advance the history checkpoint and prune the analysed entries
+    plus any old report files left over from the previous design.
     """
-    import os
-    import time
-    from pathlib import Path
+    import sys
 
-    records, end_offset = history.iter_since_checkpoint()
+    if done:
+        _improve_done(keep=keep)
+        return
+
+    records, _end_offset = history.iter_since_checkpoint()
     if not records:
-        typer.echo("No new utterances since last improve run.")
-        typer.echo("Run Heard for a while, then come back.")
+        typer.echo(
+            "No new utterances since last improve run. "
+            "Run Heard for a while, then come back.",
+            err=True,
+        )
         return
 
     if len(records) > limit:
         records = records[-limit:]
 
-    cfg = config.load()
-    api_key = (
-        cfg.get("anthropic_api_key", "").strip()
-        or (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    prompt = _build_improve_prompt(records)
+    piped = not sys.stdout.isatty()
+
+    if piped:
+        # heard improve | claude  /  heard improve | pbcopy — emit the
+        # raw prompt to stdout, no decoration.
+        typer.echo(prompt, nl=False)
+        return
+
+    # Interactive terminal: print to stdout AND auto-copy to clipboard
+    # via pbcopy so the simple invocation works with no extra typing.
+    typer.echo(prompt)
+
+    pbcopy = shutil.which("pbcopy")
+    if pbcopy:
+        try:
+            subprocess.run([pbcopy], input=prompt, text=True, check=False)
+            typer.echo(
+                f"\n— prompt copied to clipboard ({len(records)} utterances). "
+                "Paste it into Claude Code.",
+                err=True,
+            )
+        except Exception:
+            pass
+    typer.echo(
+        "When you're done in CC, run `heard improve --done` to advance "
+        "the history checkpoint.",
+        err=True,
     )
-    if not api_key:
-        typer.echo(
-            "No Anthropic key configured. Set anthropic_api_key in config "
-            "(or ANTHROPIC_API_KEY env var) — Sonnet does the analysis.",
-            err=True,
-        )
-        raise typer.Exit(1)
 
-    typer.echo(f"Analysing {len(records)} utterances with Sonnet…")
-    try:
-        from anthropic import Anthropic
 
-        client = Anthropic(api_key=api_key)
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=8000,
-            system=_IMPROVE_RUBRIC,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Analyse the following utterances and produce the "
-                        "markdown report as specified.\n\n"
-                        + _format_corpus(records)
-                    ),
-                }
-            ],
-            timeout=120,
-        )
-    except Exception as e:
-        typer.echo(f"Sonnet call failed: {e}", err=True)
-        typer.echo("History NOT pruned — re-run when network is back.", err=True)
-        raise typer.Exit(1) from e
+def _improve_done(keep: bool = False) -> None:
+    """End-of-session bookkeeping: prune consumed history, delete
+    leftover markdown reports from the prior improve design."""
+    _records, end_offset = history.iter_since_checkpoint()
 
-    report = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-    if not report.strip():
-        typer.echo("Sonnet returned an empty response. History NOT pruned.", err=True)
-        raise typer.Exit(1)
-
-    # Save report under config dir (alongside personas/profiles/etc).
-    out_dir = config.CONFIG_DIR / "improvements"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y-%m-%d-%H%M%S")
-    out_path = out_dir / f"improve-{stamp}.md"
-
-    header = (
-        f"# Heard improvement report — {stamp}\n\n"
-        f"**Corpus:** {len(records)} utterances\n"
-        f"**Model:** claude-sonnet-4-6\n\n"
-        "---\n\n"
-    )
-    out_path.write_text(header + report, encoding="utf-8")
-
-    typer.echo(f"\nReport saved to {out_path}")
-
-    # Open in default app (macOS) — usually the user's $EDITOR or
-    # whatever they've associated with .md (Cursor / VSCode / etc).
-    try:
-        subprocess.Popen(["open", str(out_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
-
-    # Prune analysed entries so the log doesn't accumulate.
-    if not keep:
+    if not keep and end_offset > 0:
         history.commit_checkpoint_and_prune(end_offset)
-        typer.echo(f"Pruned {len(records)} analysed entries from history.")
+        typer.echo("History pruned through the current session.")
+    elif keep:
+        typer.echo("--keep specified; history preserved.")
     else:
-        typer.echo("--keep specified; history left intact.")
+        typer.echo("Nothing to prune — history was already empty.")
+
+    # The pre-conversational design saved markdown reports under
+    # improvements/. We don't generate those anymore; clean up any
+    # leftovers so that directory doesn't sit there forever.
+    improvements_dir = config.CONFIG_DIR / "improvements"
+    if improvements_dir.exists():
+        deleted = 0
+        for f in improvements_dir.glob("*.md"):
+            try:
+                f.unlink()
+                deleted += 1
+            except Exception:
+                pass
+        if deleted:
+            typer.echo(f"Deleted {deleted} old report file(s) from {improvements_dir}.")
+        # Try to remove the dir if it's empty now.
+        try:
+            improvements_dir.rmdir()
+        except OSError:
+            pass
 
 
 @app.command()
