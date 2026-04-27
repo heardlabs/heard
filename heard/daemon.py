@@ -130,7 +130,7 @@ class Daemon:
         # tool announcements; oldest is dropped when full. Drained by
         # a single worker thread, so utterances play sequentially
         # instead of preempting each other.
-        self._queue: list[tuple[str, dict | None, persona_mod.Persona | None, str]] = []
+        self._queue: list[tuple[str, dict | None, persona_mod.Persona | None, str, str | None]] = []
         self._queue_lock = threading.Lock()
         self._queue_cv = threading.Condition(self._queue_lock)
         self._speech_worker: threading.Thread | None = None
@@ -149,7 +149,34 @@ class Daemon:
         # False→True transition so the hotkey "just works" eventually.
         self._accessibility_trusted = accessibility.is_trusted()
         self._start_accessibility_watcher()
+        self._start_digest_timer()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+
+    def _start_digest_timer(self) -> None:
+        """Periodic background-agent digest. Drains the router's
+        deferred events on every tick, formats a one-line summary,
+        and enqueues it as a synthetic intermediate event. No-op when
+        nothing's accumulated (solo-mode, idle, or feature off)."""
+
+        def _tick() -> None:
+            while True:
+                interval = float(self.cfg.get("multi_agent_digest_interval_s") or 60)
+                time.sleep(max(15.0, interval))
+                if not self.cfg.get("multi_agent_digest_enabled", True):
+                    # Drop accumulated events silently — feature off.
+                    self.router.collect_digest()
+                    continue
+                drained = self.router.collect_digest()
+                summary = self.router.format_digest(drained)
+                if not summary:
+                    continue
+                _log("digest_emit", chars=len(summary), sessions=len(drained))
+                # Use a "digest" session id so the router's own
+                # classify() doesn't try to suppress this. Voice falls
+                # through to the active persona/cfg.
+                self._start_speech(summary, cfg=self.cfg, persona=self.persona, session_id="__digest__")
+
+        threading.Thread(target=_tick, daemon=True).start()
 
     def _start_accessibility_watcher(self) -> None:
         def _poll() -> None:
@@ -352,9 +379,13 @@ class Daemon:
         cancel: threading.Event,
         cfg: dict | None = None,
         persona: persona_mod.Persona | None = None,
+        voice: str | None = None,
     ) -> None:
         cfg = cfg or self.cfg
-        voice = self._voice(cfg, persona)
+        # voice_override wins over both cfg["voice"] and persona.voice
+        # — used by per-agent voice mappings so e.g. agent api speaks
+        # in Rachel even when the persona is jarvis.
+        voice = voice or self._voice(cfg, persona)
         speed = float(cfg["speed"])
         lang = cfg["lang"]
         for chunk in _split(text):
@@ -515,6 +546,7 @@ class Daemon:
         cfg: dict | None = None,
         persona: persona_mod.Persona | None = None,
         session_id: str = "",
+        voice_override: str | None = None,
     ) -> None:
         """Queue an utterance behind whatever's currently playing.
 
@@ -550,7 +582,7 @@ class Daemon:
                 dropped = before - len(self._queue)
                 if dropped:
                     _log("queue_drop_other_session", dropped=dropped, session=session_id)
-            self._queue.append((text, cfg, persona, session_id))
+            self._queue.append((text, cfg, persona, session_id, voice_override))
             if len(self._queue) > self._queue_max:
                 dropped = len(self._queue) - self._queue_max
                 self._queue = self._queue[-self._queue_max:]
@@ -575,10 +607,10 @@ class Daemon:
             with self._queue_cv:
                 if not self._queue:
                     return
-                text, cfg, persona, _session_id = self._queue.pop(0)
+                text, cfg, persona, _session_id, voice_override = self._queue.pop(0)
                 cancel = threading.Event()
                 self._current_cancel = cancel
-            self._speak(text, cancel, cfg=cfg, persona=persona)
+            self._speak(text, cancel, cfg=cfg, persona=persona, voice=voice_override)
             with self._queue_cv:
                 if self._current_cancel is cancel:
                     self._current_cancel = None
@@ -652,7 +684,12 @@ class Daemon:
         # events from non-focus sessions and prefix critical pierces
         # with "Agent <name>:". In PINNED, only the pinned session
         # gets unconditional play; others still pierce on critical.
-        decision = self.router.classify(kind=kind, tag=tag, session_id=session_id)
+        decision = self.router.classify(
+            kind=kind,
+            tag=tag,
+            session_id=session_id,
+            agent_voices=cfg.get("agent_voices") or {},
+        )
         if decision.action == "drop":
             _log("event_drop", kind=kind, tag=tag, session=session_id, reason="multi_agent_drop")
             return
@@ -681,12 +718,25 @@ class Daemon:
         if decision.label_prefix:
             final = decision.label_prefix + final
 
+        # Voice override (per-agent voice mapping) wins over both
+        # cfg["voice"] and persona.voice — the user explicitly mapped
+        # this repo to that voice in agent_voices.
+        if decision.voice_override:
+            cfg = dict(cfg)
+            cfg["voice"] = decision.voice_override
+
         self.sessions.note_topic(session_id, tag)
 
         _log("event_speak", kind=kind, tag=tag, persona=persona.name, chars=len(final))
         if DEBUG:
             _log("event_speak_detail", text=final)
-        self._start_speech(final, cfg=cfg, persona=persona, session_id=session_id)
+        self._start_speech(
+            final,
+            cfg=cfg,
+            persona=persona,
+            session_id=session_id,
+            voice_override=decision.voice_override,
+        )
 
     def _persona_for(self, cfg: dict) -> persona_mod.Persona:
         name = cfg.get("persona", "raw")

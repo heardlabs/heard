@@ -148,6 +148,77 @@ def test_digest_collection_drains_pending():
     assert r.collect_digest() == []
 
 
+def test_agent_voices_override_on_speak_decision():
+    """When agent_voices maps a session's repo to a voice id, a speak
+    decision returns it as voice_override. b is the focus (most
+    recently active) so its event speaks; we expect the override."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+
+    voices = {"api": "voice_id_api", "web": "voice_id_web"}
+    db = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", agent_voices=voices)
+    assert db.action == "speak"
+    assert db.voice_override == "voice_id_web"
+
+    # Without the map: None.
+    db_no_map = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b")
+    assert db_no_map.voice_override is None
+
+
+def test_agent_voices_override_on_pierce_too():
+    """Critical pierces from non-focus sessions should also carry the
+    per-agent voice — otherwise "Agent api: tests failed" speaks in
+    the focus session's voice, which is confusing."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    voices = {"api": "voice_id_api"}
+
+    # a is non-focus; failure should pierce with both label and voice.
+    da_fail = r.classify(
+        kind="tool_post", tag="tool_post_failure",
+        session_id="a", agent_voices=voices,
+    )
+    assert da_fail.action == "speak"
+    assert "api" in da_fail.label_prefix
+    assert da_fail.voice_override == "voice_id_api"
+
+
+def test_format_digest_summarises_per_session():
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "Editing auth.py.")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "Editing helper.py.")
+    r.add_to_digest("a", "tool_pre", "tool_bash_test", "Running the test suite.")
+    r.add_to_digest("b", "tool_pre", "tool_bash_commit", "Committing.")
+
+    summary = r.format_digest()
+    assert summary is not None
+    assert "Background update" in summary
+    assert "Api" in summary  # capitalised label
+    assert "edits" in summary  # 2 → plural
+    assert "test run" in summary  # singular
+    assert "Web" in summary
+    assert "commit" in summary
+
+
+def test_format_digest_returns_none_when_empty():
+    r = _new_router()
+    assert r.format_digest() is None
+
+
+def test_format_digest_drains_pending():
+    """format_digest defaults to draining; a second call without new
+    events must return None."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "Editing x.")
+    assert r.format_digest() is not None
+    assert r.format_digest() is None
+
+
 def test_list_active_for_menu():
     r = _new_router()
     r.note_event("a", cwd="/Users/x/projects/api")

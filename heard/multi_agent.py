@@ -90,6 +90,60 @@ class RoutingDecision:
     voice_override: str | None = None
 
 
+# Map of common event tags to short verbs for the digest summary.
+# Anything not listed groups under "operations" — generic but better
+# than dropping the count.
+_TAG_TO_VERB = {
+    "tool_edit": "edit",
+    "tool_write": "write",
+    "tool_bash_test": "test run",
+    "tool_bash_build": "build",
+    "tool_bash_install": "install",
+    "tool_bash_commit": "commit",
+    "tool_bash_push": "push",
+    "tool_bash_sync": "git sync",
+    "tool_bash_grep_cmd": "search",
+    "tool_grep": "search",
+    "tool_bash_find": "search",
+    "tool_glob": "search",
+    "tool_bash_read": "read",
+    "tool_bash_remove": "removal",
+    "tool_bash_copy": "copy",
+    "tool_bash_move": "move",
+    "tool_bash_curl": "fetch",
+    "tool_bash_git_inspect": "git check",
+    "tool_skill": "skill",
+    "tool_task_create": "task",
+    "tool_send_message": "message",
+    "tool_agent": "delegation",
+    "tool_webfetch": "fetch",
+    "tool_websearch": "web search",
+    "intermediate_short": "comment",
+    "intermediate_long": "comment",
+    "final_short": "wrap-up",
+    "final_long": "wrap-up",
+}
+
+
+def _format_session_summary(info: SessionInfo, events: list[dict[str, Any]]) -> str | None:
+    """Per-session line for the digest. "Api: 5 edits, ran the tests."
+    Returns None if no events count toward the summary."""
+    by_verb: dict[str, int] = {}
+    for e in events:
+        verb = _TAG_TO_VERB.get(e.get("tag", ""), "operation")
+        by_verb[verb] = by_verb.get(verb, 0) + 1
+    if not by_verb:
+        return None
+    parts: list[str] = []
+    for verb, count in sorted(by_verb.items(), key=lambda kv: (-kv[1], kv[0])):
+        if count == 1:
+            parts.append(f"a {verb}")
+        else:
+            parts.append(f"{count} {verb}s")
+    label = _label_for(info).capitalize()
+    return f"{label}: {', '.join(parts)}."
+
+
 def _label_for(info: SessionInfo) -> str:
     """Spoken-friendly agent label. Falls back to a short session_id
     chunk if cwd / repo_name aren't available — better than no label."""
@@ -138,36 +192,62 @@ class MultiAgentRouter:
 
     # --- routing -----------------------------------------------------------
 
-    def classify(self, *, kind: str, tag: str, session_id: str) -> RoutingDecision:
+    def classify(
+        self,
+        *,
+        kind: str,
+        tag: str,
+        session_id: str,
+        agent_voices: dict[str, str] | None = None,
+    ) -> RoutingDecision:
+        agent_voices = agent_voices or {}
         with self._lock:
             now = time.time()
+            voice = self._voice_for_locked(session_id, agent_voices)
 
             # Pinned mode: user has explicitly committed to one session.
             if self._pinned and self._pinned in self._sessions:
                 if session_id == self._pinned:
-                    return RoutingDecision(action="speak")
+                    return RoutingDecision(action="speak", voice_override=voice)
                 if tag in _PIERCE_TAGS:
-                    return self._pierced(session_id)
+                    return self._pierced(session_id, voice)
                 return RoutingDecision(action="drop")
 
             active = self._active_locked(now)
             # Solo: <2 active sessions, today's behaviour, everything plays.
             if len(active) < 2:
-                return RoutingDecision(action="speak")
+                return RoutingDecision(action="speak", voice_override=voice)
 
             # Swarm: >=2 active. Most-recently-active wins; others
             # pierce only on critical tags, otherwise digest-defer.
             most_recent = max(active, key=lambda s: s.last_event)
             if session_id == most_recent.session_id:
-                return RoutingDecision(action="speak")
+                return RoutingDecision(action="speak", voice_override=voice)
             if tag in _PIERCE_TAGS:
-                return self._pierced(session_id)
+                return self._pierced(session_id, voice)
             return RoutingDecision(action="defer_to_digest")
 
-    def _pierced(self, session_id: str) -> RoutingDecision:
+    def _pierced(self, session_id: str, voice: str | None) -> RoutingDecision:
         info = self._sessions.get(session_id)
         label = _label_for(info) if info else session_id[:8]
-        return RoutingDecision(action="speak", label_prefix=f"Agent {label}: ")
+        return RoutingDecision(
+            action="speak",
+            label_prefix=f"Agent {label}: ",
+            voice_override=voice,
+        )
+
+    def _voice_for_locked(
+        self, session_id: str, agent_voices: dict[str, str]
+    ) -> str | None:
+        """Look up a per-agent voice override. Keyed by repo_name (the
+        cwd basename) so the mapping survives across CC restarts —
+        session_ids change every run, but the project dir doesn't."""
+        if not agent_voices:
+            return None
+        info = self._sessions.get(session_id)
+        if info is None:
+            return None
+        return agent_voices.get(info.repo_name) or None
 
     # --- pin control -------------------------------------------------------
 
@@ -225,6 +305,27 @@ class MultiAgentRouter:
             return out
 
     # --- introspection for menu UI ----------------------------------------
+
+    def format_digest(
+        self,
+        drained: list[tuple[SessionInfo, list[dict[str, Any]]]] | None = None,
+    ) -> str | None:
+        """Roll the per-session pending events into a single spoken
+        line. Returns None when there's nothing to say (no events
+        accumulated since last drain).
+
+        ``drained`` is the output of ``collect_digest()``; passed in
+        explicitly so the daemon controls when accumulation resets."""
+        if drained is None:
+            drained = self.collect_digest()
+        parts = []
+        for info, events in drained:
+            piece = _format_session_summary(info, events)
+            if piece:
+                parts.append(piece)
+        if not parts:
+            return None
+        return "Background update. " + " ".join(parts)
 
     def list_active(self) -> list[dict[str, Any]]:
         """Snapshot for the menu's Active Sessions submenu. Includes
