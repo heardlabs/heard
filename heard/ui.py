@@ -114,6 +114,10 @@ class HeardApp(rumps.App):
             "Narrate tool results",
             callback=self.on_toggle_results,
         )
+        self.narrate_failures_item = rumps.MenuItem(
+            "Narrate failures",
+            callback=self.on_toggle_failures,
+        )
         self.auto_silence_item = rumps.MenuItem(
             "Auto-silence on call",
             callback=self.on_toggle_auto_silence,
@@ -122,6 +126,7 @@ class HeardApp(rumps.App):
         options_menu = rumps.MenuItem("Options")
         options_menu["Narrate tool calls"] = self.narrate_tools_item
         options_menu["Narrate tool results"] = self.narrate_results_item
+        options_menu["Narrate failures"] = self.narrate_failures_item
         options_menu["Auto-silence on call"] = self.auto_silence_item
         options_menu["Set API key…"] = rumps.MenuItem("Set API key…", callback=self.on_set_api_keys)
         options_menu["Download voice model"] = rumps.MenuItem(
@@ -204,6 +209,7 @@ class HeardApp(rumps.App):
             item.state = 1 if level == active_verbosity else 0
         self.narrate_tools_item.state = 1 if cfg.get("narrate_tools", True) else 0
         self.narrate_results_item.state = 1 if cfg.get("narrate_tool_results", True) else 0
+        self.narrate_failures_item.state = 1 if cfg.get("narrate_failures", True) else 0
         self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
 
         # Hotkey binding labels — earlier the silence item label
@@ -326,6 +332,19 @@ class HeardApp(rumps.App):
         cfg = config.load()
         current = cfg.get("narrate_tool_results", True)
         config.set_value("narrate_tool_results", not current)
+        try:
+            client.send({"cmd": "reload"})
+        except Exception:
+            pass
+        self.refresh(None)
+
+    def on_toggle_failures(self, _sender) -> None:
+        """Failures speak by default even with the other narrate
+        toggles off (you almost always want to hear "command failed").
+        This switch is the dedicated mute for failure announcements."""
+        cfg = config.load()
+        current = cfg.get("narrate_failures", True)
+        config.set_value("narrate_failures", not current)
         try:
             client.send({"cmd": "reload"})
         except Exception:
