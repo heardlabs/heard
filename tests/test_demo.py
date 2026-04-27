@@ -50,13 +50,8 @@ def test_run_demo_passes_session_id_and_cwd():
 
 def test_demo_script_fits_in_default_queue():
     """The daemon's speech queue caps at 5. The demo is exactly 5
-    lines so nothing gets dropped — guard against drift."""
-    from heard import daemon
-
-    # We don't construct the daemon; just read the constant.
-    queue_max = getattr(daemon, "Daemon", None)
-    # Read the default through a class-level lookup pattern. Default
-    # is set in __init__, so just hard-check against the script length.
+    lines so nothing gets dropped — guard against drift in the
+    SCRIPT length."""
     assert len(demo.SCRIPT) <= 5, (
         "demo SCRIPT exceeds the default speech queue cap (5); "
         "either trim the script or bump _queue_max in daemon.Daemon"

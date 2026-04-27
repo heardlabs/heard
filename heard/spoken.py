@@ -55,7 +55,7 @@ class _SessionLock:
         self._path = _lock_path(session_id)
         self._fd: int | None = None
 
-    def __enter__(self) -> "_SessionLock":
+    def __enter__(self) -> _SessionLock:
         try:
             self._fd = os.open(str(self._path), os.O_CREAT | os.O_RDWR, 0o600)
         except OSError:
