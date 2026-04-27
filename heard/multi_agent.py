@@ -32,11 +32,36 @@ and calls into it from _handle_event. Delete this file + the daemon's
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+# Curated pool of distinguishable voices for auto-assignment to
+# non-focus agents in swarm mode. Mix of male/female + US/British so
+# the listener can tell who's speaking on first syllable. Same
+# repo_name → same voice across runs (deterministic SHA-1 hash), so
+# the user's mental "api is Rachel" mapping survives restarts.
+_AUTO_VOICE_POOL = (
+    "21m00Tcm4TlvDq8ikWAM",  # Rachel — female US
+    "pNInz6obpgDQGcFmaJgB",  # Adam — male US
+    "XB0fDUnXU5powFXDhCwa",  # Charlotte — female English
+    "onwK4e9ZLuTAKqWW03F9",  # Daniel — male British
+    "pFZP5JQG7iQjIQuC4Bku",  # Lily — female British
+    "pqHfZKP75CvOlQylNhV4",  # Bill — male older
+)
+
+
+def _auto_voice_for(repo_name: str) -> str:
+    """Deterministic per-repo voice from the pool. SHA-1 — Python's
+    builtin hash() is salted per-process, which would give the same
+    repo a different voice every time the daemon restarts. Bad."""
+    if not repo_name:
+        return _AUTO_VOICE_POOL[0]
+    digest = hashlib.sha1(repo_name.encode("utf-8")).hexdigest()
+    return _AUTO_VOICE_POOL[int(digest, 16) % len(_AUTO_VOICE_POOL)]
 
 # How long after the last event a session counts as "active". Used
 # both for the SOLO/SWARM mode decision and for the menu's active-
@@ -199,31 +224,47 @@ class MultiAgentRouter:
         tag: str,
         session_id: str,
         agent_voices: dict[str, str] | None = None,
+        auto_voices: bool = False,
     ) -> RoutingDecision:
         agent_voices = agent_voices or {}
         with self._lock:
             now = time.time()
-            voice = self._voice_for_locked(session_id, agent_voices)
 
             # Pinned mode: user has explicitly committed to one session.
             if self._pinned and self._pinned in self._sessions:
                 if session_id == self._pinned:
+                    voice = self._voice_for_locked(
+                        session_id, agent_voices, auto_voices, is_focus=True
+                    )
                     return RoutingDecision(action="speak", voice_override=voice)
                 if tag in _PIERCE_TAGS:
+                    voice = self._voice_for_locked(
+                        session_id, agent_voices, auto_voices, is_focus=False
+                    )
                     return self._pierced(session_id, voice)
                 return RoutingDecision(action="drop")
 
             active = self._active_locked(now)
             # Solo: <2 active sessions, today's behaviour, everything plays.
             if len(active) < 2:
+                voice = self._voice_for_locked(
+                    session_id, agent_voices, auto_voices, is_focus=True
+                )
                 return RoutingDecision(action="speak", voice_override=voice)
 
             # Swarm: >=2 active. Most-recently-active wins; others
             # pierce only on critical tags, otherwise digest-defer.
             most_recent = max(active, key=lambda s: s.last_event)
-            if session_id == most_recent.session_id:
+            is_focus = session_id == most_recent.session_id
+            if is_focus:
+                voice = self._voice_for_locked(
+                    session_id, agent_voices, auto_voices, is_focus=True
+                )
                 return RoutingDecision(action="speak", voice_override=voice)
             if tag in _PIERCE_TAGS:
+                voice = self._voice_for_locked(
+                    session_id, agent_voices, auto_voices, is_focus=False
+                )
                 return self._pierced(session_id, voice)
             return RoutingDecision(action="defer_to_digest")
 
@@ -237,17 +278,36 @@ class MultiAgentRouter:
         )
 
     def _voice_for_locked(
-        self, session_id: str, agent_voices: dict[str, str]
+        self,
+        session_id: str,
+        agent_voices: dict[str, str],
+        auto_voices: bool,
+        is_focus: bool,
     ) -> str | None:
-        """Look up a per-agent voice override. Keyed by repo_name (the
-        cwd basename) so the mapping survives across CC restarts —
-        session_ids change every run, but the project dir doesn't."""
-        if not agent_voices:
-            return None
+        """Three-step voice resolution:
+
+        1. Manual map (``agent_voices``) wins always — the user
+           explicitly assigned this repo to this voice.
+        2. Auto-pick from the pool — but only for non-focus sessions,
+           so the agent the user is actively driving keeps the
+           persona's voice (the "default" speaker). Without this,
+           solo-mode users would hear a hash-picked voice instead of
+           the persona they configured.
+        3. Otherwise None → caller falls through to persona/cfg voice.
+
+        Keyed by repo_name (cwd basename) so the mapping survives
+        across CC restarts — session_ids change every run, but the
+        project dir doesn't.
+        """
         info = self._sessions.get(session_id)
         if info is None:
             return None
-        return agent_voices.get(info.repo_name) or None
+        manual = agent_voices.get(info.repo_name) if agent_voices else None
+        if manual:
+            return manual
+        if auto_voices and not is_focus and info.repo_name:
+            return _auto_voice_for(info.repo_name)
+        return None
 
     # --- pin control -------------------------------------------------------
 

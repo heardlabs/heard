@@ -209,6 +209,104 @@ def test_format_digest_returns_none_when_empty():
     assert r.format_digest() is None
 
 
+def test_auto_voices_pick_distinct_for_non_focus_in_swarm():
+    """auto_voices=True: non-focus sessions in swarm get hash-picked
+    voices from the pool. Same repo_name → same voice across runs."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    # b is focus.
+
+    da = r.classify(
+        kind="tool_pre", tag="tool_bash_grep", session_id="a",
+        auto_voices=True,
+    )
+    # Non-focus → defer (not pierce), no voice override on a defer.
+    assert da.action == "defer_to_digest"
+
+    # But on a pierce (failure), non-focus gets auto-picked voice.
+    da_fail = r.classify(
+        kind="tool_post", tag="tool_post_failure", session_id="a",
+        auto_voices=True,
+    )
+    assert da_fail.action == "speak"
+    assert da_fail.voice_override is not None
+    assert da_fail.voice_override in multi_agent._AUTO_VOICE_POOL
+
+    # Same repo_name, second call → same voice (deterministic).
+    da_fail2 = r.classify(
+        kind="tool_post", tag="tool_post_failure", session_id="a",
+        auto_voices=True,
+    )
+    assert da_fail2.voice_override == da_fail.voice_override
+
+
+def test_auto_voices_off_keeps_persona_voice():
+    """auto_voices=False: non-focus sessions get None voice_override
+    (caller falls through to persona / cfg)."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+
+    da_fail = r.classify(
+        kind="tool_post", tag="tool_post_failure", session_id="a",
+        auto_voices=False,
+    )
+    assert da_fail.action == "speak"
+    assert da_fail.voice_override is None
+
+
+def test_auto_voices_does_not_override_focus_or_solo():
+    """The persona's voice is the default narrator. Auto-pick never
+    overrides the focus session — otherwise solo users would hear a
+    hash-picked voice instead of the persona they configured."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")  # solo
+
+    d = r.classify(
+        kind="tool_pre", tag="tool_bash_grep", session_id="a",
+        auto_voices=True,
+    )
+    assert d.voice_override is None  # solo focus → persona voice
+
+    # Add b → swarm. a is now non-focus, b is focus.
+    r.note_event("b", cwd="/x/web")
+    db = r.classify(
+        kind="tool_pre", tag="tool_bash_grep", session_id="b",
+        auto_voices=True,
+    )
+    assert db.voice_override is None  # focus → persona voice still
+
+
+def test_manual_map_beats_auto_voice():
+    """When the user has a manual entry for a repo, the manual voice
+    wins even when auto_voices is on."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+
+    fail_a = r.classify(
+        kind="tool_post", tag="tool_post_failure", session_id="a",
+        agent_voices={"api": "manual_voice_id"},
+        auto_voices=True,
+    )
+    assert fail_a.voice_override == "manual_voice_id"
+
+
+def test_auto_voice_for_helper_is_deterministic():
+    """The helper itself is pure-function: same input → same output
+    across calls and processes (no PYTHONHASHSEED dependency)."""
+    a = multi_agent._auto_voice_for("api")
+    b = multi_agent._auto_voice_for("api")
+    assert a == b
+    assert a in multi_agent._AUTO_VOICE_POOL
+
+    # Different repos very likely map to different voices (might
+    # collide for unlucky names; we don't assert all-distinct).
+    voices = {multi_agent._auto_voice_for(n) for n in ("api", "web", "cli", "frontend", "infra", "ml")}
+    assert len(voices) >= 4  # at least 4 of 6 distinct
+
+
 def test_format_digest_drains_pending():
     """format_digest defaults to draining; a second call without new
     events must return None."""
