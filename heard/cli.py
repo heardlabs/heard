@@ -10,7 +10,7 @@ from heard import client, config, onboarding, service
 from heard.adapters import ADAPTERS
 from heard.presets import list_bundled as list_presets
 from heard.presets import load as load_preset
-from heard.tts.elevenlabs import ElevenLabsTTS
+from heard.tts.elevenlabs import _VOICE_ALIASES, ElevenLabsTTS
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Heard — speak your agent's replies.")
 config_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Manage configuration.")
@@ -44,12 +44,55 @@ def demo() -> None:
 
 
 @app.command()
-def voices() -> None:
-    """List available voices."""
+def voices(
+    all_: bool = typer.Option(
+        False,
+        "--all",
+        help="Hit the ElevenLabs API and list your full library too. Adds a network call.",
+    ),
+) -> None:
+    """List available voices.
+
+    Always prints your current voice (with the resolved ElevenLabs
+    name when we can look it up) and the seven shortcut aliases.
+    Pass ``--all`` to also list your full ElevenLabs library —
+    useful for picking the ID of a cloned or premium voice.
+    """
     cfg = config.load()
     tts = ElevenLabsTTS(api_key=cfg.get("elevenlabs_api_key", ""))
-    for v in tts.list_voices():
-        typer.echo(v)
+    current = (cfg.get("voice") or "").strip()
+
+    library: list[dict] = tts.fetch_voice_library() if all_ else []
+    library_by_id = {v["id"]: v for v in library}
+
+    typer.echo("Current:")
+    if not current:
+        typer.echo("  (none — defaulting to George)")
+    elif current in library_by_id:
+        v = library_by_id[current]
+        typer.echo(f"  {current}  {v['name']}")
+    else:
+        # Without --all we can't always name a custom voice ID, but we
+        # can still confirm what's set so the user knows we have it.
+        typer.echo(f"  {current}")
+    typer.echo("")
+
+    typer.echo("Aliases (use the name on the left in your config):")
+    for alias in tts.list_voices():
+        vid = _VOICE_ALIASES.get(alias, "")
+        typer.echo(f"  {alias:<10} → {vid}")
+    typer.echo("")
+
+    if all_:
+        if not library:
+            typer.echo(
+                "Library: (couldn't fetch — set elevenlabs_api_key or check your network)"
+            )
+        else:
+            typer.echo(f"Library ({len(library)} voices):")
+            for v in sorted(library, key=lambda x: x["name"].lower()):
+                cat = f" [{v['category']}]" if v["category"] else ""
+                typer.echo(f"  {v['id']:<22} {v['name']}{cat}")
 
 
 @app.command()
