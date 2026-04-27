@@ -297,15 +297,24 @@ class Daemon:
                     synth_result["err"] = e
                 finally:
                     synth_result["done"] = True
+                    # If we were cancelled while running, nobody will
+                    # play this audio — delete our own tempfile so a
+                    # rapid silence-then-silence-again sequence
+                    # doesn't accumulate orphaned files in /tmp.
+                    if cancel.is_set():
+                        try:
+                            path.unlink(missing_ok=True)
+                        except Exception:
+                            pass
 
             synth_thread = threading.Thread(target=_synth_in_thread, daemon=True)
             synth_thread.start()
             while not synth_result["done"]:
                 if cancel.is_set():
                     _log("synth_abandoned", reason="cancel_during_synth")
-                    # Tempfile leaks intentionally — cleaning here
-                    # would race the orphan thread's write. /tmp gets
-                    # swept by the OS.
+                    # Don't unlink here — the orphan thread will do it
+                    # itself when synth_to_file returns. Unlinking now
+                    # would race the orphan's write.
                     return
                 synth_thread.join(timeout=0.1)
 
