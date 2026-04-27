@@ -324,6 +324,7 @@ _BOOL_KEYS = (
     "auto_silence_on_mic",
     "auto_resume_on_mic_release",
     "multi_agent_digest_enabled",
+    "multi_agent_auto_voices",
     "onboarded",
 )
 

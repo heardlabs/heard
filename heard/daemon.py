@@ -689,6 +689,7 @@ class Daemon:
             tag=tag,
             session_id=session_id,
             agent_voices=cfg.get("agent_voices") or {},
+            auto_voices=bool(cfg.get("multi_agent_auto_voices", True)),
         )
         if decision.action == "drop":
             _log("event_drop", kind=kind, tag=tag, session=session_id, reason="multi_agent_drop")

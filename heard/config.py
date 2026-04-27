@@ -87,9 +87,17 @@ DEFAULTS: dict[str, Any] = {
     # background events outright.
     "multi_agent_digest_enabled": True,
     "multi_agent_digest_interval_s": 60,
-    # repo_name → ElevenLabs voice_id. Lets you give each project's
-    # agent a distinct voice so two agents talking sequentially are
-    # immediately distinguishable. Edit YAML directly:
+    # When you fan out to a new project, the new agent gets a voice
+    # automatically picked (deterministically) from a curated pool —
+    # no YAML editing required. Same repo_name always maps to the
+    # same voice across CC restarts. Only kicks in for non-focus
+    # sessions in swarm mode, so solo-mode users keep their persona
+    # voice unchanged. Set to false if you'd rather every agent
+    # speak in the persona's voice and tell them apart by the
+    # "Agent <name>:" prefix alone.
+    "multi_agent_auto_voices": True,
+    # Manual repo_name → ElevenLabs voice_id overrides. Always wins
+    # over the auto-pick. Edit YAML directly:
     #   agent_voices:
     #     api: <voice_id>
     #     web: <voice_id>
