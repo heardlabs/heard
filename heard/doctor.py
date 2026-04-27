@@ -17,7 +17,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from heard import client, config, service
+from heard import accessibility, client, config, service
 from heard.adapters import ADAPTERS, claude_code as cc_adapter
 
 CHECK = "✓"
@@ -44,7 +44,24 @@ def _step_install_state() -> None:
         _line(name, CHECK if installed else DASH,
               "installed" if installed else "not installed")
     _check_cc_hook_command()
+    _check_accessibility()
     print()
+
+
+def _check_accessibility() -> None:
+    """Hotkey support requires Accessibility permission. Without it,
+    pynput's listener silently fails — the daemon is alive, narration
+    works, but tap-to-silence and long-press-to-replay do nothing.
+    Surface the missing grant here so the user knows where to look."""
+    if sys.platform != "darwin":
+        return
+    if accessibility.is_trusted():
+        _line("accessibility", CHECK, "granted (hotkey works)")
+    else:
+        _line(
+            "accessibility", CROSS,
+            "not granted — System Settings → Privacy & Security → Accessibility → enable Heard",
+        )
 
 
 def _check_cc_hook_command() -> None:

@@ -11,8 +11,8 @@ Counterpart to input tools like [Wispr Flow](https://wisprflow.ai). Wispr handle
 1. Download the latest `Heard-v*.zip` from [Releases](https://github.com/heardlabs/heard/releases).
 2. Unzip and drag `Heard.app` into `/Applications`.
 3. **First launch:** right-click `Heard.app` → **Open** (it's an unsigned build, so macOS Gatekeeper will refuse a normal double-click — right-click bypasses that one time).
-4. The onboarding window walks you through three screens: API key (optional, powers in-character persona rewrites), voice (Kokoro free or paste an ElevenLabs key), and the silence/replay hotkey.
-5. Run `heard install claude-code` (or `codex`) in your terminal to wire Heard up to your agent.
+4. The onboarding window walks you through four screens: API key (optional, powers in-character persona rewrites), voice (Kokoro free or paste an ElevenLabs key), the silence/replay hotkey, and which agents to wire up (Claude Code / Codex). Hooks install automatically based on what you check.
+5. (Skipped onboarding or want to add an agent later?) `heard install claude-code` from your terminal does the same thing.
 
 The menu bar icon stays visible from then on. Click it to switch persona, dial speed (slow / normal / fast), tune verbosity, or silence.
 
@@ -50,7 +50,7 @@ On low-RAM Macs (under 12 GB) the onboarding window flags Kokoro as a stretch an
 ## What it does
 
 - **Narrates tool calls + intermediate prose.** "Looking at your test failures." "Three failures in auth.py." Hooks into `PreToolUse`, `PostToolUse`, and `Stop`. Surfaces every block of assistant text, not just the final summary.
-- **Four personas, ship-tunable.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator). Each is a single Markdown file with frontmatter — fork your own by dropping `coach.md` into `~/Library/Application Support/heard/personas/`. Set `ANTHROPIC_API_KEY` to upgrade from neutral templates to Claude Haiku-rewritten in-character lines.
+- **Four personas, ship-tunable.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator). Each is a single Markdown file with frontmatter — fork your own by dropping `coach.md` into `~/Library/Application Support/heard/personas/`. Provide an Anthropic key (paste during onboarding, "Set API key…" in the menu, or `ANTHROPIC_API_KEY` in your shell) to upgrade from neutral templates to Claude Haiku-rewritten in-character lines.
 - **Tap-hold hotkey.** Tap your Right Option key to silence Heard mid-sentence. Long-press to replay the last narration. One-time Accessibility grant.
 - **Auto-pause on calls.** When any app starts capturing your mic (Zoom, Meet, FaceTime, Wispr, dictation), Heard goes silent automatically. Mirrors the macOS recording-indicator signal.
 - **Menu bar app.** Live status; one-click persona switching; speed dial; verbosity; silence.
