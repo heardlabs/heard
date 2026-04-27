@@ -135,7 +135,36 @@ class Daemon:
         self._queue_max = 5
         self._start_hotkey()
         self._start_audio_monitor()
+        # Watch for the user granting Accessibility AFTER daemon
+        # startup — if they did so via System Settings directly
+        # (without clicking through onboarding's request_accessibility
+        # flow), pynput's listener is permanently dead until something
+        # restarts it. Polling thread re-inits the listener on the
+        # False→True transition so the hotkey "just works" eventually.
+        self._accessibility_trusted = accessibility.is_trusted()
+        self._start_accessibility_watcher()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+
+    def _start_accessibility_watcher(self) -> None:
+        def _poll() -> None:
+            while True:
+                time.sleep(5.0)
+                try:
+                    now_trusted = accessibility.is_trusted()
+                except Exception:
+                    continue
+                if now_trusted and not self._accessibility_trusted:
+                    _log("accessibility_granted", action="restarting_hotkey")
+                    if self._hotkey_listener is not None:
+                        try:
+                            self._hotkey_listener.stop()
+                        except Exception:
+                            pass
+                        self._hotkey_listener = None
+                    self._start_hotkey()
+                self._accessibility_trusted = now_trusted
+
+        threading.Thread(target=_poll, daemon=True).start()
 
     def _record_error(self, kind: str, message: str) -> None:
         """Capture the latest failure so the menu bar can show it.
