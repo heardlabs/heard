@@ -115,6 +115,83 @@ def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
     assert "a" not in spoken  # oldest must be dropped under pressure
 
 
+def test_last_spoken_stamps_after_speak_not_enqueue(tmp_path, monkeypatch):
+    """Replay must say what the user actually heard. Earlier we
+    stamped _last_spoken at enqueue time, so a queued-but-dropped
+    or queued-but-still-waiting line could win the replay."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    def fake_speak(text, cancel, cfg=None, persona=None):
+        time.sleep(0.05)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    daemon._start_speech("first")
+    daemon._start_speech("second")
+    daemon._start_speech("third")
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        with daemon._queue_cv:
+            if not daemon._queue and (
+                daemon._speech_worker is None or not daemon._speech_worker.is_alive()
+            ):
+                break
+        time.sleep(0.02)
+
+    # All three played; _last_spoken should reflect the last one
+    # ACTUALLY spoken — which is "third" here (no drops).
+    assert daemon._last_spoken == "third"
+
+
+def test_replay_preempts_current_and_queue(tmp_path, monkeypatch):
+    """Long-press replay should cancel the current utterance + flush
+    the queue, then play the last-spoken line — not just append to
+    the back of the queue."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    started_a = threading.Event()
+    proceed_a = threading.Event()
+    spoken: list[str] = []
+    spoken_lock = threading.Lock()
+
+    def fake_speak(text, cancel, cfg=None, persona=None):
+        if text == "A":
+            started_a.set()
+            proceed_a.wait(timeout=2.0)
+            if cancel.is_set():
+                return
+        with spoken_lock:
+            spoken.append(text)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    # Pretend the user heard "earlier-line" already.
+    daemon._last_spoken = "earlier-line"
+
+    daemon._start_speech("A")
+    daemon._start_speech("B")
+    started_a.wait(timeout=1.0)
+
+    # User long-presses replay while A is in flight + B is queued.
+    daemon._replay_last()
+    proceed_a.set()  # let the cancelled A unblock
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        with daemon._queue_cv:
+            if not daemon._queue and (
+                daemon._speech_worker is None or not daemon._speech_worker.is_alive()
+            ):
+                break
+        time.sleep(0.02)
+
+    # B must be flushed (replay preempted), and "earlier-line"
+    # must be the only thing that played after the cancellation.
+    assert "B" not in spoken
+    assert "earlier-line" in spoken
+
+
 def test_silence_clears_queue(tmp_path, monkeypatch):
     """The silence hotkey should zero out queued events, not just
     cancel the in-flight one."""

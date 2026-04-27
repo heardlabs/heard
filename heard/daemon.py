@@ -330,7 +330,6 @@ class Daemon:
         text = (text or "").strip()
         if not text:
             return
-        self._last_spoken = text
         with self._queue_cv:
             self._queue.append((text, cfg, persona))
             if len(self._queue) > self._queue_max:
@@ -347,7 +346,12 @@ class Daemon:
     def _drain_queue(self) -> None:
         """Single-consumer worker. Pops one utterance at a time and
         speaks it through completion, so the next event in the queue
-        only starts after the current chunk's afplay returns."""
+        only starts after the current chunk's afplay returns.
+
+        ``_last_spoken`` is stamped HERE (after a successful play),
+        not at enqueue, so long-press replay says what the user
+        actually heard — not something that was queued and dropped
+        from the cap, or that's still waiting to play."""
         while True:
             with self._queue_cv:
                 if not self._queue:
@@ -359,10 +363,19 @@ class Daemon:
             with self._queue_cv:
                 if self._current_cancel is cancel:
                     self._current_cancel = None
+                if not cancel.is_set():
+                    self._last_spoken = text
 
     def _replay_last(self) -> None:
-        if self._last_spoken:
-            self._start_speech(self._last_spoken)
+        """Long-press replay: 'I missed that, say it again'. Has to
+        preempt — if speech is already playing or queued, we cancel
+        + flush so the replay actually plays *now*, not at the back
+        of the queue."""
+        if not self._last_spoken:
+            return
+        text = self._last_spoken
+        self._cancel_only()
+        self._start_speech(text)
 
     def _cancel_only(self) -> None:
         """Silence: kill the current utterance AND drop everything
