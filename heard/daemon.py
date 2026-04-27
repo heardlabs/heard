@@ -305,12 +305,22 @@ class Daemon:
             if cancel.is_set():
                 path.unlink(missing_ok=True)
                 return
+            # If the requested speed is faster than the backend can
+            # natively synthesise (ElevenLabs caps voice_settings.speed
+            # at 1.2), make up the difference with afplay -r. The
+            # backend already clamped its own synth, so we layer the
+            # remaining speed-up on playback.
+            max_native = float(getattr(self.tts, "MAX_NATIVE_SPEED", 1.2))
+            afplay_args = ["afplay", str(path)]
+            if speed > max_native and max_native > 0:
+                afplay_rate = min(speed / max_native, 2.0)  # afplay -r upper bound
+                afplay_args = ["afplay", "-r", f"{afplay_rate:.3f}", str(path)]
             with self._lock:
                 if cancel.is_set():
                     path.unlink(missing_ok=True)
                     return
                 self._current_proc = subprocess.Popen(
-                    ["afplay", str(path)],
+                    afplay_args,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
