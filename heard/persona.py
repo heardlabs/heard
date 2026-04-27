@@ -49,6 +49,14 @@ Rules that apply regardless of persona:
 - Numbers always: line counts, test counts, sizes, durations.
 - Drop adverbs. Drop "I" unless the persona explicitly requires it.
 - One sentence per beat. Two for finals at most.
+- Tense matters. While the agent is *doing* something — tool calls,
+  intermediate prose, "looking at X" — speak in present tense
+  ("checking auth.py", "running the tests", "fetching the response").
+  When the agent has *finished* a step or summarises a turn, speak
+  in past tense ("checked auth.py, three failures", "ran the tests,
+  all green", "fetched and parsed"). Present tense for in-flight,
+  past tense for done — it's the difference between assistant and
+  status report.
 """
 
 
@@ -313,14 +321,22 @@ def _build_user_message(
     lines.append("")
     if event_kind == "final":
         lines.append(
-            "Rewrite the neutral narration as Jarvis would deliver it aloud. "
-            "If the neutral narration is long, summarise to at most two spoken "
-            "sentences. Do not restate markdown or code."
+            "Rewrite the neutral narration as a finished-step summary. "
+            "Use PAST tense — the work has happened. If the neutral "
+            "narration is long, summarise to at most two spoken sentences. "
+            "Do not restate markdown or code."
+        )
+    elif event_kind == "tool_post":
+        lines.append(
+            "Write ONE sentence describing what just happened. PAST tense — "
+            "the tool has run. Stay in character. No markdown."
         )
     else:
+        # tool_pre, intermediate — work is in flight
         lines.append(
-            "Write ONE sentence I will speak aloud announcing this event. "
-            "Stay in character. Do not add markdown. Do not restate the tag."
+            "Write ONE sentence I will speak aloud while this is happening. "
+            "PRESENT tense — the work is in progress, not done. Stay in "
+            "character. No markdown. Do not restate the tag."
         )
     return "\n".join(lines)
 
