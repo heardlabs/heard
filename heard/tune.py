@@ -83,8 +83,34 @@ def _pick_persona(current: str) -> str:
     return _prompt_choice("persona", names, default=current if current in names else "raw")
 
 
+_SPEED_OPTIONS = (
+    ("Normal (1.0×)", 1.0),
+    ("Fast (1.15×)", 1.15),
+    ("Hyper (1.5×)", 1.5),
+)
+
+
+def _pick_speed(current: float) -> float:
+    """Mirror the menu-bar Speed submenu so CLI users see the same
+    options. Hyper (1.5×) goes beyond ElevenLabs' native 1.2 cap by
+    layering afplay -r — useful for catching up on long agent output."""
+    console.print("\n[bold]3. Pick a speed[/bold]")
+    console.print(
+        "Normal = conversational. Fast = a touch quicker. "
+        "Hyper = ~50% faster, for catching up.\n"
+    )
+    labels = [label for label, _ in _SPEED_OPTIONS]
+    # Match current value to a label if exact, else default to Normal.
+    current_label = next(
+        (label for label, val in _SPEED_OPTIONS if abs(val - current) < 0.01),
+        labels[0],
+    )
+    chosen = _prompt_choice("speed", labels, default=current_label)
+    return next(val for label, val in _SPEED_OPTIONS if label == chosen)
+
+
 def _pick_verbosity(current: str) -> str:
-    console.print("\n[bold]3. Pick a verbosity[/bold]")
+    console.print("\n[bold]4. Pick a verbosity[/bold]")
     console.print("low = only big events + failures. normal = default. high = everything.\n")
     return _prompt_choice(
         "verbosity",
@@ -99,10 +125,12 @@ def run() -> None:
 
     voice = _pick_voice(cfg.get("voice", "am_onyx"))
     persona = _pick_persona(cfg.get("persona", "raw"))
+    speed = _pick_speed(float(cfg.get("speed", 1.0)))
     verb = _pick_verbosity(cfg.get("verbosity", "normal"))
 
     config.set_value("voice", voice)
     config.set_value("persona", persona)
+    config.set_value("speed", speed)
     config.set_value("verbosity", verb)
     try:
         client.send({"cmd": "reload"})
@@ -111,6 +139,7 @@ def run() -> None:
 
     console.print(
         f"\n[green]Saved.[/green] voice=[bold]{voice}[/bold]  "
-        f"persona=[bold]{persona}[/bold]  verbosity=[bold]{verb}[/bold]"
+        f"persona=[bold]{persona}[/bold]  speed=[bold]{speed}×[/bold]  "
+        f"verbosity=[bold]{verb}[/bold]"
     )
     console.print("Run [cyan]heard say \"hello\"[/cyan] to sanity-check.\n")

@@ -95,10 +95,19 @@ class HeardApp(rumps.App):
             item = rumps.MenuItem(label, callback=self._mk_speed_cb(value))
             self.speed_menu[label] = item
 
+        # Verbosity labels include a one-line hint of what each level
+        # actually does, so users don't need to read the README to
+        # understand the choice. The state-refresh logic still checks
+        # the ACTIVE level by extracting the leading word.
         self.verbosity_menu = rumps.MenuItem("Verbosity")
-        for level in ("low", "normal", "high"):
-            item = rumps.MenuItem(level, callback=self._mk_verbosity_cb(level))
-            self.verbosity_menu[level] = item
+        for label in (
+            "low — errors only",
+            "normal",
+            "high — everything",
+        ):
+            level = label.split()[0]
+            item = rumps.MenuItem(label, callback=self._mk_verbosity_cb(level))
+            self.verbosity_menu[label] = item
 
         self.narrate_tools_item = rumps.MenuItem("Narrate tool calls", callback=self.on_toggle_tools)
         self.narrate_results_item = rumps.MenuItem(
@@ -190,7 +199,8 @@ class HeardApp(rumps.App):
             value = float(label.split("(")[1].split("×")[0])
             item.state = 1 if abs(value - active_speed) < 0.01 else 0
         active_verbosity = cfg.get("verbosity", "normal")
-        for level, item in self.verbosity_menu.items():
+        for label, item in self.verbosity_menu.items():
+            level = label.split()[0]
             item.state = 1 if level == active_verbosity else 0
         self.narrate_tools_item.state = 1 if cfg.get("narrate_tools", True) else 0
         self.narrate_results_item.state = 1 if cfg.get("narrate_tool_results", True) else 0
