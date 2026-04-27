@@ -230,6 +230,64 @@ heard service install           Auto-start the daemon on login (LaunchAgent)
 heard service uninstall         Remove the LaunchAgent
 ```
 
+## FAQ
+
+<details>
+<summary><b>Does my agent's output leave my machine?</b></summary>
+
+Depends on which backends you opt into.
+
+- **Voice synth.** ElevenLabs sends the spoken text to ElevenLabs over HTTPS. **Kokoro** runs fully locally — nothing leaves the machine.
+- **Persona rewrites.** If you provide an Anthropic key, Heard sends short candidate lines (one per event) to Claude Haiku 4.5 to rewrite in-character. Skip the key and Heard uses neutral templates locally.
+- **Telemetry.** Heard ships no analytics, no crash reporters, no phone-home. The daemon's only outbound calls are to the synth + persona providers you configured.
+
+`heard config get` shows what's enabled. `heard doctor` exercises every outbound endpoint and reports PASS/FAIL per layer.
+</details>
+
+<details>
+<summary><b>What does ElevenLabs actually cost in practice?</b></summary>
+
+The free tier covers light daily use. A heavy day of pair-programming (2-3 hrs of narration) typically lands in the **few-cents-to-low-dimes** range on the paid Starter plan. Verbosity profile dominates cost: `quiet` is roughly 10× cheaper than `verbose` on the same workload.
+
+Want a hard ceiling? Switch to **Kokoro** (free, local) — same UX, slightly slower first-token latency, no per-character billing.
+</details>
+
+<details>
+<summary><b>Will narration slow down my agent?</b></summary>
+
+No. Hooks fire-and-forget over a Unix socket; the daemon synthesises and plays asynchronously. Your agent never blocks on Heard. If the daemon dies mid-session the agent keeps running normally — you just stop hearing things, and `heard doctor` will tell you why.
+</details>
+
+<details>
+<summary><b>Linux / Windows support?</b></summary>
+
+macOS-only today. The hard dependencies (rumps menu bar, CoreAudio mic monitor, AppleScript notifications, py2app bundle, Right-Option tap-hold via pynput on Quartz) are all macOS APIs. Linux is on the roadmap; Windows is not currently planned. Track [issues tagged `platform`](https://github.com/heardlabs/heard/issues?q=label%3Aplatform) for progress.
+</details>
+
+<details>
+<summary><b>Does it work over SSH / on a remote dev box?</b></summary>
+
+Yes — run Heard locally on your Mac and run the agent on the remote box, with the remote agent's hook `ssh`-ing back to invoke `heard.hook` locally. There's no first-class `heard remote` adapter yet; `heard run <command>` wraps any CLI under a PTY and narrates idle-flushed output, which covers most setups.
+</details>
+
+<details>
+<summary><b>Cursor? Aider?</b></summary>
+
+Not first-class adapters yet (planned — see **[Supported agents](#supported-agents)** below). Both work today via `heard run <command>`, which wraps any CLI under a PTY and narrates its output.
+</details>
+
+<details>
+<summary><b>How do I use it with multiple parallel agents?</b></summary>
+
+Heard auto-detects 2+ concurrent sessions and shifts to **swarm mode** — most-recent session gets full narration; background agents pierce only on failures and questions, with a periodic digest of background work. Each background agent gets a distinct voice based on a stable hash of its project directory. See **[Running multiple agents](#running-multiple-agents)** above.
+</details>
+
+<details>
+<summary><b>Is this open source? How do I contribute?</b></summary>
+
+Yes — Apache 2.0. The easiest places to contribute are adapters (`heard/adapters/`), personas (`heard/personas/*.md`), and verbosity profiles (`heard/profiles/*.yaml`) — each is a small, well-scoped surface. Cursor and Aider adapters are tracked in **[Supported agents](#supported-agents)**.
+</details>
+
 ## Troubleshooting
 
 | Symptom | Fix |
