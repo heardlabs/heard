@@ -110,6 +110,40 @@ class ElevenLabsTTS:
         don't make a network call just to list voices."""
         return sorted(_VOICE_ALIASES.keys())
 
+    def fetch_voice_library(self) -> list[dict]:
+        """Hit ``/v1/voices`` to get the user's full ElevenLabs voice
+        library. Returns a list of ``{id, name, description}`` dicts.
+
+        Used by ``heard voices --all`` to surface custom voices,
+        cloned voices, and the current ElevenLabs default catalogue
+        — without forcing every CLI invocation to make a network call.
+        Returns an empty list on any failure (no key, network down,
+        non-2xx).
+        """
+        if not self.api_key:
+            return []
+        url = f"{API_BASE}/voices"
+        req = urllib.request.Request(url, headers={"xi-api-key": self.api_key})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_s, context=self._ssl_ctx) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return []
+        out: list[dict] = []
+        for v in payload.get("voices") or []:
+            vid = (v.get("voice_id") or "").strip()
+            if not vid:
+                continue
+            out.append(
+                {
+                    "id": vid,
+                    "name": (v.get("name") or "").strip() or "—",
+                    "description": (v.get("description") or "").strip(),
+                    "category": (v.get("category") or "").strip(),
+                }
+            )
+        return out
+
     def synth_to_file(
         self,
         text: str,
