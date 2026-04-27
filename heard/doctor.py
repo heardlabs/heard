@@ -244,15 +244,63 @@ def _step_synth() -> bool:
     return True
 
 
+def _step_haiku() -> bool:
+    """Persona rewrites use Claude Haiku. A bad key here doesn't break
+    Heard — it falls back to neutral templates — but the user wonders
+    why their Jarvis sounds bland and never learns it's a config
+    problem. Live-test the key here so a typo surfaces in `heard
+    doctor` instead of becoming a "weird vibes" mystery."""
+    print("Persona (Haiku)")
+    cfg = config.load()
+    key = (cfg.get("anthropic_api_key") or "").strip()
+    if not key:
+        import os
+
+        env_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+        if not env_key:
+            _line("anthropic key", DASH, "not set — persona will use templates")
+            print()
+            return True
+        key = env_key
+    try:
+        from anthropic import Anthropic
+
+        client = Anthropic(api_key=key)
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=8,
+            messages=[{"role": "user", "content": "ok"}],
+            timeout=8,
+        )
+        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        if text:
+            _line("anthropic key", CHECK, f"valid (haiku replied {text!r})")
+            print()
+            return True
+        _line("anthropic key", CROSS, "haiku returned no text — unexpected")
+        print()
+        return False
+    except Exception as e:
+        msg = str(e)[:120]
+        _line("anthropic key", CROSS, msg)
+        print()
+        return False
+
+
 def run() -> bool:
     print(f"heard doctor — python {sys.version.split()[0]}\n")
     _step_install_state()
     daemon_ok = _step_daemon()
     synth_ok = _step_synth()
+    haiku_ok = _step_haiku()
 
     print("Summary")
     _line("daemon", CHECK if daemon_ok else CROSS, "alive" if daemon_ok else "not alive")
     _line("synth+playback", CHECK if synth_ok else CROSS,
           "ok" if synth_ok else "failed (see above)")
+    _line("haiku rewrites", CHECK if haiku_ok else CROSS,
+          "ok" if haiku_ok else "failed (see above)")
     print()
+    # haiku_ok being False is informational — we never fail the
+    # whole run on a missing/bad Anthropic key; templates still work.
     return daemon_ok and synth_ok
