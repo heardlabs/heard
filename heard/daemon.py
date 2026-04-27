@@ -310,6 +310,7 @@ class Daemon:
         old_sig = self._hotkey_signature(self.cfg)
         old_key = self.cfg.get("elevenlabs_api_key", "")
         old_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
+        old_auto_resume = bool(self.cfg.get("auto_resume_on_mic_release", False))
         self.cfg = config.load()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         if self.cfg.get("elevenlabs_api_key", "") != old_key:
@@ -324,7 +325,12 @@ class Daemon:
             self._hotkey_listener = None
             self._start_hotkey()
         new_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
-        if new_auto_silence != old_auto_silence:
+        new_auto_resume = bool(self.cfg.get("auto_resume_on_mic_release", False))
+        # Either knob change requires a fresh AudioMonitor — the
+        # release callback is captured at construction. Without this,
+        # toggling auto_resume via `heard config set` left the monitor
+        # using the stale callback until the next process restart.
+        if new_auto_silence != old_auto_silence or new_auto_resume != old_auto_resume:
             self._stop_audio_monitor()
             if new_auto_silence:
                 self._start_audio_monitor()
