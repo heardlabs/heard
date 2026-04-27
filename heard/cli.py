@@ -322,6 +322,7 @@ _BOOL_KEYS = (
     "narrate_failures",
     "hotkey_enabled",
     "auto_silence_on_mic",
+    "auto_resume_on_mic_release",
     "onboarded",
 )
 
