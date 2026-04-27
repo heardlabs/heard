@@ -43,6 +43,14 @@ def _pick_voice(current: str) -> str:
     cfg = config.load()
     tts = ElevenLabsTTS(api_key=cfg.get("elevenlabs_api_key", ""))
     voices = tts.list_voices()
+
+    # If the user's current voice is a custom ElevenLabs ID (set by a
+    # persona — e.g. jarvis ships with Fahco4VZzobUeiPqni1S), it
+    # won't be in the alias list. Prepend it so picking the
+    # "default" doesn't silently destroy the persona's voice. Marked
+    # with the (current) suffix in the choice list for clarity.
+    if current and current not in voices:
+        voices = [current] + voices
     if not voices:
         return current
 
@@ -52,8 +60,16 @@ def _pick_voice(current: str) -> str:
         voice = _prompt_choice("voice", voices, default=chosen)
         if typer.confirm(f"Play a sample of {voice}?", default=True):
             client.ensure_daemon()
-            client.send({"cmd": "reload"})
+            # Order matters: write config FIRST, then reload daemon,
+            # then speak. The previous order (reload → set_value →
+            # speak) reloaded with the OLD voice and then played the
+            # sample with whatever the daemon was on before — so the
+            # 'sample' was always the prior selection, never the new one.
             config.set_value("voice", voice)
+            try:
+                client.send({"cmd": "reload"})
+            except Exception:
+                pass
             client.speak(SAMPLE_LINE)
         if typer.confirm(f"Keep {voice}?", default=True):
             return voice
