@@ -352,12 +352,49 @@ def extract_last_assistant_text(transcript_path: str) -> str:
     return last
 
 
-def extract_assistant_texts(transcript_path: str) -> list[str]:
-    """Walk the transcript and return EVERY assistant text block in
-    chronological order. Each block is yielded separately — we don't
-    join them — so callers can dedupe by content hash and surface
-    intermediate prose between tool calls.
+def extract_assistant_texts_from(
+    transcript_path: str, start_offset: int = 0
+) -> tuple[list[str], int]:
+    """Incremental transcript read.
+
+    Reads from ``start_offset`` bytes in, returns the new assistant-text
+    blocks plus the new end-of-file offset for the next call. Used by
+    the per-event hooks so a 50-tool-call session doesn't re-parse the
+    whole transcript fifty times.
+
+    If ``start_offset`` exceeds current file size (transcript rotated /
+    truncated), we fall back to a full read.
     """
+    out: list[str] = []
+    end = start_offset
+    try:
+        size = os.path.getsize(transcript_path)
+        if start_offset > size:
+            start_offset = 0
+        with open(transcript_path, encoding="utf-8") as f:
+            f.seek(start_offset)
+            for line in f:
+                try:
+                    msg = json.loads(line)
+                except Exception:
+                    continue
+                if msg.get("type") != "assistant":
+                    continue
+                for c in msg.get("message", {}).get("content", []):
+                    if c.get("type") != "text":
+                        continue
+                    t = (c.get("text") or "").strip()
+                    if t:
+                        out.append(t)
+            end = f.tell()
+    except Exception:
+        pass
+    return out, end
+
+
+def extract_assistant_texts(transcript_path: str) -> list[str]:
+    """Full-file read (offset 0). Kept for back-compat; new callers
+    should prefer the offset-aware version above."""
     out: list[str] = []
     try:
         with open(transcript_path, encoding="utf-8") as f:
@@ -403,8 +440,15 @@ def _speak_unspoken_texts(
     marks them all as ``intermediate`` (used by PreToolUse).
     """
     sid = session["id"]
-    all_texts = extract_assistant_texts(transcript_path)
-    new_texts = spoken.filter_unspoken(sid, all_texts)
+    # Incremental read: pick up where the prior hook left off so we
+    # don't reparse the entire JSONL transcript on every PreToolUse.
+    # spoken.filter_unspoken still acts as a hash-based safety net for
+    # the first run / offset-reset cases.
+    start = spoken.get_offset(sid)
+    fresh_texts, end_offset = extract_assistant_texts_from(transcript_path, start)
+    if end_offset != start:
+        spoken.set_offset(sid, end_offset)
+    new_texts = spoken.filter_unspoken(sid, fresh_texts)
     if not new_texts:
         return 0
 
