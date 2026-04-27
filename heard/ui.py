@@ -453,6 +453,73 @@ class HeardApp(rumps.App):
                 "to set up the local model (~350 MB).",
                 kind="onboarding_voice_choice",
             )
+        else:
+            # User pasted an ElevenLabs key. Self-test the synth path
+            # in the background so a typo'd key surfaces NOW (with a
+            # specific notification) instead of on the user's first
+            # CC tool call (where it just looks like Heard is
+            # silent for no reason).
+            self._self_test_async()
+
+    def _self_test_async(self) -> None:
+        """Background pipeline check after onboarding. We do a single
+        ElevenLabs synth call against the user's just-pasted key —
+        no playback, just confirm the key works and TLS / network /
+        certs are healthy. On failure we surface a notification so
+        the user knows they need to fix something BEFORE they start
+        using CC.
+
+        Runs after a short delay so the menu bar finishes its
+        post-onboarding refresh first."""
+        import threading
+
+        from heard.notify import notify
+
+        def _run() -> None:
+            import time
+
+            time.sleep(1.0)  # let the menu finish settling
+            try:
+                cfg = config.load()
+                from heard.tts.elevenlabs import ElevenLabsTTS
+
+                tts = ElevenLabsTTS(api_key=cfg.get("elevenlabs_api_key", ""))
+                import tempfile
+                from pathlib import Path
+
+                fd, path_str = tempfile.mkstemp(suffix=".mp3", prefix="heard-selftest-")
+                __import__("os").close(fd)
+                path = Path(path_str)
+                try:
+                    tts.synth_to_file(
+                        "ok", cfg.get("voice", "george"), 1.0, cfg.get("lang", "en-us"), path
+                    )
+                finally:
+                    path.unlink(missing_ok=True)
+                # Success — no notification needed. Silent ✓ feels
+                # right; we don't want to nag the user post-onboarding.
+            except Exception as e:
+                msg = str(e)
+                if "401" in msg or "invalid_api_key" in msg.lower():
+                    notify(
+                        "Heard — ElevenLabs key didn't work",
+                        "The key was rejected. Click 'Set API key…' in the menu to try again.",
+                        kind="onboarding_test_auth",
+                    )
+                elif "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
+                    notify(
+                        "Heard — TLS handshake failed",
+                        "Run `heard doctor` from a terminal to see what's wrong.",
+                        kind="onboarding_test_ssl",
+                    )
+                else:
+                    notify(
+                        "Heard — voice service couldn't be reached",
+                        f"{msg[:120]}",
+                        kind="onboarding_test_network",
+                    )
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def on_download_kokoro(self, _sender) -> None:
         """Explicit user opt-in. Idempotent: shows a notification and
