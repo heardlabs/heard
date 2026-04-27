@@ -344,6 +344,196 @@ def _parse_iso_ts(ts: str) -> float | None:
         return None
 
 
+_IMPROVE_RUBRIC = """\
+You are reviewing the spoken-text output of a voice companion called
+Heard. Heard narrates AI coding agents (Claude Code, Codex) aloud to a
+developer who's working alongside the agent. The narration is
+delivered as TTS, so it has to sound natural read aloud.
+
+Heard's design rules:
+- Lead with the outcome, not the journey.
+- Match the brevity of the input. One sentence per beat. Two for
+  finals at most.
+- Tense matters: PRESENT for in-flight work (intermediate prose,
+  tool announcements). PAST for completed finals and post-tool
+  narration.
+- File paths: name 1-3 by name; aggregate above three
+  ("fourteen files in src/auth").
+- Drop adverbs. Drop "I" unless the persona explicitly requires it.
+- No markdown, no code read aloud.
+- Failures from background agents pierce with "Agent <name>:".
+
+Failure modes to call out:
+- "Running a shell command" too often (genericness)
+- Reading file paths verbatim with slashes and extensions
+- Persona breaking character mid-utterance
+- Over-elaborating short neutral text into wordy prose
+- Tense mistakes ("I edit auth.py" instead of "editing auth.py")
+- Markdown / code structure leaking into the spoken text
+- Robotic transitions between background-agent pierces and focus
+
+You will receive ~50–100 utterances from a real session. For each
+you have: kind, tag, neutral (pre-rewrite), spoken (post-rewrite),
+persona, profile, repo.
+
+Your output should be a markdown report with three sections:
+
+## Aggregate patterns
+The top 3 issues across the corpus. Name each, give a count or
+percentage, explain why it matters.
+
+## Specific examples
+5–10 illuminating cases. For each: quote the neutral and spoken,
+explain what's wrong, and propose what would be better.
+
+## Suggested fixes
+Concrete changes tied to specific files. Pick from:
+- `heard/personas/<name>.md` — persona character / tone rules
+- `heard/profiles/<name>.yaml` — verbosity profile dimensions
+- `heard/templates.py` — per-tool narration templates (Bash verb
+  detection, file paths, etc.)
+- `heard/persona.py` `_SHARED_NARRATION_RULES` — the cross-persona
+  framing every Haiku rewrite gets
+
+Format each suggestion as:
+```
+File: heard/personas/jarvis.md
+BEFORE: <existing line or block>
+AFTER:  <proposed replacement>
+WHY:    <one-line rationale>
+```
+
+Be specific. Be opinionated. Don't hedge. Skip generic advice
+("be more concise") in favour of precise edits.
+"""
+
+
+def _format_corpus(records: list[dict]) -> str:
+    """Compact serialisation of the corpus for the judge prompt.
+    Avoid full JSON — too noisy. YAML-ish blocks read better."""
+    lines: list[str] = []
+    for i, r in enumerate(records, 1):
+        lines.append(f"--- entry {i} ---")
+        for k in ("kind", "tag", "persona", "profile", "repo_name", "neutral", "spoken"):
+            v = r.get(k)
+            if v is None or v == "":
+                continue
+            lines.append(f"{k}: {v}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@app.command(name="improve")
+def improve_cmd(
+    limit: int = typer.Option(
+        100,
+        "-n",
+        "--limit",
+        help="Cap on utterances to analyse (most recent). Defaults to 100.",
+    ),
+    keep: bool = typer.Option(
+        False,
+        "--keep",
+        help="Don't prune analysed entries from history.jsonl after the run.",
+    ),
+) -> None:
+    """Owner-only retrospective. Reads spoken history since the last
+    improve run, asks Sonnet for tone / quality critique, and saves
+    a markdown report you can feed to Claude Code (Opus) to apply
+    the suggested edits.
+
+    On success the analysed entries are pruned so the log doesn't
+    accumulate. Pass ``--keep`` if you want to re-run on the same
+    corpus.
+    """
+    import os
+    import time
+    from pathlib import Path
+
+    records, end_offset = history.iter_since_checkpoint()
+    if not records:
+        typer.echo("No new utterances since last improve run.")
+        typer.echo("Run Heard for a while, then come back.")
+        return
+
+    if len(records) > limit:
+        records = records[-limit:]
+
+    cfg = config.load()
+    api_key = (
+        cfg.get("anthropic_api_key", "").strip()
+        or (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    )
+    if not api_key:
+        typer.echo(
+            "No Anthropic key configured. Set anthropic_api_key in config "
+            "(or ANTHROPIC_API_KEY env var) — Sonnet does the analysis.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo(f"Analysing {len(records)} utterances with Sonnet…")
+    try:
+        from anthropic import Anthropic
+
+        client = Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=8000,
+            system=_IMPROVE_RUBRIC,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Analyse the following utterances and produce the "
+                        "markdown report as specified.\n\n"
+                        + _format_corpus(records)
+                    ),
+                }
+            ],
+            timeout=120,
+        )
+    except Exception as e:
+        typer.echo(f"Sonnet call failed: {e}", err=True)
+        typer.echo("History NOT pruned — re-run when network is back.", err=True)
+        raise typer.Exit(1) from e
+
+    report = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+    if not report.strip():
+        typer.echo("Sonnet returned an empty response. History NOT pruned.", err=True)
+        raise typer.Exit(1)
+
+    # Save report under config dir (alongside personas/profiles/etc).
+    out_dir = config.CONFIG_DIR / "improvements"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d-%H%M%S")
+    out_path = out_dir / f"improve-{stamp}.md"
+
+    header = (
+        f"# Heard improvement report — {stamp}\n\n"
+        f"**Corpus:** {len(records)} utterances\n"
+        f"**Model:** claude-sonnet-4-6\n\n"
+        "---\n\n"
+    )
+    out_path.write_text(header + report, encoding="utf-8")
+
+    typer.echo(f"\nReport saved to {out_path}")
+
+    # Open in default app (macOS) — usually the user's $EDITOR or
+    # whatever they've associated with .md (Cursor / VSCode / etc).
+    try:
+        subprocess.Popen(["open", str(out_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+    # Prune analysed entries so the log doesn't accumulate.
+    if not keep:
+        history.commit_checkpoint_and_prune(end_offset)
+        typer.echo(f"Pruned {len(records)} analysed entries from history.")
+    else:
+        typer.echo("--keep specified; history left intact.")
+
+
 @app.command()
 def stop() -> None:
     """Cancel current speech AND shut down the daemon."""
