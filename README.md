@@ -133,12 +133,14 @@ User dir wins over bundled. Same precedence pattern as personas.
 
 ## Personas
 
-| Persona | Vibe | Default voice |
-|---|---|---|
-| **aria** | Calm, direct, never editorial. Senior pair-programmer. | Rachel (female US) |
-| **friday** | Bright, breezy, three steps ahead. Sprinkles "boss". | Custom female |
-| **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. | Archer (male British) |
-| **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. | Connery (male, deep) |
+<!-- TODO before merge: render ~5s mp3 per persona reading the same line ("Looking at your test failures. Three failures in auth.py.") and drop them at docs/assets/personas/<name>.mp3. Use `heard say` against each persona/voice. The same line across all four lets the listener compare vibe at parity. -->
+
+| Persona | Vibe | Default voice | Sample |
+|---|---|---|---|
+| **aria** | Calm, direct, never editorial. Senior pair-programmer. | Rachel (female US) | [▶ listen](docs/assets/personas/aria.mp3) |
+| **friday** | Bright, breezy, three steps ahead. Sprinkles "boss". | Custom female | [▶ listen](docs/assets/personas/friday.mp3) |
+| **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. | Archer (male British) | [▶ listen](docs/assets/personas/jarvis.mp3) |
+| **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. | Connery (male, deep) | [▶ listen](docs/assets/personas/atlas.mp3) |
 
 Switch via:
 - The menu bar **Persona** submenu (one click)
