@@ -115,6 +115,12 @@ class HeardApp(rumps.App):
         options_menu["Narrate tool results"] = self.narrate_results_item
         options_menu["Auto-silence on call"] = self.auto_silence_item
         options_menu["Set API key…"] = rumps.MenuItem("Set API key…", callback=self.on_set_api_keys)
+        options_menu["Download voice model"] = rumps.MenuItem(
+            "Download voice model", callback=self.on_download_kokoro
+        )
+        options_menu["Delete voice model"] = rumps.MenuItem(
+            "Delete voice model", callback=self.on_delete_kokoro
+        )
         options_menu["Open config file"] = rumps.MenuItem("Open config file", callback=self.on_open_config)
         options_menu["Open daemon log"] = rumps.MenuItem("Open daemon log", callback=self.on_open_log)
         options_menu["Restart daemon"] = rumps.MenuItem("Restart daemon", callback=self.on_restart_daemon)
@@ -423,32 +429,52 @@ class HeardApp(rumps.App):
         except Exception:
             pass
 
-        # Free-tier path: no ElevenLabs key. Pre-download the Kokoro
-        # model in the background so the user's first narration plays
-        # immediately, instead of blocking 30-60 s on a 350 MB
-        # download with no UI feedback the moment a CC tool fires.
+        # Free-tier path: no ElevenLabs key. Surface a one-time
+        # notification pointing the user at the Options menu where
+        # they can explicitly opt into the local model — we don't
+        # silently spend 350 MB of their disk on something they may
+        # never use (e.g. they're planning to paste an EL key later).
         if not eleven:
-            self._predownload_kokoro_async()
+            from heard.notify import notify
 
-    def _predownload_kokoro_async(self) -> None:
-        """Kick off the Kokoro model download on a daemon thread so
-        the menu bar stays responsive. Notifies on start + completion
-        so the user knows the bar is downloading the voice model
-        rather than just sitting silent."""
+            notify(
+                "Heard — pick a voice path",
+                "Paste an ElevenLabs key in the menu, or Options → Download voice model "
+                "to set up the local model (~350 MB).",
+                kind="onboarding_voice_choice",
+            )
+
+    def on_download_kokoro(self, _sender) -> None:
+        """Explicit user opt-in. Idempotent: shows a notification and
+        bails if the model's already on disk OR if a download is
+        already in flight (so a second click can't fire two parallel
+        urlretrieve calls fighting for the same file)."""
         import threading
 
         from heard.notify import notify
+        from heard.tts.kokoro import KokoroTTS
+
+        tts = KokoroTTS(config.MODELS_DIR)
+        if tts.is_downloaded():
+            notify(
+                "Heard — voice model already installed",
+                "Local TTS is ready. Click Options → Delete voice model to remove it.",
+                kind="kokoro_already_installed",
+            )
+            return
+        if getattr(self, "_kokoro_download_thread", None) is not None and self._kokoro_download_thread.is_alive():
+            notify(
+                "Heard — download in progress",
+                "The voice model is already downloading. Sit tight.",
+                kind="kokoro_download_in_flight",
+            )
+            return
 
         def _run() -> None:
             try:
-                from heard.tts.kokoro import KokoroTTS
-
-                tts = KokoroTTS(config.MODELS_DIR)
-                if tts.is_downloaded():
-                    return
                 notify(
                     "Heard — downloading voice model",
-                    "Setting up local TTS (~350 MB). First narration will play in a minute or two.",
+                    "Setting up local TTS (~350 MB). First narration plays once it's done.",
                     kind="kokoro_download_start",
                 )
                 tts.ensure_downloaded(progress=False)
@@ -460,11 +486,50 @@ class HeardApp(rumps.App):
             except Exception as e:
                 notify(
                     "Heard — voice model download failed",
-                    f"{e}. You can paste an ElevenLabs key in the menu instead.",
+                    f"{e}. You can paste an ElevenLabs key instead.",
                     kind="kokoro_download_failed",
                 )
 
-        threading.Thread(target=_run, daemon=True).start()
+        self._kokoro_download_thread = threading.Thread(target=_run, daemon=True)
+        self._kokoro_download_thread.start()
+
+    def on_delete_kokoro(self, _sender) -> None:
+        """Free up the ~350 MB the local model takes once the user
+        commits to ElevenLabs. Stops a running download cleanly:
+        we can't kill urlretrieve, but the partial files we own get
+        unlinked and the next on_download click will start fresh."""
+        from heard.notify import notify
+        from heard.tts.kokoro import KokoroTTS
+
+        tts = KokoroTTS(config.MODELS_DIR)
+        removed = []
+        for path in (tts.model_path, tts.voices_path):
+            if path.exists():
+                try:
+                    path.unlink()
+                    removed.append(path.name)
+                except Exception:
+                    pass
+            # Tear down any half-finished partials from an interrupted
+            # urlretrieve so a future re-download isn't confused.
+            partial = path.with_suffix(path.suffix + ".part")
+            if partial.exists():
+                try:
+                    partial.unlink()
+                except Exception:
+                    pass
+        if removed:
+            notify(
+                "Heard — voice model deleted",
+                f"Freed disk space ({', '.join(removed)}).",
+                kind="kokoro_deleted",
+            )
+        else:
+            notify(
+                "Heard — no local model to delete",
+                "Nothing on disk. Paste an ElevenLabs key or click Download voice model to install one.",
+                kind="kokoro_nothing_to_delete",
+            )
 
     def on_github(self, _sender) -> None:
         webbrowser.open("https://github.com/heardlabs/heard")
