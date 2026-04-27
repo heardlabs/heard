@@ -6,7 +6,7 @@ import subprocess
 
 import typer
 
-from heard import client, config, onboarding, service
+from heard import client, config, history, onboarding, service
 from heard.adapters import ADAPTERS
 from heard.presets import list_bundled as list_presets
 from heard.presets import load as load_preset
@@ -255,6 +255,93 @@ def replay() -> None:
         client.send({"cmd": "replay"})
     except Exception:
         pass
+
+
+@app.command(name="history")
+def history_cmd(
+    n: int = typer.Option(50, "-n", "--limit", help="How many entries to show (default 50)."),
+    since: str | None = typer.Option(
+        None, "--since", help="Only entries within this duration. Examples: 5m, 2h, 1d."
+    ),
+    grep: str | None = typer.Option(
+        None, "--grep", help="Case-insensitive substring filter on the spoken text."
+    ),
+    session: str | None = typer.Option(
+        None, "--session", help="Filter to entries from a specific session_id."
+    ),
+    repo: str | None = typer.Option(
+        None, "--repo", help="Filter to entries from a specific repo (cwd basename)."
+    ),
+) -> None:
+    """Show what Heard recently spoke. Local-only, no network calls.
+
+    Each entry shows: timestamp · agent label · the spoken text.
+    Add filters to narrow down what you're investigating after
+    something sounded off.
+    """
+    import re
+    import time
+
+    records = history.iter_all()
+    if not records:
+        typer.echo("No history yet. Heard logs every utterance once the daemon plays it.")
+        return
+
+    cutoff_ts: float | None = None
+    if since:
+        cutoff_ts = _parse_since(since)
+        if cutoff_ts is None:
+            typer.echo(f"Couldn't parse --since {since!r}. Try '5m', '2h', '1d'.", err=True)
+            raise typer.Exit(2)
+
+    pattern = re.compile(re.escape(grep), re.IGNORECASE) if grep else None
+    out: list[dict] = []
+    for r in records:
+        if cutoff_ts is not None:
+            ts = _parse_iso_ts(r.get("ts", ""))
+            if ts is None or ts < cutoff_ts:
+                continue
+        if session and r.get("session_id") != session:
+            continue
+        if repo and r.get("repo_name") != repo:
+            continue
+        if pattern and not pattern.search(r.get("spoken", "")):
+            continue
+        out.append(r)
+
+    out = out[-max(1, n):]
+    if not out:
+        typer.echo("No matching entries.")
+        return
+
+    for r in out:
+        ts = r.get("ts", "")[:19].replace("T", " ")
+        label = r.get("repo_name") or r.get("session_id", "?")[:8]
+        spoken = (r.get("spoken") or "").strip()
+        typer.echo(f"{ts}  {label:<14} {spoken}")
+
+
+def _parse_since(s: str) -> float | None:
+    """Convert "5m" / "2h" / "1d" → unix-epoch cutoff timestamp."""
+    import re
+    import time
+
+    m = re.fullmatch(r"\s*(\d+)\s*([smhd])\s*", s, re.IGNORECASE)
+    if not m:
+        return None
+    n = int(m.group(1))
+    unit = m.group(2).lower()
+    seconds = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    return time.time() - n * seconds
+
+
+def _parse_iso_ts(ts: str) -> float | None:
+    import time
+
+    try:
+        return time.mktime(time.strptime(ts.replace("Z", ""), "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return None
 
 
 @app.command()
