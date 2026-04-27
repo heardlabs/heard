@@ -68,7 +68,31 @@ def test_final_char_budget():
     assert verbosity.final_char_budget({"verbosity": "high"}) == 2000
 
 
-def test_narrate_tools_disabled_short_circuits():
+def test_narrate_tools_disabled_silences_pre_but_not_failures():
+    """narrate_tools=False mutes pre-tool announcements, but failures
+    have their own gate (narrate_failures) so 'Command failed' still
+    speaks. Earlier a single off-switch killed both."""
     cfg = {"narrate_tools": False, "verbosity": "high"}
     assert verbosity.should_narrate_pre(cfg, "tool_bash_test", density=0) is False
+    # Failures still speak — they're a separate signal class.
+    assert verbosity.should_narrate_post(cfg, "tool_post_failure") is True
+    assert verbosity.should_narrate_post(cfg, "tool_post_command_failed") is True
+
+
+def test_narrate_failures_can_be_explicitly_muted():
+    """The user CAN silence failures with the dedicated key."""
+    cfg = {"narrate_failures": False, "narrate_tools": True, "verbosity": "high"}
     assert verbosity.should_narrate_post(cfg, "tool_post_failure") is False
+    assert verbosity.should_narrate_post(cfg, "tool_post_command_failed") is False
+
+
+def test_narrate_tool_results_disabled_keeps_failures():
+    """narrate_tool_results=False mutes regular post-tool successes
+    but not failures."""
+    cfg = {
+        "narrate_tools": True,
+        "narrate_tool_results": False,
+        "verbosity": "high",
+    }
+    assert verbosity.should_narrate_post(cfg, "tool_post_success") is False
+    assert verbosity.should_narrate_post(cfg, "tool_post_failure") is True
