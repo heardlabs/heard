@@ -28,7 +28,12 @@ from typing import Any
 import yaml
 
 BUNDLED_DIR = Path(__file__).parent / "personas"
-HAIKU_MODEL = "claude-haiku-4-5"
+# Pinned to the dated form so Heard's narration stays predictable
+# across model alias shifts. Bump deliberately when validating a new
+# Haiku checkpoint — "claude-haiku-4-5" (alias) would silently move
+# to whatever the next 4.5 release is, which can change tone, length,
+# or refusal behaviour in subtle ways.
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
 HAIKU_TIMEOUT_S = 2.5
 HAIKU_MAX_TOKENS = 160
 
