@@ -63,7 +63,13 @@ class HeardApp(rumps.App):
         self.error_item = rumps.MenuItem("")
         self.error_item.set_callback(None)
 
-        silence_item = rumps.MenuItem("Silence  ⌘⇧.", callback=self.on_silence)
+        # Silence + Replay labels are filled in live from config in
+        # refresh() — the static "⌘⇧." was misleading because the
+        # default mode is tap-hold on Right Option, not the combo
+        # form. Now the label reads "Silence (tap right_option)" or
+        # "Silence (⌘⇧.)" depending on which mode is active.
+        self.silence_item = rumps.MenuItem("Silence", callback=self.on_silence)
+        self.replay_item = rumps.MenuItem("Replay last", callback=self.on_replay)
 
         # Persona submenu: clicking applies the persona's full frontmatter
         # (voice, speed, verbosity, narrate_tools) — collapses the old
@@ -139,7 +145,8 @@ class HeardApp(rumps.App):
             self.status_item,
             self.error_item,
             None,
-            silence_item,
+            self.silence_item,
+            self.replay_item,
             None,
             self.persona_menu,
             self.speed_menu,
@@ -206,6 +213,23 @@ class HeardApp(rumps.App):
         self.narrate_results_item.state = 1 if cfg.get("narrate_tool_results", True) else 0
         self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
 
+        # Hotkey binding labels — earlier the silence item label
+        # hardcoded "⌘⇧." even though the actual default is tap-hold
+        # on Right Option. Pull from live config so the menu reflects
+        # what's actually wired up.
+        silence_hint, replay_hint = self._hotkey_hints(cfg)
+        self.silence_item.title = f"Silence  ({silence_hint})"
+        self.replay_item.title = f"Replay last  ({replay_hint})"
+
+    def _hotkey_hints(self, cfg: dict) -> tuple[str, str]:
+        if cfg.get("hotkey_mode", "taphold") == "taphold":
+            key = cfg.get("hotkey_taphold_key", "right_option")
+            return f"tap {key}", f"hold {key}"
+        return (
+            cfg.get("hotkey_silence", "⌘⇧.") or "—",
+            cfg.get("hotkey_replay", "⌘⇧,") or "—",
+        )
+
     def _status_line(self, cfg: dict, state: str) -> str:
         persona = cfg.get("persona", "raw")
         voice = cfg.get("voice", "—")
@@ -226,6 +250,14 @@ class HeardApp(rumps.App):
     def on_silence(self, _sender) -> None:
         try:
             client.send({"cmd": "stop"})
+        except Exception:
+            pass
+
+    def on_replay(self, _sender) -> None:
+        """Mirror of the long-press hotkey for users who'd rather
+        click than reach for Right Option."""
+        try:
+            client.send({"cmd": "replay"})
         except Exception:
             pass
 
