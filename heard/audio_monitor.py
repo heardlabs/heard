@@ -123,10 +123,12 @@ class AudioMonitor:
     def __init__(
         self,
         on_recording_started: Callable[[], None],
+        on_recording_stopped: Callable[[], None] | None = None,
         poll_interval_s: float = POLL_INTERVAL_S,
         debounce_polls: int = DEBOUNCE_POLLS,
     ) -> None:
         self._cb = on_recording_started
+        self._release_cb = on_recording_stopped
         self._poll_interval = poll_interval_s
         self._debounce_polls = max(0, int(debounce_polls))
         self._stop = threading.Event()
@@ -186,18 +188,33 @@ class AudioMonitor:
                 except Exception as e:
                     print(f"audio_monitor callback error: {e}", file=sys.stderr, flush=True)
 
-            # Edge: running → idle. Reset for the next session.
+            # Edge: running → idle. Fire the optional release callback
+            # (only set when the user opted into auto-resume) so the
+            # daemon knows the call ended and can replay whatever was
+            # cut off.
             if state is False and last_state is True and consecutive_running == 0:
                 last_state = False
+                if self._release_cb is not None:
+                    try:
+                        self._release_cb()
+                    except Exception as e:
+                        print(f"audio_monitor release callback error: {e}", file=sys.stderr, flush=True)
 
             self._stop.wait(self._poll_interval)
 
 
-def start(on_recording_started: Callable[[], None]) -> AudioMonitor | None:
+def start(
+    on_recording_started: Callable[[], None],
+    on_recording_stopped: Callable[[], None] | None = None,
+) -> AudioMonitor | None:
     """Convenience: build and start a monitor in one call. Returns the
     monitor (so the daemon can ``.stop()`` it on shutdown / config
-    reload), or ``None`` if CoreAudio isn't available on this system."""
-    mon = AudioMonitor(on_recording_started)
+    reload), or ``None`` if CoreAudio isn't available on this system.
+
+    ``on_recording_stopped`` is optional — pass it only when the
+    daemon's auto_resume_on_mic_release config is on, since the
+    default is silence-then-stay-silent."""
+    mon = AudioMonitor(on_recording_started, on_recording_stopped=on_recording_stopped)
     if not mon.start():
         return None
     print("audio monitor started: tracking default input device", flush=True)

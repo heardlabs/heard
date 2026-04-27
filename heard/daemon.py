@@ -216,10 +216,18 @@ class Daemon:
     def _start_audio_monitor(self) -> None:
         """Start the mic-capture watcher (CoreAudio polling) so Heard
         auto-silences when a call / dictation / Wispr starts recording.
-        Mirrors macOS's orange recording dot — same signal."""
+        Mirrors macOS's orange recording dot — same signal.
+
+        ``auto_resume_on_mic_release`` (default off, opt-in): when the
+        mic releases at the end of the call, replay whatever was cut
+        off. The replay path goes through the queue + persona, same
+        as a long-press."""
         if not self.cfg.get("auto_silence_on_mic", True):
             return
-        self._audio_monitor = audio_monitor.start(self._cancel_only)
+        on_release = None
+        if self.cfg.get("auto_resume_on_mic_release", False):
+            on_release = self._replay_last
+        self._audio_monitor = audio_monitor.start(self._cancel_only, on_release)
 
     def _stop_audio_monitor(self) -> None:
         if self._audio_monitor is not None:

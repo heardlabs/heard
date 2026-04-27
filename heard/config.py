@@ -74,6 +74,12 @@ DEFAULTS: dict[str, Any] = {
     # Mirrors macOS's orange recording indicator. Set to false to keep
     # narration playing through calls.
     "auto_silence_on_mic": True,
+    # Off by default: the call ends, you get back to your terminal,
+    # whoever you were on the call with might still be talking and
+    # you'd rather not have Heard suddenly resume mid-sentence. Opt
+    # in via `heard config set auto_resume_on_mic_release true` when
+    # you want the cut-off narration to come back automatically.
+    "auto_resume_on_mic_release": False,
     # Set to True after the user finishes the welcome flow (or skips it),
     # so we never re-prompt them.
     "onboarded": False,
