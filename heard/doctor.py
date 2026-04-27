@@ -18,7 +18,8 @@ import tempfile
 from pathlib import Path
 
 from heard import accessibility, client, config, service
-from heard.adapters import ADAPTERS, claude_code as cc_adapter
+from heard.adapters import ADAPTERS
+from heard.adapters import claude_code as cc_adapter
 
 CHECK = "✓"
 CROSS = "✗"

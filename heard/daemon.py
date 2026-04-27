@@ -409,18 +409,30 @@ class Daemon:
             # by the OS), and the user perceives instant silence.
             synth_result: dict[str, object] = {"err": None, "done": False}
 
-            def _synth_in_thread() -> None:
+            # Default-arg binding pattern: the inner closure captures
+            # ``chunk`` / ``path`` / ``synth_result`` from the loop
+            # iteration via ``=`` rather than late-bind from the
+            # enclosing scope. Ruff B023 catches the difference;
+            # without binding, a refactor that keeps the closure
+            # alive across iterations would silently use the WRONG
+            # iteration's chunk.
+            def _synth_in_thread(
+                chunk=chunk,
+                path=path,
+                sr=synth_result,
+                cncl=cancel,
+            ) -> None:
                 try:
                     self.tts.synth_to_file(chunk, voice, speed, lang, path)
-                except Exception as e:
-                    synth_result["err"] = e
+                except Exception as exc:
+                    sr["err"] = exc
                 finally:
-                    synth_result["done"] = True
+                    sr["done"] = True
                     # If we were cancelled while running, nobody will
                     # play this audio — delete our own tempfile so a
                     # rapid silence-then-silence-again sequence
                     # doesn't accumulate orphaned files in /tmp.
-                    if cancel.is_set():
+                    if cncl.is_set():
                         try:
                             path.unlink(missing_ok=True)
                         except Exception:
