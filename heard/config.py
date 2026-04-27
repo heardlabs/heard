@@ -41,6 +41,11 @@ DEFAULTS: dict[str, Any] = {
     "flush_delay_ms": 800,
     "narrate_tools": True,
     "narrate_tool_results": True,
+    # Failure announcements live on a separate switch from regular
+    # tool-result narration. Most users want to hear "command failed"
+    # even when they've muted general tool noise — the only reason to
+    # turn this off is if you're explicitly debugging silently.
+    "narrate_failures": True,
     "persona": "raw",
     "verbosity": "normal",
     "hotkey_enabled": True,

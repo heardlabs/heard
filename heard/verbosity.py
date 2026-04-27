@@ -56,12 +56,18 @@ def should_narrate_pre(cfg: dict, tag: str, density: int) -> bool:
 
 
 def should_narrate_post(cfg: dict, tag: str) -> bool:
+    # Failures get their own gate. Earlier the narrate_tools /
+    # narrate_tool_results checks fired first, so turning EITHER off
+    # silenced "Command failed." too — which is rarely what the user
+    # wants. ("Stop narrating my Bash calls" ≠ "stop telling me when
+    # things break.") Fail tags now speak by default; only the
+    # narrate_failures key can mute them.
+    if tag in _FAILURE_TAGS:
+        return bool(cfg.get("narrate_failures", True))
     if not cfg.get("narrate_tools", True):
         return False
     if not cfg.get("narrate_tool_results", True):
         return False
-    if tag in _FAILURE_TAGS:
-        return True  # always speak failures
     return level(cfg) == "high"
 
 

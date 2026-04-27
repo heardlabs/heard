@@ -319,6 +319,7 @@ _VALID_HOTKEY_MODE = ("taphold", "combo")
 _BOOL_KEYS = (
     "narrate_tools",
     "narrate_tool_results",
+    "narrate_failures",
     "hotkey_enabled",
     "auto_silence_on_mic",
     "onboarded",
