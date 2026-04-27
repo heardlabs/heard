@@ -13,6 +13,7 @@ Returning None means "stay silent" — the dispatcher skips synthesis.
 from __future__ import annotations
 
 import os
+import re
 import urllib.parse as urlparse
 from dataclasses import dataclass, field
 from typing import Any
@@ -81,11 +82,28 @@ _BASH_VERBS = {
 }
 
 
+_COMPOUND_SEP = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
+
+
 def _first_token(command: str) -> str:
-    """First token of the command, after stripping env-var prefixes
-    like FOO=bar and a leading sudo. Used for verb detection so
-    e.g. ``sudo lsof -i :8080`` reads as 'lsof', not 'sudo'."""
-    parts = command.strip().split()
+    """Verb-extraction front-end: returns the most informative
+    command-name from a shell line.
+
+    Handles three real-world shapes the agent emits routinely:
+      * ``FOO=bar cmd``        → ``cmd`` (skip env-var prefix)
+      * ``sudo cmd``           → ``cmd`` (skip sudo wrapper)
+      * ``cd src && grep foo`` → ``grep`` (the actual intent isn't ``cd``)
+
+    For compound commands we take the LAST segment after the shell
+    separators. The first segment is usually setup (``cd``, ``cd ..``,
+    ``export X=…``); the trailing segment carries the action.
+    """
+    text = command.strip()
+    if not text:
+        return ""
+    segments = _COMPOUND_SEP.split(text)
+    last = segments[-1].strip()
+    parts = last.split()
     i = 0
     while i < len(parts) and ("=" in parts[i] and not parts[i].startswith("-")):
         i += 1
@@ -243,7 +261,24 @@ def post_tool_event(tool_name: str, tool_response: Any) -> Narration | None:
         if ec is None:
             ec = tool_response.get("exitCode")
         if ec not in (None, 0):
-            return Narration(tag="tool_post_command_failed", text="Command failed.", ctx={"exit_code": ec})
+            # Surface the last meaningful line of stderr so the user
+            # hears what *actually* went wrong instead of a flat
+            # "Command failed." three calls in a row.
+            stderr = (tool_response.get("stderr") or "").strip()
+            last = ""
+            if stderr:
+                lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+                if lines:
+                    last = lines[-1][:120]
+            if last:
+                text = f"Command failed. {last}"
+            else:
+                text = f"Command failed with exit code {ec}."
+            return Narration(
+                tag="tool_post_command_failed",
+                text=text,
+                ctx={"exit_code": ec, "stderr_tail": last},
+            )
     return None
 
 
