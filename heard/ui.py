@@ -65,6 +65,12 @@ class HeardApp(rumps.App):
         self.silence_item = rumps.MenuItem("Silence", callback=self.on_silence)
         self.replay_item = rumps.MenuItem("Replay last", callback=self.on_replay)
 
+        # Active Sessions submenu. Populated dynamically each refresh
+        # from the daemon's router status. Shows up empty (with a
+        # "(no agents active)" placeholder) in solo mode; shows each
+        # session as a clickable pin/unpin item in swarm mode.
+        self.active_sessions_menu = rumps.MenuItem("Active agents")
+
         # Persona submenu: clicking applies the persona's full frontmatter
         # (voice, speed, verbosity, narrate_tools) — collapses the old
         # Preset/Persona split now that personas ARE presets.
@@ -149,6 +155,7 @@ class HeardApp(rumps.App):
             self.persona_menu,
             self.speed_menu,
             self.verbosity_menu,
+            self.active_sessions_menu,
             None,
             options_menu,
             None,
@@ -219,6 +226,72 @@ class HeardApp(rumps.App):
         silence_hint, replay_hint = self._hotkey_hints(cfg)
         self.silence_item.title = f"Silence  ({silence_hint})"
         self.replay_item.title = f"Replay last  ({replay_hint})"
+
+        # Active Sessions submenu — populated from daemon router state.
+        self._refresh_active_sessions(status or {})
+
+    def _refresh_active_sessions(self, status: dict) -> None:
+        """Rebuild the Active Sessions submenu from the daemon's
+        router state. Cleared and repopulated each tick so newly-
+        appearing or going-stale sessions show up correctly. The
+        first entry (most recently active) is marked with ●; any
+        pinned entry is marked with 📌."""
+        sessions = status.get("active_sessions") or []
+        # Clear existing items.
+        for key in list(self.active_sessions_menu.keys()):
+            del self.active_sessions_menu[key]
+
+        if not sessions:
+            ph = rumps.MenuItem("(no agents active)")
+            ph.set_callback(None)
+            self.active_sessions_menu["(no agents active)"] = ph
+            return
+
+        any_pinned = any(s.get("pinned") for s in sessions)
+
+        # First in list = most recent = focus (when nothing pinned).
+        for i, s in enumerate(sessions):
+            label = s.get("repo_name") or "agent"
+            if s.get("pinned"):
+                title = f"📌 {label}"
+            elif not any_pinned and i == 0:
+                title = f"● {label}"
+            else:
+                title = f"   {label}"
+            ago = s.get("last_event_ago_s", 0)
+            # Show how recent for the user's situational awareness.
+            if ago < 5:
+                suffix = " · just now"
+            elif ago < 60:
+                suffix = f" · {int(ago)}s ago"
+            else:
+                suffix = f" · {int(ago // 60)}m ago"
+            full_title = title + suffix
+            item = rumps.MenuItem(full_title)
+            item.set_callback(self._mk_pin_cb(s["session_id"]))
+            self.active_sessions_menu[full_title] = item
+
+        if any_pinned:
+            unpin_item = rumps.MenuItem("Unpin focus")
+            unpin_item.set_callback(self.on_unpin)
+            self.active_sessions_menu["Unpin focus"] = unpin_item
+
+    def _mk_pin_cb(self, session_id: str):
+        def cb(_sender):
+            try:
+                client.send({"cmd": "pin", "session_id": session_id})
+            except Exception:
+                pass
+            self.refresh(None)
+
+        return cb
+
+    def on_unpin(self, _sender) -> None:
+        try:
+            client.send({"cmd": "unpin"})
+        except Exception:
+            pass
+        self.refresh(None)
 
     def _hotkey_hints(self, cfg: dict) -> tuple[str, str]:
         if cfg.get("hotkey_mode", "taphold") == "taphold":

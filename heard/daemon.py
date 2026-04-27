@@ -764,14 +764,26 @@ class Daemon:
                 "persona": self.persona.name,
                 "narrate_tools": bool(self.cfg.get("narrate_tools", True)),
                 "last_error": self._last_error,
-                # New: surface real-time activity so the menu bar can
-                # tell the user "● speaking" vs idle. Otherwise the
-                # status line reads "On · Jarvis · Normal" whether
-                # the daemon is mid-utterance or just sitting there.
+                # Real-time activity hint for the menu bar header.
                 "speaking": speaking,
                 "queued": queued,
+                # Multi-agent: list of recently-active sessions so the
+                # menu can render the Active Sessions submenu and show
+                # which one is pinned / focus.
+                "active_sessions": self.router.list_active(),
+                "router_mode": self.router.mode().value,
             }
             return json.dumps(payload).encode("utf-8")
+        if cmd == "pin":
+            sid = (req.get("session_id") or "").strip()
+            if sid:
+                ok = self.router.pin(sid)
+                _log("router_pin", session=sid, ok=ok)
+            return None
+        if cmd == "unpin":
+            self.router.unpin()
+            _log("router_unpin")
+            return None
         if cmd == "reload":
             self._reload_config()
             return None
