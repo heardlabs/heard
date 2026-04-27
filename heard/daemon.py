@@ -30,6 +30,10 @@ from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
 
 DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
+# Rotate the daemon log when it crosses this size. Heard runs for
+# weeks at a time on a busy machine; without rotation the structured
+# per-event lines accumulate into hundreds of MB.
+_LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
 
 def _log(event: str, **fields: object) -> None:
@@ -38,8 +42,10 @@ def _log(event: str, **fields: object) -> None:
     Replaces the scattered print() calls that made silent drops
     impossible to trace. Format keeps key=value pairs so a future
     log-streaming script can pick this up without parsing English.
+    Timestamp includes the date so cross-day debugging is possible
+    without correlating against a separate clock.
     """
-    parts = [f"t={time.strftime('%H:%M:%S')}", f"ev={event}"]
+    parts = [f"t={time.strftime('%Y-%m-%d %H:%M:%S')}", f"ev={event}"]
     for k, v in fields.items():
         if v is None or v == "":
             continue
@@ -50,6 +56,23 @@ def _log(event: str, **fields: object) -> None:
             s = '"' + s.replace('"', "'") + '"'
         parts.append(f"{k}={s}")
     print(" ".join(parts), flush=True)
+
+
+def _maybe_rotate_log() -> None:
+    """One-shot rotation at daemon startup. If daemon.log is over the
+    threshold, rename it to daemon.log.old (replacing any prior
+    rotated copy) so the new daemon starts with a fresh file.
+    Single-generation: simpler and bounded — at most 2× the rotate
+    size on disk total."""
+    log_path = config.LOG_PATH
+    try:
+        if log_path.exists() and log_path.stat().st_size > _LOG_ROTATE_BYTES:
+            old = log_path.with_suffix(log_path.suffix + ".old")
+            old.unlink(missing_ok=True)
+            log_path.rename(old)
+    except Exception:
+        # Best-effort; don't block startup on a rotation hiccup.
+        pass
 
 
 def _split(text: str) -> list[str]:
@@ -66,6 +89,7 @@ def _split(text: str) -> list[str]:
 class Daemon:
     def __init__(self) -> None:
         config.ensure_dirs()
+        _maybe_rotate_log()
         self.cfg = config.load()
         self.tts = self._make_tts()
         self.sessions = SessionStore()
