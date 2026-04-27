@@ -74,13 +74,27 @@ def install() -> None:
         _install_event(data, event)
     _write_hooks(data)
 
-    # Feature-flag check — warn, don't auto-edit the TOML
+    # Feature-flag check — warn the user when the flag isn't on.
+    # stderr alone vanishes for menu-bar onboarding installs (the
+    # process has no terminal). Push a macOS notification too so a
+    # user who clicks "codex" in the onboarding window doesn't end
+    # up with hooks installed but quietly disabled.
     if not _feature_flag_enabled():
-        print(
-            "\nheard: Codex hooks are behind a feature flag. Add this to "
-            f"{CONFIG_PATH}:\n\n    [features]\n    codex_hooks = true\n",
-            file=sys.stderr,
+        msg = (
+            f"Codex hooks are behind a feature flag. Add this to "
+            f"{CONFIG_PATH}:\n\n    [features]\n    codex_hooks = true\n"
         )
+        print(f"\nheard: {msg}", file=sys.stderr)
+        try:
+            from heard import notify
+
+            notify.notify(
+                "Heard — Codex hooks need a feature flag",
+                f"Add `codex_hooks = true` under [features] in {CONFIG_PATH}",
+                kind="codex_flag_off",
+            )
+        except Exception:
+            pass
 
 
 def uninstall() -> None:
