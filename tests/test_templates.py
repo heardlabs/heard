@@ -67,6 +67,52 @@ def test_query_and_planmode_tools_silent():
         assert templates.pre_tool_line(name, {}) is None, name
 
 
+def test_bash_verb_detection_no_description():
+    # No description → verb must drive the announcement, not "Running a shell command".
+    cases = {
+        "grep -rn 'foo' src/": "Searching the codebase.",
+        "find . -name '*.py'": "Searching.",
+        "ls -la /tmp": "Listing files.",
+        "cat /etc/hosts": "Reading a file.",
+        "rm -rf build/": "Removing files.",
+        "cp a.py b.py": "Copying files.",
+        "mv old new": "Moving files.",
+        "mkdir -p dist": "Creating a directory.",
+        "ps aux": "Listing processes.",
+        "kill 12345": "Killing a process.",
+        "make clean": "Building.",
+        "curl https://x.com": "Fetching over HTTP.",
+    }
+    for cmd, expected in cases.items():
+        line = templates.pre_tool_line("Bash", {"command": cmd})
+        assert line == expected, f"{cmd!r} → {line!r}, expected {expected!r}"
+
+
+def test_bash_falls_back_to_first_verb_when_unknown():
+    # Unknown verb without description → "Running <verb>." (still better than the generic line).
+    line = templates.pre_tool_line("Bash", {"command": "lsof -i :8080"})
+    assert line == "Running lsof."
+
+
+def test_bash_skips_env_prefix_and_sudo():
+    line = templates.pre_tool_line("Bash", {"command": "FOO=bar sudo lsof -i :8080"})
+    assert line == "Running lsof."
+
+
+def test_bash_description_wins_over_verb():
+    # When the agent passes a description, it wins — agent intent is more specific.
+    line = templates.pre_tool_line(
+        "Bash",
+        {"command": "grep foo bar.py", "description": "Looking for the auth handler"},
+    )
+    assert line == "Looking for the auth handler."
+
+
+def test_bash_git_inspect():
+    line = templates.pre_tool_line("Bash", {"command": "git status"})
+    assert line == "Checking git status."
+
+
 def test_post_tool_silent_by_default():
     assert templates.post_tool_line("Edit", {"filePath": "/a", "success": True}) is None
 

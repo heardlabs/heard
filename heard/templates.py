@@ -43,6 +43,56 @@ _INSTALL_MARKERS = (
     "brew install",
 )
 
+# Single-word command → present-tense narration. Hit when no
+# higher-priority pattern matches AND the agent didn't pass a
+# description. Saves us from saying "Running a shell command" for
+# every grep/ls/cat in a session — the user wants intent, not a
+# blank acknowledgment.
+_BASH_VERBS = {
+    "ls": ("tool_bash_list", "Listing files."),
+    "find": ("tool_bash_find", "Searching."),
+    "grep": ("tool_bash_grep_cmd", "Searching the codebase."),
+    "rg": ("tool_bash_grep_cmd", "Searching the codebase."),
+    "cat": ("tool_bash_read", "Reading a file."),
+    "head": ("tool_bash_read", "Reading a file."),
+    "tail": ("tool_bash_read", "Reading a file."),
+    "less": ("tool_bash_read", "Reading a file."),
+    "rm": ("tool_bash_remove", "Removing files."),
+    "cp": ("tool_bash_copy", "Copying files."),
+    "mv": ("tool_bash_move", "Moving files."),
+    "mkdir": ("tool_bash_mkdir", "Creating a directory."),
+    "touch": ("tool_bash_touch", "Creating a file."),
+    "ps": ("tool_bash_ps", "Listing processes."),
+    "kill": ("tool_bash_kill", "Killing a process."),
+    "pkill": ("tool_bash_kill", "Killing processes."),
+    "chmod": ("tool_bash_chmod", "Setting permissions."),
+    "chown": ("tool_bash_chmod", "Setting ownership."),
+    "make": ("tool_bash_build", "Building."),
+    "ssh": ("tool_bash_ssh", "Connecting via ssh."),
+    "scp": ("tool_bash_scp", "Copying over ssh."),
+    "curl": ("tool_bash_curl", "Fetching over HTTP."),
+    "wget": ("tool_bash_curl", "Downloading."),
+    "tar": ("tool_bash_tar", "Working with an archive."),
+    "zip": ("tool_bash_tar", "Compressing."),
+    "unzip": ("tool_bash_tar", "Extracting."),
+    "open": ("tool_bash_open", "Opening."),
+    "diff": ("tool_bash_diff", "Diffing."),
+    "wc": ("tool_bash_wc", "Counting."),
+}
+
+
+def _first_token(command: str) -> str:
+    """First token of the command, after stripping env-var prefixes
+    like FOO=bar and a leading sudo. Used for verb detection so
+    e.g. ``sudo lsof -i :8080`` reads as 'lsof', not 'sudo'."""
+    parts = command.strip().split()
+    i = 0
+    while i < len(parts) and ("=" in parts[i] and not parts[i].startswith("-")):
+        i += 1
+    if i < len(parts) and parts[i] == "sudo":
+        i += 1
+    return parts[i] if i < len(parts) else ""
+
 
 def _bash_tag_and_text(command: str | None, description: str | None) -> tuple[str, str]:
     cmd = (command or "").strip()
@@ -55,13 +105,28 @@ def _bash_tag_and_text(command: str | None, description: str | None) -> tuple[st
         return "tool_bash_push", "Pushing."
     if low.startswith("git pull") or low.startswith("git fetch"):
         return "tool_bash_sync", "Syncing with git."
+    if low.startswith("git status") or low.startswith("git log") or low.startswith("git diff"):
+        return "tool_bash_git_inspect", "Checking git status."
     if any(low.startswith(m) for m in _INSTALL_MARKERS):
         return "tool_bash_install", "Installing dependencies."
     first_tokens = low.split()[:3]
     if any(v in first_tokens for v in _BUILD_VERBS):
         return "tool_bash_build", "Building."
+
+    # Description (when CC populates it) wins over verb detection —
+    # the agent's hand-written intent line is almost always more
+    # specific than what we'd derive from the command verb alone.
     if description:
         return "tool_bash_generic", description.rstrip(".") + "."
+
+    # No description: extract intent from the command's first verb so
+    # the user hears "Searching the codebase." instead of the dreaded
+    # "Running a shell command."
+    verb = _first_token(low)
+    if verb in _BASH_VERBS:
+        return _BASH_VERBS[verb]
+    if verb:
+        return "tool_bash_generic", f"Running {verb}."
     return "tool_bash_generic", "Running a shell command."
 
 
