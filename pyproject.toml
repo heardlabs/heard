@@ -1,6 +1,6 @@
 [project]
 name = "heard"
-version = "0.3.11"
+version = "0.4.0"
 description = "A voice companion for your AI coding agents. Heard speaks your agent's replies so you can keep working."
 readme = "README.md"
 license = { text = "Apache-2.0" }
