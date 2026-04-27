@@ -554,12 +554,21 @@ class Daemon:
         if cmd == "ping":
             return None
         if cmd == "status":
+            with self._queue_cv:
+                speaking = self._current_cancel is not None
+                queued = len(self._queue)
             payload = {
                 "alive": True,
                 "backend": type(self.tts).__name__,
                 "persona": self.persona.name,
                 "narrate_tools": bool(self.cfg.get("narrate_tools", True)),
                 "last_error": self._last_error,
+                # New: surface real-time activity so the menu bar can
+                # tell the user "● speaking" vs idle. Otherwise the
+                # status line reads "On · Jarvis · Normal" whether
+                # the daemon is mid-utterance or just sitting there.
+                "speaking": speaking,
+                "queued": queued,
             }
             return json.dumps(payload).encode("utf-8")
         if cmd == "reload":

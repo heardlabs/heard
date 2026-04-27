@@ -181,6 +181,12 @@ class HeardApp(rumps.App):
             self.status_item.title = f"⚠ {self._error_label(last_error.get('kind', ''))}"
         elif not cfg.get("narrate_tools", True):
             self.status_item.title = self._status_line(cfg, "muted")
+        elif (status or {}).get("speaking"):
+            # Real-time activity hint — the user can tell whether
+            # Heard is actually narrating right now or just idle.
+            # The bullet prefix sits outside the state arg so the
+            # capitalize() in _status_line lands on "Speaking".
+            self.status_item.title = "● " + self._status_line(cfg, "speaking")
         else:
             self.status_item.title = self._status_line(cfg, "on")
 
