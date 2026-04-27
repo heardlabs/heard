@@ -88,9 +88,14 @@ class HeardApp(rumps.App):
             self.verbosity_menu[level] = item
 
         self.narrate_tools_item = rumps.MenuItem("Narrate tool calls", callback=self.on_toggle_tools)
+        self.auto_silence_item = rumps.MenuItem(
+            "Auto-silence on call",
+            callback=self.on_toggle_auto_silence,
+        )
 
         options_menu = rumps.MenuItem("Options")
         options_menu["Narrate tool calls"] = self.narrate_tools_item
+        options_menu["Auto-silence on call"] = self.auto_silence_item
         options_menu["Set API key…"] = rumps.MenuItem("Set API key…", callback=self.on_set_api_keys)
         options_menu["Open config file"] = rumps.MenuItem("Open config file", callback=self.on_open_config)
         options_menu["Open daemon log"] = rumps.MenuItem("Open daemon log", callback=self.on_open_log)
@@ -156,6 +161,7 @@ class HeardApp(rumps.App):
         for level, item in self.verbosity_menu.items():
             item.state = 1 if level == active_verbosity else 0
         self.narrate_tools_item.state = 1 if cfg.get("narrate_tools", True) else 0
+        self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
 
     def _status_line(self, cfg: dict, state: str) -> str:
         persona = cfg.get("persona", "raw")
@@ -238,6 +244,19 @@ class HeardApp(rumps.App):
         cfg = config.load()
         current = cfg.get("narrate_tools", True)
         config.set_value("narrate_tools", not current)
+        try:
+            client.send({"cmd": "reload"})
+        except Exception:
+            pass
+        self.refresh(None)
+
+    def on_toggle_auto_silence(self, _sender) -> None:
+        """Marquee feature in the README ('Auto-pause on calls') had
+        no UI toggle — only the CLI knew. Now it's a one-click switch
+        in Options like every other on/off setting."""
+        cfg = config.load()
+        current = cfg.get("auto_silence_on_mic", True)
+        config.set_value("auto_silence_on_mic", not current)
         try:
             client.send({"cmd": "reload"})
         except Exception:
