@@ -1,22 +1,35 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/heard-logo-dark.svg">
-    <img alt="Heard" src="docs/assets/logo/heard-logo-light.svg" width="320">
+    <img alt="Heard" src="docs/assets/logo/heard-logo-light.svg" width="360">
   </picture>
 </p>
 
-# Heard
+<h2 align="center">Your AI agent's voice companion.</h2>
 
-> Your AI agent's voice companion. Heard speaks your agent's replies so you can keep working — no need to read every line.
+<p align="center">
+  Heard speaks your agent's replies so you can keep working — no need to read every line.
+</p>
 
-Counterpart to input tools like [Wispr Flow](https://wisprflow.ai). Wispr handles what you say *to* your agent; Heard handles what it says back.
+<p align="center">
+  <sub>Counterpart to input tools like <a href="https://wisprflow.ai">Wispr Flow</a>. Wispr handles what you say <i>to</i> your agent; Heard handles what it says back.</sub>
+</p>
 
-[![Latest release](https://img.shields.io/github/v/release/heardlabs/heard?label=release&color=0aa)](https://github.com/heardlabs/heard/releases/latest)
-[![PyPI](https://img.shields.io/pypi/v/heard.svg)](https://pypi.org/project/heard/)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/heardlabs/heard/blob/main/LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/heardlabs/heard?style=social)](https://github.com/heardlabs/heard)
+<p align="center">
+  <a href="https://github.com/heardlabs/heard/releases/latest"><img src="https://img.shields.io/github/v/release/heardlabs/heard?label=release&color=0aa" alt="Latest release"></a>
+  <a href="https://github.com/heardlabs/heard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
+  <a href="https://github.com/heardlabs/heard"><img src="https://img.shields.io/github/stars/heardlabs/heard?style=social" alt="GitHub stars"></a>
+</p>
 
-[heard.dev](https://heard.dev) · [Releases](https://github.com/heardlabs/heard/releases/latest) · [Issues](https://github.com/heardlabs/heard/issues)
+<p align="center">
+  <a href="https://heard.dev">heard.dev</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/heardlabs/heard/releases/latest">Releases</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/heardlabs/heard/issues">Issues</a>
+</p>
+
+<br/>
 
 ## See and hear it run
 
