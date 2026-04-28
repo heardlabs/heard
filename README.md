@@ -68,14 +68,12 @@ heard demo                   # ~15s preview
 
 ## Personas
 
-<!-- TODO: render ~5s mp3 per persona reading the same line ("Looking at your test failures. Three failures in auth.py.") and drop them at docs/assets/personas/<name>.mp3. Then swap the "coming soon" cells below for [▶ listen](path) links. Same line across all four lets listeners compare vibe at parity. -->
-
-| Persona | Vibe | Default voice | Sample |
-|---|---|---|---|
-| **aria** | Calm, direct, never editorial. Senior pair-programmer. | Rachel (female US) | _coming soon_ |
-| **friday** | Bright, breezy, three steps ahead. Sprinkles "boss". | Custom female | _coming soon_ |
-| **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. | Archer (male British) | _coming soon_ |
-| **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. | Connery (male, deep) | _coming soon_ |
+| Persona | Vibe | Sample |
+|---|---|---|
+| **aria** | Calm, direct, never editorial. Senior pair-programmer. | [▶ listen](https://heard.dev/audio/intro_calm.mp3) |
+| **friday** | Bright, breezy, three steps ahead. Sprinkles "boss". | [▶ listen](https://heard.dev/audio/intro_friday.mp3) |
+| **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. | [▶ listen](https://heard.dev/audio/intro_jarvis.mp3) |
+| **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. | [▶ listen](https://heard.dev/audio/intro_narrator.mp3) |
 
 Fork your own — drop a Markdown file with frontmatter into `~/Library/Application Support/heard/personas/`.
 
