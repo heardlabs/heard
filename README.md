@@ -8,7 +8,7 @@
 <h2 align="center">Your coding agent has a voice now.</h2>
 
 <p align="center">
-  Heard speaks your agent's replies so you can pace, pour coffee, or read a different tab — and still know what it's doing.
+  Heard speaks your agent's replies so you can get up, walk around, and still know what's going on.
 </p>
 
 <p align="center">
