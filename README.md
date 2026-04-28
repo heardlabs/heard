@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/heard-logo-dark.svg">
+    <img alt="Heard" src="docs/assets/logo/heard-logo-light.svg" width="320">
+  </picture>
+</p>
+
 # Heard
 
 > Your AI agent's voice companion. Heard speaks your agent's replies so you can keep working — no need to read every line.
