@@ -75,7 +75,7 @@ heard demo                   # ~15s preview
 | **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. |
 | **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. |
 
-[▶ Hear them on heard.dev →](https://heard.dev/#voices)
+<a href="https://heard.dev/#voices" target="_blank" rel="noopener">▶ Hear the voices in action on heard.dev →</a>
 
 Fork your own — drop a Markdown file with frontmatter into `~/Library/Application Support/heard/personas/`.
 
