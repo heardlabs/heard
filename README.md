@@ -5,10 +5,10 @@
   </picture>
 </p>
 
-<h2 align="center">Your AI agent's voice companion.</h2>
+<h2 align="center">Your coding agent has a voice now.</h2>
 
 <p align="center">
-  Heard speaks your agent's replies so you can keep working — no need to read every line.
+  Heard speaks your agent's replies so you can pace, pour coffee, or read a different tab — and still know what it's doing.
 </p>
 
 <p align="center">
