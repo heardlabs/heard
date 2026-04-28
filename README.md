@@ -68,12 +68,30 @@ heard demo                   # ~15s preview
 
 ## Personas
 
-| Persona | Vibe | Sample |
-|---|---|---|
-| **aria** | Calm, direct, never editorial. Senior pair-programmer. | <video src="docs/assets/personas/calm.mp4" controls></video> |
-| **friday** | Bright, breezy, three steps ahead. Sprinkles "boss". | <video src="docs/assets/personas/friday.mp4" controls></video> |
-| **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. | <video src="docs/assets/personas/jarvis.mp4" controls></video> |
-| **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. | <video src="docs/assets/personas/narrator.mp4" controls></video> |
+| Persona | Vibe |
+|---|---|
+| **aria** | Calm, direct, never editorial. Senior pair-programmer. |
+| **friday** | Bright, breezy, three steps ahead. Sprinkles "boss". |
+| **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. |
+| **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. |
+
+### Hear them
+
+**aria**
+
+<video src="docs/assets/personas/calm.mp4" controls></video>
+
+**friday**
+
+<video src="docs/assets/personas/friday.mp4" controls></video>
+
+**jarvis**
+
+<video src="docs/assets/personas/jarvis.mp4" controls></video>
+
+**atlas**
+
+<video src="docs/assets/personas/narrator.mp4" controls></video>
 
 Fork your own — drop a Markdown file with frontmatter into `~/Library/Application Support/heard/personas/`.
 
