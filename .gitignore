@@ -33,3 +33,7 @@ models/*.bin
 *.sock
 daemon.log
 daemon.pid
+
+# private maintainer notes — see CLAUDE.local.md for the discipline
+.local/
+*.local.md
