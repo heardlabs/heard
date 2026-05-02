@@ -350,15 +350,31 @@ class Daemon:
             self._audio_monitor = None
 
     def _make_tts(self):
-        """Pick a TTS backend based on config:
+        """Pick a TTS backend based on config, in priority order:
 
-        * ``elevenlabs_api_key`` set → ElevenLabs (HTTP, ~80 MB daemon).
-        * Otherwise → Kokoro (local ONNX, downloads model on first synth).
+        1. ``heard_token`` set + plan != ``"expired"`` → ManagedTTS
+           (proxies through api.heard.dev; the EL key lives on our
+           edge so OSS users don't see it).
+        2. ``elevenlabs_api_key`` set → ElevenLabsTTS (legacy BYOK
+           path, never broken; "I want my own EL account" power
+           users).
+        3. Otherwise → Kokoro (local ONNX, downloads model on first
+           synth).
 
-        Kokoro is imported LAZILY inside the else branch so users on the
-        ElevenLabs path never load ``kokoro_onnx`` / ``onnxruntime`` —
-        keeping the daemon tiny for the BYOK flow.
+        Kokoro stays a lazy import so paying / BYOK users never load
+        ``kokoro_onnx`` / ``onnxruntime`` — keeps the daemon tiny on
+        the cloud path.
         """
+        heard_token = (self.cfg.get("heard_token") or "").strip()
+        heard_plan = (self.cfg.get("heard_plan") or "").strip().lower()
+        if heard_token and heard_plan != "expired":
+            from heard.tts.managed import ManagedTTS  # noqa: PLC0415
+
+            return ManagedTTS(
+                token=heard_token,
+                base_url=self.cfg.get("heard_api_base") or "https://api.heard.dev",
+            )
+
         api_key = (self.cfg.get("elevenlabs_api_key") or "").strip()
         if api_key:
             return ElevenLabsTTS(api_key=api_key)

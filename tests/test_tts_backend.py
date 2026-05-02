@@ -83,6 +83,95 @@ def test_audio_extension_matches_backend(tmp_path, monkeypatch):
     assert ko_daemon.tts.AUDIO_EXT == ".wav"
 
 
+def test_selector_picks_managed_when_heard_token_present(tmp_path, monkeypatch):
+    """Default-EL flow for new users: a Heard token in config wins
+    over both BYOK and Kokoro. The proxy hides our EL key so OSS users
+    who pasted their own key still keep working — but the default
+    onboarded path goes through Heard cloud."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {"heard_token": "tok_abc", "heard_plan": "trial"},
+    )
+    from heard.tts.managed import ManagedTTS
+
+    assert isinstance(daemon.tts, ManagedTTS)
+    assert daemon.tts.token == "tok_abc"
+
+
+def test_selector_managed_beats_byok_when_both_present(tmp_path, monkeypatch):
+    """Edge case: user used to be BYOK then signed up for Pro. Heard
+    token takes precedence — they paid for the cloud path, give them
+    the cloud path."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok_pro",
+            "heard_plan": "pro",
+            "elevenlabs_api_key": "sk_legacy",
+        },
+    )
+    from heard.tts.managed import ManagedTTS
+
+    assert isinstance(daemon.tts, ManagedTTS)
+
+
+def test_selector_skips_managed_when_plan_expired(tmp_path, monkeypatch):
+    """Day-31 silent downgrade: trial expired, fall through to BYOK
+    (if present) or Kokoro. The token is kept around so the user can
+    upgrade later without re-onboarding, but the daemon doesn't try
+    to use it for synth — every request would 402."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok_was_trial",
+            "heard_plan": "expired",
+            "elevenlabs_api_key": "",
+        },
+    )
+    from heard.tts.kokoro import KokoroTTS
+
+    assert isinstance(daemon.tts, KokoroTTS)
+
+
+def test_selector_skips_managed_when_token_blank(tmp_path, monkeypatch):
+    """Plan field set but no token (shouldn't happen in normal use,
+    but defend against config tampering or partial migration). With
+    no BYOK key either, fall through to Kokoro."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {"heard_token": "", "heard_plan": "trial", "elevenlabs_api_key": ""},
+    )
+    from heard.tts.kokoro import KokoroTTS
+
+    assert isinstance(daemon.tts, KokoroTTS)
+
+
+def test_selector_falls_back_to_byok_when_managed_token_expired(
+    tmp_path, monkeypatch
+):
+    """Day-31 downgrade with a legacy BYOK key on file: use the user's
+    own key rather than going to Kokoro. They paid for an EL account;
+    don't force them to local synth just because their Heard trial
+    ended."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok_was_trial",
+            "heard_plan": "expired",
+            "elevenlabs_api_key": "sk_legacy_byok",
+        },
+    )
+    from heard.tts.elevenlabs import ElevenLabsTTS
+
+    assert isinstance(daemon.tts, ElevenLabsTTS)
+    assert daemon.tts.api_key == "sk_legacy_byok"
+
+
 def test_selector_re_picks_on_config_reload(tmp_path, monkeypatch):
     """When the user pastes their key in onboarding mid-session, the
     next reload should swap the backend without needing a restart."""

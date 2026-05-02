@@ -82,6 +82,23 @@ DEFAULTS: dict[str, Any] = {
     "anthropic_api_key": "",
     "openai_api_key": "",
     "elevenlabs_api_key": "",
+    # Heard token issued by api.heard.dev after email + 6-digit-code
+    # signup. When present, the daemon routes TTS through our managed
+    # proxy instead of asking for an ElevenLabs key. Empty for
+    # legacy BYOK installs and for users who chose the local Kokoro
+    # path during onboarding. Stored plain-text under the
+    # user-only-readable config dir.
+    "heard_token": "",
+    # Plan for the active heard_token, mirrored locally so the menu
+    # bar can render "Trial · 12 days left" without polling the proxy
+    # on every refresh. The daemon refreshes this on token validation.
+    # Values: "trial" | "pro" | "expired" | "" (unknown / never signed up)
+    "heard_plan": "",
+    # Epoch ms when the trial expires. Used by the menu bar countdown
+    # and the day-31 silent downgrade. Ignored when plan == "pro".
+    "heard_trial_expires_at": 0,
+    # Override for local dev / staging — never set in production.
+    "heard_api_base": "https://api.heard.dev",
     # Auto-silence Heard whenever any app starts recording from the mic
     # (Zoom, Meet, Teams, FaceTime, Wispr Flow, Apple Dictation, etc.).
     # Mirrors macOS's orange recording indicator. Set to false to keep
