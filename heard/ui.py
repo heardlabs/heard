@@ -717,7 +717,7 @@ class HeardApp(rumps.App):
                     "Setting up local TTS (~350 MB). First narration plays once it's done.",
                     kind="kokoro_download_start",
                 )
-                tts.ensure_downloaded(progress=False)
+                tts.ensure_downloaded()
                 notify(
                     "Heard — voice model ready",
                     "Local TTS is set up. Your next narration will play instantly.",
