@@ -373,6 +373,14 @@ class Daemon:
     def _voice(self, cfg: dict | None = None, persona: persona_mod.Persona | None = None) -> str:
         cfg = cfg or self.cfg
         persona = persona or self.persona
+        # ElevenLabs aliases / 20-char voice_ids and Kokoro IDs (format
+        # `<accent_gender>_<name>`) live in disjoint namespaces, so the
+        # active backend dictates which field to read. Without this,
+        # Kokoro synth fails with "Voice <eleven_id> not found" on
+        # every persona that ships with an ElevenLabs voice (= all of
+        # them).
+        if type(self.tts).__name__ == "KokoroTTS":
+            return persona.kokoro_voice or cfg.get("kokoro_voice") or "bm_george"
         return persona.voice or cfg["voice"]
 
     def _speak(

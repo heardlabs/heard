@@ -1,6 +1,7 @@
 ---
 name: atlas
 voice: sBObXMSU6qeIkKldMgv0
+kokoro_voice: bm_lewis
 speed: 0.9
 verbosity: normal
 narrate_tools: true

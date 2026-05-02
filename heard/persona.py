@@ -69,6 +69,12 @@ Rules that apply regardless of persona:
 class Persona:
     name: str
     voice: str | None = None
+    # Kokoro voices follow `<accent_gender>_<name>` (bm_george, af_nova,
+    # bf_emma, …) — 54 baked-in voices, none of them ElevenLabs IDs.
+    # When the active backend is Kokoro, the daemon picks this field
+    # in preference to `voice` (which is always an ElevenLabs alias or
+    # 20-char voice_id). Optional — falls back to cfg["kokoro_voice"].
+    kokoro_voice: str | None = None
     address: str = ""
     system_prompt: str = ""
     templates: dict[str, str] = field(default_factory=dict)
@@ -157,6 +163,7 @@ def _persona_from_md(path: Path, name_hint: str) -> Persona:
     return Persona(
         name=str(meta.get("name", name_hint)),
         voice=meta.get("voice"),
+        kokoro_voice=meta.get("kokoro_voice"),
         address=str(meta.get("address", "") or ""),
         system_prompt=body or str(meta.get("system_prompt", "") or ""),
         templates=meta.get("templates") or {},
@@ -169,6 +176,7 @@ def _persona_from_yaml(path: Path, name_hint: str) -> Persona:
     return Persona(
         name=str(data.get("name", name_hint)),
         voice=data.get("voice"),
+        kokoro_voice=data.get("kokoro_voice"),
         address=str(data.get("address", "") or ""),
         system_prompt=str(data.get("system_prompt", "") or ""),
         templates=data.get("templates") or {},

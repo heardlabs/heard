@@ -35,6 +35,12 @@ DEFAULTS: dict[str, Any] = {
     # a 20-char ElevenLabs voice_id. Defaults to George — male British,
     # fits the Jarvis persona.
     "voice": "george",
+    # Kokoro voice ID (54 baked-in voices, format <accent_gender>_<name>).
+    # Used only when the active backend is Kokoro — the persona's
+    # `kokoro_voice` frontmatter wins over this when set. ElevenLabs IDs
+    # don't resolve under Kokoro and vice versa, so the two values are
+    # carried independently.
+    "kokoro_voice": "bm_george",
     "speed": 1.05,
     "lang": "en-us",
     "skip_under_chars": 30,

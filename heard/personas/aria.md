@@ -1,6 +1,7 @@
 ---
 name: aria
 voice: rachel
+kokoro_voice: af_nova
 speed: 1.0
 verbosity: normal
 narrate_tools: true

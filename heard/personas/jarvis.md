@@ -1,6 +1,7 @@
 ---
 name: jarvis
 voice: Fahco4VZzobUeiPqni1S
+kokoro_voice: bm_george
 speed: 0.95
 verbosity: normal
 narrate_tools: true

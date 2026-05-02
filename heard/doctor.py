@@ -192,7 +192,13 @@ def _step_synth() -> bool:
     print("Synth")
     cfg = config.load()
     api_key = (cfg.get("elevenlabs_api_key") or "").strip()
-    voice = cfg.get("voice", "george")
+    # ElevenLabs aliases / 20-char IDs and Kokoro IDs (`<accent_gender>_<name>`)
+    # don't resolve under the other backend, so pick the right field
+    # for whichever backend the daemon is about to instantiate.
+    if api_key:
+        voice = cfg.get("voice", "george")
+    else:
+        voice = cfg.get("kokoro_voice", "bm_george")
     speed = float(cfg.get("speed", 1.0))
     lang = cfg.get("lang", "en-us")
 

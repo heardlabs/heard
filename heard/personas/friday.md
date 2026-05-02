@@ -1,6 +1,7 @@
 ---
 name: friday
 voice: g6xIsTj2HwM6VR4iXFCw
+kokoro_voice: af_bella
 speed: 1.0
 verbosity: normal
 narrate_tools: true
