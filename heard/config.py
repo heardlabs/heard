@@ -118,6 +118,11 @@ DEFAULTS: dict[str, Any] = {
     # Set to True after the user finishes the welcome flow (or skips it),
     # so we never re-prompt them.
     "onboarded": False,
+    # Once a day the daemon hits api.github.com to check for a newer
+    # stable release and posts a one-time notification per version.
+    # Anonymous request, no telemetry. Set False to disable entirely
+    # (`heard config set update_check_enabled false`).
+    "update_check_enabled": True,
 }
 
 

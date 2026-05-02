@@ -66,6 +66,18 @@ class HeardApp(rumps.App):
         self.silence_item = rumps.MenuItem("Silence", callback=self.on_silence)
         self.replay_item = rumps.MenuItem("Replay last", callback=self.on_replay)
 
+        # Update-available callout. Pre-created but not added to the
+        # menu unless the daemon reports a pending update — refresh()
+        # inserts/removes it based on status.pending_update so users
+        # only see the item when it's actionable. We stamp the live
+        # version into the title each refresh, so menu membership has
+        # to be tracked separately from the title (which is the key
+        # rumps uses internally).
+        self.update_item = rumps.MenuItem("Update available", callback=self.on_update_clicked)
+        self._update_item_key = "Update available"
+        self._update_item_mounted = False
+        self._update_url: str | None = None
+
         # Active Sessions submenu. Populated dynamically each refresh
         # from the daemon's router status. Shows up empty (with a
         # "(no agents active)" placeholder) in solo mode; shows each
@@ -257,6 +269,29 @@ class HeardApp(rumps.App):
         silence_hint, replay_hint = self._hotkey_hints(cfg)
         self.silence_item.title = f"Silence  ({silence_hint})"
         self.replay_item.title = f"Replay last  ({replay_hint})"
+
+        # Update-available callout. Mount under the status row when
+        # the daemon's poll has turned up a newer release; remove on
+        # disappearance (user upgraded or disabled checks). Title is
+        # set live so the version the user sees matches whatever the
+        # poller has cached, even if that changes mid-session.
+        pending = (status or {}).get("pending_update")
+        if pending:
+            self._update_url = pending.get("url")
+            self.update_item.title = f"↑ Update to {pending.get('tag', '')} →".rstrip()
+            if not self._update_item_mounted:
+                # Insert directly after the status row (which is the
+                # very first menu entry) so the callout is the first
+                # thing the user sees on opening the menu.
+                self.menu.insert_after(self.status_item.title, self.update_item)
+                self._update_item_mounted = True
+        elif self._update_item_mounted:
+            try:
+                del self.menu[self._update_item_key]
+            except KeyError:
+                pass
+            self._update_item_mounted = False
+            self._update_url = None
 
         # Active Sessions submenu — populated from daemon router state.
         self._refresh_active_sessions(status or {})
@@ -773,6 +808,14 @@ class HeardApp(rumps.App):
 
     def on_github(self, _sender) -> None:
         webbrowser.open("https://github.com/heardlabs/heard")
+
+    def on_update_clicked(self, _sender) -> None:
+        # Captured into self._update_url by refresh(); fall back to
+        # the releases page if the click somehow fires without one
+        # (shouldn't happen — item only mounts when status carries a
+        # url, but defensive defaults keep the click from being a
+        # silent no-op).
+        webbrowser.open(self._update_url or "https://github.com/heardlabs/heard/releases/latest")
 
     def on_quit(self, _sender) -> None:
         rumps.quit_application()

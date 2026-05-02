@@ -24,7 +24,17 @@ import threading
 import time
 from pathlib import Path
 
-from heard import accessibility, audio_monitor, config, history, hotkey, notify, verbosity
+import heard as _heard_pkg
+from heard import (
+    accessibility,
+    audio_monitor,
+    config,
+    history,
+    hotkey,
+    notify,
+    updater,
+    verbosity,
+)
 from heard import multi_agent as multi_agent_mod
 from heard import persona as persona_mod
 from heard.session import SessionStore
@@ -152,7 +162,35 @@ class Daemon:
         self._accessibility_trusted = accessibility.is_trusted()
         self._start_accessibility_watcher()
         self._start_digest_timer()
+        # Latest pending update info so the menu bar can surface a
+        # "Update to vX.Y.Z →" item without polling itself. None until
+        # the updater's first successful check turns up a newer
+        # release. Cleared once the user has actually upgraded (the
+        # version comparison naturally stops returning anything).
+        self.pending_update: updater.UpdateInfo | None = None
+        self._start_update_check()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+
+    def _start_update_check(self) -> None:
+        """Spawn the GitHub-Releases poller. Notification + menu-bar
+        affordance live entirely in this daemon process — the poller
+        itself is logic-only and re-evaluates the config toggle on
+        every tick so users can disable mid-session."""
+
+        def _on_update(info: updater.UpdateInfo) -> None:
+            self.pending_update = info
+            _log("update_available", version=info.version)
+            notify.notify(
+                f"Heard {info.tag} is available",
+                "Open the Heard menu and click 'Update available' to download.",
+                kind="update_available",
+            )
+
+        updater.start_periodic_check(
+            current_version=_heard_pkg.__version__,
+            on_update=_on_update,
+            enabled=lambda: bool(self.cfg.get("update_check_enabled", True)),
+        )
 
     def _start_digest_timer(self) -> None:
         """Periodic background-agent digest. Drains the router's
@@ -843,6 +881,15 @@ class Daemon:
                 # which one is pinned / focus.
                 "active_sessions": self.router.list_active(),
                 "router_mode": self.router.mode().value,
+                "pending_update": (
+                    {
+                        "version": self.pending_update.version,
+                        "tag": self.pending_update.tag,
+                        "url": self.pending_update.url,
+                    }
+                    if self.pending_update is not None
+                    else None
+                ),
             }
             return json.dumps(payload).encode("utf-8")
         if cmd == "pin":
