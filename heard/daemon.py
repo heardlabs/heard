@@ -121,6 +121,13 @@ class Daemon:
         config.ensure_dirs()
         _maybe_rotate_log()
         self.cfg = config.load()
+        # Day-31 silent downgrade: if the trial is over and we still
+        # have plan="trial" cached in config, flip to "expired" before
+        # picking the backend. The server enforces this regardless
+        # (synth would 402), but client-side flip means we pick the
+        # right backend on the very first synth instead of after a
+        # round-trip + 402.
+        self._maybe_expire_trial()
         self.tts = self._make_tts()
         self.sessions = SessionStore()
         # Multi-agent router. Decides per-event whether to speak,
@@ -169,7 +176,69 @@ class Daemon:
         # version comparison naturally stops returning anything).
         self.pending_update: updater.UpdateInfo | None = None
         self._start_update_check()
+        # Pre-fetch the Kokoro model in the last week of trial so the
+        # day-31 silent downgrade doesn't *also* hit users with a
+        # 325 MB download at exactly the wrong moment. Fire-and-forget;
+        # failure is logged but never blocks anything.
+        self._maybe_prefetch_kokoro()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+
+    # Pre-fetch starts when ≤ this many days remain in the trial. Set
+    # below 30 (full trial length) so users who ditch in week 1 don't
+    # eat a 325 MB download for nothing — but well above 0 so the
+    # download has time to complete before the trial actually ends.
+    _KOKORO_PREFETCH_DAYS_REMAINING_THRESHOLD = 23
+
+    def _should_prefetch_kokoro(self, now_ms: int | None = None) -> bool:
+        """Pure decision so tests can pin the gate without spinning a
+        thread. Conditions ALL must hold:
+          - active plan is "trial" (not pro, not expired)
+          - trial_expires_at is set + within the prefetch window
+          - we're not already on KokoroTTS (then there's no point)
+          - the model isn't already downloaded
+        """
+        plan = (self.cfg.get("heard_plan") or "").strip().lower()
+        if plan != "trial":
+            return False
+        expires_at = int(self.cfg.get("heard_trial_expires_at") or 0)
+        if expires_at <= 0:
+            return False
+        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+        days_remaining = (expires_at - now_ms) / (1000 * 60 * 60 * 24)
+        if days_remaining > self._KOKORO_PREFETCH_DAYS_REMAINING_THRESHOLD:
+            return False
+        # Already on Kokoro? Then the model is either downloaded or
+        # we're about to fail-on-first-synth anyway. Either way, no
+        # work for us.
+        if type(self.tts).__name__ == "KokoroTTS":
+            return False
+        # Lazy import — same pattern as _make_tts. Keeps kokoro_onnx
+        # off the import path for users who never need it.
+        from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415
+
+        kokoro = KokoroTTS(config.MODELS_DIR)
+        if kokoro.is_downloaded():
+            return False
+        return True
+
+    def _maybe_prefetch_kokoro(self) -> None:
+        if not self._should_prefetch_kokoro():
+            return
+
+        def _do_download() -> None:
+            try:
+                from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415
+
+                kokoro = KokoroTTS(config.MODELS_DIR)
+                _log("kokoro_prefetch_start")
+                kokoro.ensure_downloaded()
+                _log("kokoro_prefetch_done")
+            except Exception as e:
+                _log("kokoro_prefetch_failed", err=str(e))
+
+        threading.Thread(
+            target=_do_download, daemon=True, name="heard-kokoro-prefetch"
+        ).start()
 
     def _start_update_check(self) -> None:
         """Spawn the GitHub-Releases poller. Notification + menu-bar
@@ -349,6 +418,37 @@ class Daemon:
                 pass
             self._audio_monitor = None
 
+    def _maybe_expire_trial(self) -> None:
+        """Trial-expiry check, run on daemon start + every cfg reload.
+        Mutates ``self.cfg`` and persists when we flip plan; also fires
+        a one-time notification so the user knows why narration just
+        changed voice. No-op for plan="pro" (no expiry) and plan
+        already "expired" (already persisted)."""
+        plan = (self.cfg.get("heard_plan") or "").strip().lower()
+        if plan != "trial":
+            return
+        expires_at = int(self.cfg.get("heard_trial_expires_at") or 0)
+        if expires_at <= 0:
+            return
+        now_ms = int(time.time() * 1000)
+        if now_ms < expires_at:
+            return
+        # Trial elapsed.
+        self.cfg["heard_plan"] = "expired"
+        try:
+            config.set_value("heard_plan", "expired")
+        except Exception as e:
+            _log("trial_expire_persist_failed", err=str(e))
+        _log("trial_expired", expires_at=expires_at)
+        try:
+            notify.notify(
+                "Heard trial ended",
+                "Switched to local voices. Upgrade for cloud voices: heard.dev/pro",
+                kind="trial_expired",
+            )
+        except Exception:
+            pass
+
     def _make_tts(self):
         """Pick a TTS backend based on config, in priority order:
 
@@ -398,11 +498,24 @@ class Daemon:
     def _reload_config(self) -> None:
         old_sig = self._hotkey_signature(self.cfg)
         old_key = self.cfg.get("elevenlabs_api_key", "")
+        old_token = self.cfg.get("heard_token", "")
+        old_plan = self.cfg.get("heard_plan", "")
         old_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
         old_auto_resume = bool(self.cfg.get("auto_resume_on_mic_release", False))
         self.cfg = config.load()
+        # Re-evaluate trial expiry after every reload — the user may
+        # have set the system clock forward, or the trial may have
+        # ended between launch and reload (long-running daemon).
+        self._maybe_expire_trial()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
-        if self.cfg.get("elevenlabs_api_key", "") != old_key:
+        # Re-pick TTS when ANY of the inputs the selector cares about
+        # change: BYOK key, Heard token, or plan (trial → expired
+        # auto-flip is the canonical trigger here).
+        if (
+            self.cfg.get("elevenlabs_api_key", "") != old_key
+            or self.cfg.get("heard_token", "") != old_token
+            or self.cfg.get("heard_plan", "") != old_plan
+        ):
             self.tts = self._make_tts()
         new_sig = self._hotkey_signature(self.cfg)
         if new_sig != old_sig:
