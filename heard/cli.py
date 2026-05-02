@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import subprocess
+from datetime import UTC, datetime
 
 import typer
 
-from heard import client, config, history, onboarding, service
+from heard import client, config, heard_api, history, onboarding, service
 from heard.adapters import ADAPTERS
 from heard.presets import list_bundled as list_presets
 from heard.presets import load as load_preset
@@ -547,6 +548,83 @@ def _improve_done(keep: bool = False) -> None:
             improvements_dir.rmdir()
         except OSError:
             pass
+
+
+@app.command()
+def signup(email: str | None = typer.Option(None, help="Skip the prompt and use this email.")) -> None:
+    """Start a free trial of Heard cloud voices.
+
+    Sends a 6-digit code to your email; paste it back to mint a Heard
+    token. Token + plan are saved to config; the daemon picks them up
+    on its next reload and starts routing TTS through api.heard.dev
+    instead of asking for your own ElevenLabs key.
+
+    Existing users: same flow returns your existing token (Pro plan
+    preserved across reinstalls / new Macs).
+    """
+    if not email:
+        email = typer.prompt("Email").strip()
+    if not email or "@" not in email:
+        typer.echo("Invalid email.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Sending a code to {email}…")
+    try:
+        heard_api.request_code(email)
+    except heard_api.HeardApiError as e:
+        typer.echo(f"Couldn't send code: {e.reason} ({e.status})", err=True)
+        raise typer.Exit(1) from e
+
+    typer.echo("Code sent. Check your inbox (and spam — first send goes via Resend's sandbox).")
+    code = typer.prompt("6-digit code").strip()
+    if not code:
+        typer.echo("No code entered.", err=True)
+        raise typer.Exit(1)
+
+    try:
+        info = heard_api.verify_code(email, code)
+    except heard_api.HeardApiError as e:
+        # Surface the specific reason — wrong_code, code_expired, too_many_attempts
+        # all read better than a generic "verify failed".
+        typer.echo(f"Couldn't verify: {e.reason} ({e.status})", err=True)
+        raise typer.Exit(1) from e
+
+    config.set_value("heard_token", info.token)
+    config.set_value("heard_plan", info.plan)
+    config.set_value("heard_trial_expires_at", info.trial_expires_at)
+
+    if info.returning:
+        typer.echo(f"Welcome back. You're on the {info.plan} plan.")
+    else:
+        if info.plan == "trial" and info.trial_expires_at:
+            expires = datetime.fromtimestamp(
+                info.trial_expires_at / 1000, tz=UTC
+            ).strftime("%Y-%m-%d")
+            typer.echo(f"Trial started. Expires {expires} (UTC).")
+        else:
+            typer.echo(f"Signed in. Plan: {info.plan}.")
+
+    # Best-effort: nudge the daemon to reload so it picks up the new
+    # token without a manual restart. Daemon may not be running yet —
+    # that's fine, it'll read the saved config on next start.
+    try:
+        client.send({"cmd": "reload"})
+    except Exception:
+        pass
+
+
+@app.command(name="signout")
+def signout() -> None:
+    """Forget the saved Heard token. Daemon will fall back to BYOK
+    ElevenLabs key (if set) or local Kokoro on next reload."""
+    config.set_value("heard_token", "")
+    config.set_value("heard_plan", "")
+    config.set_value("heard_trial_expires_at", 0)
+    try:
+        client.send({"cmd": "reload"})
+    except Exception:
+        pass
+    typer.echo("Signed out. Token cleared.")
 
 
 @app.command()
