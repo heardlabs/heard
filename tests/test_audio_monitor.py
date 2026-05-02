@@ -54,7 +54,16 @@ class _FakeCA:
 
 def _drive_monitor(script: list[bool], debounce_polls: int = 0, max_polls: int = 12):
     """Start a monitor with the fake CA, let the script play through,
-    then stop. Returns (callback_fire_count, fake_ca_call_count)."""
+    then stop. Returns (callback_fire_count, fake_ca_call_count).
+
+    Wall-clock budget is generous (5 s, not script-length-derived)
+    because CI runners can stretch a nominal 5 ms poll into 30–50 ms
+    under GIL contention. The earlier `max_polls * 0.01 + 0.1`
+    deadline could expire before the last 1–2 polls happened, making
+    transition-rich scripts (idle→running→idle→running) report fewer
+    fires than they actually produced. We exit the moment the fake
+    runs out of script — the deadline is just an upper bound.
+    """
     fired = []
     fake = _FakeCA(script)
 
@@ -69,11 +78,13 @@ def _drive_monitor(script: list[bool], debounce_polls: int = 0, max_polls: int =
     started = mon.start()
     assert started
 
-    # Let it consume the script. Each poll is ~5 ms; max_polls * 5 ms is
-    # the upper bound; in practice idx hits len(script) and we exit.
-    deadline = time.monotonic() + (max_polls * 0.01) + 0.1
+    deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         if fake.idx >= len(script):
+            # The poll thread may still be inside the iteration that
+            # just bumped idx past len — let any in-flight callback
+            # for that iteration complete before we yank the rug.
+            time.sleep(mon._poll_interval * 5)
             break
         time.sleep(0.005)
     mon.stop()

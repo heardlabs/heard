@@ -81,21 +81,48 @@ def test_queue_serialises_utterances(tmp_path, monkeypatch):
 
 
 def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
-    """Bounded queue: an avalanche of events can't accumulate forever."""
+    """Bounded queue: an avalanche of events can't accumulate forever.
+
+    Pin the worker on the first item via an event so we have a
+    deterministic window to stuff the queue past its cap. Without
+    this gate, the test was racing on whether the worker dequeued
+    'first' before the rest of the loop ran — local CPython usually
+    let the for-loop win, CI sometimes let the worker win, and the
+    cap was never actually exercised on the runs where the worker
+    won.
+    """
     daemon = _make_daemon(tmp_path, monkeypatch)
 
+    started_first = threading.Event()
+    proceed_first = threading.Event()
     spoken: list[str] = []
+    spoken_lock = threading.Lock()
 
     def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
-        time.sleep(0.05)
-        spoken.append(text)
+        if text == "first":
+            started_first.set()
+            proceed_first.wait(timeout=2.0)
+        with spoken_lock:
+            spoken.append(text)
 
     daemon._speak = fake_speak  # type: ignore[method-assign]
 
-    # Stuff the queue while no worker is draining yet — first call
-    # starts the worker, but it'll be busy on "a" while we pile on.
-    for letter in ("a", "b", "c", "d", "e", "f"):
+    # Worker dequeues "first" and blocks on the gate. From here, every
+    # subsequent _start_speech enqueues into a queue we know nobody is
+    # draining, so the cap behaviour is observable.
+    daemon._start_speech("first")
+    assert started_first.wait(timeout=1.0), "worker never picked up 'first'"
+
+    cap = daemon._queue_max
+    # Fill exactly to cap, then push one more — that's the eviction.
+    fill = [f"q{i}" for i in range(cap)]
+    overflow = "overflow"
+    for letter in fill:
         daemon._start_speech(letter)
+    daemon._start_speech(overflow)
+
+    # Release the worker so the queue drains.
+    proceed_first.set()
 
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
@@ -106,13 +133,16 @@ def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
                 break
         time.sleep(0.02)
 
-    # We don't assert exact ordering — the worker may or may not
-    # have grabbed "a" before the cap kicked in, depending on thread
-    # scheduling. What we DO assert: the cap held (never more than
-    # queue_max items played), and we kept the most recent ones.
-    assert len(spoken) <= daemon._queue_max
-    assert "f" in spoken  # newest must survive
-    assert "a" not in spoken  # oldest must be dropped under pressure
+    # "first" was already in flight when the cap kicked in — it
+    # completes regardless of queue state. The eviction policy drops
+    # the OLDEST queued item to make room for "overflow", so the
+    # first item we tried to enqueue (q0) must be the one that
+    # disappears, and the overflow item must survive.
+    assert "first" in spoken, "in-flight item must complete"
+    assert overflow in spoken, "newest enqueue must survive eviction"
+    assert fill[0] not in spoken, "oldest queued item must be evicted under pressure"
+    # Total played: in-flight + remaining 5 of {q1..q4, overflow}.
+    assert len(spoken) == 1 + cap, f"expected {1 + cap} played, got {len(spoken)}: {spoken}"
 
 
 def test_last_spoken_stamps_after_speak_not_enqueue(tmp_path, monkeypatch):
