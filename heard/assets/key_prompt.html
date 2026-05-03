@@ -221,6 +221,22 @@
 
   /* Inline links inside copy — used on screen 2 for "use local
      voices" / "wrong email?" / similar text-button affordances. */
+  /* Secondary actions row — below the code input, above the footer.
+     Hosts "Resend code" + "Try another way" so a stuck user has an
+     out without bailing on the whole sign-in. */
+  .secondary-actions {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--ink-faint);
+    margin: 8px 0 0;
+  }
+  .secondary-actions .dot-sep { opacity: 0.55; }
+  .inline-link.disabled {
+    pointer-events: none;
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   .inline-link {
     color: var(--ink);
     text-decoration: underline;
@@ -509,7 +525,7 @@
           <h1>Check your email.</h1>
           <p>
             We sent a 6-digit code to <span class="em" id="trial-email-echo"></span>.
-            It expires in 10 minutes.
+            It expires in 10 minutes — check spam if it doesn't arrive.
             <a href="#" class="inline-link" onclick="trialBackToEmail(); return false;">Wrong email?</a>
           </p>
 
@@ -519,6 +535,13 @@
             </span>
             <input id="trial-code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="123456" autocomplete="one-time-code" spellcheck="false" tabindex="0" />
           </label>
+
+          <div class="secondary-actions">
+            <span>Didn't get it?</span>
+            <a href="#" class="inline-link" id="trial-resend" onclick="trialResend(); return false;">Resend code</a>
+            <span class="dot-sep">·</span>
+            <a href="#" class="inline-link" onclick="signinBackToChoose(); return false;">Try another way</a>
+          </div>
 
           <div class="footer">
             <div class="legal" id="trial-code-legal">&nbsp;</div>
@@ -783,6 +806,9 @@
           trial.email = email;
           document.getElementById('trial-email-echo').textContent = email;
           showSubstate('code');
+          // Cool down the Resend link so the user can't double-fire
+          // immediately after the first send lands.
+          startResendCooldown(30);
           return;
         }
         var reason = (r.body && r.body.error) || ('http_' + r.status);
@@ -798,6 +824,64 @@
         btn.disabled = false;
         trialSetLegalError('email', "No network. Use local voices for now and try again later.");
       });
+  }
+
+  // ── Resend code (with cooldown) ──────────────────────────────
+  // Most "I never got an email" cases are slow Resend delivery, a
+  // user-side spam filter, or transient Gmail throttling. The retry
+  // usually lands. Cap at one resend per 30 s so a frustrated user
+  // can't hammer the queue.
+
+  function trialResend() {
+    if (!trial.email) return;
+    var link = document.getElementById('trial-resend');
+    if (!link || link.classList.contains('disabled')) return;
+    link.classList.add('disabled');
+    link.textContent = 'Sending…';
+    trialClearLegalError('code');
+
+    fetch(API_BASE + '/v1/auth/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ email: trial.email }),
+    })
+      .then(function (resp) {
+        return resp.json().catch(function () { return {}; }).then(function (body) {
+          return { status: resp.status, body: body };
+        });
+      })
+      .then(function (r) {
+        if (r.status >= 200 && r.status < 300 && r.body && r.body.ok) {
+          startResendCooldown(30);
+          return;
+        }
+        link.classList.remove('disabled');
+        link.textContent = 'Resend code';
+        var reason = (r.body && r.body.error) || ('http_' + r.status);
+        trialSetLegalError('code', "Couldn't resend (" + reason + ").");
+      })
+      .catch(function () {
+        link.classList.remove('disabled');
+        link.textContent = 'Resend code';
+        trialSetLegalError('code', "No network. Check your connection.");
+      });
+  }
+
+  function startResendCooldown(seconds) {
+    var link = document.getElementById('trial-resend');
+    if (!link) return;
+    link.classList.add('disabled');
+    function tick() {
+      if (seconds <= 0) {
+        link.classList.remove('disabled');
+        link.textContent = 'Resend code';
+        return;
+      }
+      link.textContent = 'Resend in ' + seconds + 's';
+      seconds--;
+      setTimeout(tick, 1000);
+    }
+    tick();
   }
 
   function trialVerify() {
