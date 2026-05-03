@@ -30,7 +30,7 @@ from AppKit import (
     NSWindow,
     NSWindowStyleMaskBorderless,
 )
-from Foundation import NSTimer
+from Foundation import NSRunLoop, NSTimer
 from WebKit import (
     WKUserContentController,
     WKWebView,
@@ -44,6 +44,13 @@ from heard import accessibility
 #   15 = FullScreenUI     translucent, balanced
 #   21 = UnderWindowBackground   most see-through
 _VIBRANCY_MATERIAL = 21
+
+# NSTimer scheduled via the convenience class methods lands in the
+# default mode only — which doesn't fire while NSApp.runModalForWindow
+# is pumping. Add timers explicitly to NSRunLoopCommonModes so they
+# tick during modal sessions too. Constant import is unreliable from
+# PyObjC, so use the literal.
+_NS_RUNLOOP_COMMON_MODES = "kCFRunLoopCommonModes"
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 HTML_PATH = ASSETS_DIR / "key_prompt.html"
@@ -104,7 +111,11 @@ def _start_accessibility_poll(webview, state: dict) -> None:
     Settings; we have no direct callback for the toggle, so we poll.
 
     On grant: call window.heardSetAccessibility(true) in JS to flip the
-    UI to the green "Enabled" state. Stop after 60 s either way."""
+    UI to the green "Enabled" state. Stop after 60 s either way.
+
+    Timer must be installed in common-modes — NSApp.runModalForWindow
+    pumps NSModalPanelRunLoopMode, and a default-mode-only timer never
+    ticks while the onboarding window is up."""
     if state.get("ax_polling"):
         return
     state["ax_polling"] = True
@@ -132,7 +143,8 @@ def _start_accessibility_poll(webview, state: dict) -> None:
             _timer.invalidate()
             state["ax_polling"] = False
 
-    NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.5, True, _tick)
+    timer = NSTimer.timerWithTimeInterval_repeats_block_(0.5, True, _tick)
+    NSRunLoop.currentRunLoop().addTimer_forMode_(timer, _NS_RUNLOOP_COMMON_MODES)
 
 
 class _KeyableWindow(NSWindow):

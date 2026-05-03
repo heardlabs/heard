@@ -645,15 +645,19 @@ class HeardApp(rumps.App):
                         file=sys.stderr,
                     )
 
-        # Restart the hotkey listener so it picks up any Accessibility
-        # grant the user made via screen 3's in-flow button. If the user
-        # skipped the in-flow grant, ensure_trusted(prompt=True) inside
-        # the handler is a no-op when already trusted and a fallback
-        # dialog otherwise — either way, safe.
-        try:
-            client.send({"cmd": "request_accessibility"})
-        except Exception:
-            pass
+        # Only fire the deferred Accessibility request when the user
+        # didn't grant via screen 3's in-flow button. macOS has a brief
+        # TCC propagation window after a fresh grant — calling
+        # ensure_trusted(prompt=True) inside that window can re-fire
+        # the system dialog (annoying after the user just finished it).
+        # When already trusted, the daemon's accessibility_watcher (5 s
+        # poll) restarts the hotkey listener on its own.
+        from heard import accessibility
+        if not accessibility.is_trusted():
+            try:
+                client.send({"cmd": "request_accessibility"})
+            except Exception:
+                pass
 
         # Voice-path nudges — three branches:
         #   - Heard token minted in the trial flow → cloud voices

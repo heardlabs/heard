@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-__version__ = "0.5.3"
+__version__ = "0.5.4"
 
 # The frozen Python inside Heard.app has no system CA path, so any
 # HTTPS call (urllib voice download, anthropic SDK, elevenlabs SDK)

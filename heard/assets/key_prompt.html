@@ -213,11 +213,10 @@
     display: inline-flex; align-items: center; justify-content: center;
     flex-shrink: 0;
     transition: transform 0.15s ease, opacity 0.15s ease;
-    box-shadow: 0 6px 18px rgba(40, 20, 30, 0.25);
   }
-  .next:hover { opacity: 0.9; }
-  .next:active { transform: scale(0.95); }
-  .next:disabled { opacity: 0.45; cursor: progress; }
+  .next:hover:not(:disabled) { opacity: 0.9; }
+  .next:active:not(:disabled) { transform: scale(0.95); }
+  .next:disabled { opacity: 0.45; cursor: not-allowed; }
   .next svg { width: 16px; height: 16px; }
 
   /* Inline links inside copy — used on screen 2 for "use local
@@ -617,7 +616,7 @@
 
         <div class="footer">
           <div class="legal">&nbsp;</div>
-          <button class="next" onclick="goto(4)" aria-label="Continue">
+          <button class="next" id="screen-3-next" onclick="goto(4)" aria-label="Continue" disabled>
             <svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h8M8 4l4 4-4 4"/></svg>
           </button>
         </div>
@@ -895,6 +894,9 @@
     var ok = document.getElementById('ax-granted');
     if (pending) pending.style.display = 'none';
     if (ok) ok.style.display = 'flex';
+    // Enforce: can't advance past screen 3 without a working hotkey.
+    var nextBtn = document.getElementById('screen-3-next');
+    if (nextBtn) nextBtn.disabled = false;
   };
 
   // Initial state — Python injects "true"/"false" before load.
@@ -939,6 +941,12 @@
         }
         // choose / soon: nothing to submit. Let the keypress fall through.
         return;
+      }
+      if (current === 3) {
+        // Screen 3 requires Accessibility before advancing — ignore
+        // Enter until the badge has flipped to "Enabled".
+        var nextBtn = document.getElementById('screen-3-next');
+        if (nextBtn && nextBtn.disabled) { e.preventDefault(); return; }
       }
       if (current < TOTAL_STEPS) { e.preventDefault(); goto(current + 1); }
       else { e.preventDefault(); finish(); }
