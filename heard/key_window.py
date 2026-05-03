@@ -224,12 +224,22 @@ def prompt() -> dict[str, Any]:
             return
 
         # In-flow accessibility grant: fired by screen 3's "Grant access"
-        # button. Trigger the system dialog inline (instead of after the
-        # modal closes), then poll is_trusted() and signal the webview
-        # once the user toggles us on in System Settings.
+        # button. Avoid the system AX dialog (it pops BEHIND our floating
+        # modal — invisible to the user) and instead open System
+        # Settings directly to the Accessibility pane, then poll
+        # is_trusted() until the user toggles us on. is_trusted() with
+        # prompt=False still registers Heard in the AX list, so the
+        # System Settings page already shows our entry.
         if action == "request_accessibility":
             try:
-                accessibility.ensure_trusted(prompt=True)
+                accessibility.is_trusted()  # registers Heard in the list
+            except Exception:
+                pass
+            try:
+                subprocess.Popen([
+                    "open",
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                ])
             except Exception:
                 pass
             wv = state.get("webview")
