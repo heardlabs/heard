@@ -604,10 +604,28 @@ class HeardApp(rumps.App):
                 # Ambiguous — assume Anthropic since that's the primary path
                 config.set_value("anthropic_api_key", llm)
 
-        # ElevenLabs key — stored verbatim; activates when ElevenLabs ships
+        # ElevenLabs key — stored verbatim; activates when ElevenLabs ships.
+        # Onboarding no longer asks for this directly (Set API key… in
+        # Options does), but keep the read in case the field reappears.
         eleven = (result.get("elevenlabs") or "").strip()
         if eleven:
             config.set_value("elevenlabs_api_key", eleven)
+
+        # Trial-signup payload from screen 2's state machine. Empty
+        # means user opted into local voices; leave existing config
+        # untouched so a returning user who skipped this time keeps
+        # whatever they had.
+        heard_token = (result.get("heard_token") or "").strip()
+        if heard_token:
+            config.set_value("heard_token", heard_token)
+            config.set_value("heard_plan", (result.get("heard_plan") or "trial").strip())
+            try:
+                config.set_value(
+                    "heard_trial_expires_at",
+                    int(result.get("heard_trial_expires_at") or 0),
+                )
+            except (TypeError, ValueError):
+                config.set_value("heard_trial_expires_at", 0)
 
         # Agent hooks — install for each agent the user checked in step 4.
         # We catch per-agent so a single failure doesn't abort the rest.
@@ -637,27 +655,30 @@ class HeardApp(rumps.App):
         except Exception:
             pass
 
-        # Free-tier path: no ElevenLabs key. Surface a one-time
-        # notification pointing the user at the Options menu where
-        # they can explicitly opt into the local model — we don't
-        # silently spend 350 MB of their disk on something they may
-        # never use (e.g. they're planning to paste an EL key later).
-        if not eleven:
+        # Voice-path nudges — three branches:
+        #   - Heard token minted in the trial flow → cloud voices
+        #     are the default. Self-test will run on first synth via
+        #     the proxy; no notification needed (they just signed
+        #     up, the success screen already confirmed it).
+        #   - Legacy: ElevenLabs key pasted directly → run the
+        #     synth self-test so a typo'd key surfaces NOW instead
+        #     of on the user's first CC tool call (silent fail).
+        #   - Neither → user opted into local voices. Surface a
+        #     one-time notification pointing at the Options menu so
+        #     they can grab the Kokoro model on their schedule.
+        if heard_token:
+            pass
+        elif eleven:
+            self._self_test_async()
+        else:
             from heard.notify import notify
 
             notify(
                 "Heard — pick a voice path",
-                "Paste an ElevenLabs key in the menu, or Options → Download voice model "
-                "to set up the local model (~350 MB).",
+                "Use local voices via Options → Download voice model (~350 MB), "
+                "or paste an ElevenLabs key in Options → Set API key.",
                 kind="onboarding_voice_choice",
             )
-        else:
-            # User pasted an ElevenLabs key. Self-test the synth path
-            # in the background so a typo'd key surfaces NOW (with a
-            # specific notification) instead of on the user's first
-            # CC tool call (where it just looks like Heard is
-            # silent for no reason).
-            self._self_test_async()
 
     def _self_test_async(self) -> None:
         """Background pipeline check after onboarding. We do a single

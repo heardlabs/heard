@@ -39,6 +39,7 @@ from heard import multi_agent as multi_agent_mod
 from heard import persona as persona_mod
 from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
+from heard.tts.managed import ManagedError
 
 DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # Rotate the daemon log when it crosses this size. Heard runs for
@@ -630,6 +631,48 @@ class Daemon:
                 e = synth_result["err"]
             else:
                 e = None
+            if isinstance(e, ManagedError):
+                # Server-side entitlement signal. 402 fires for trial
+                # expiry AND Pro cancellation (subscription.deleted)
+                # — same code path either way: flip local plan to
+                # "expired", re-pick TTS so the next utterance goes
+                # through whatever backend the selector picks (BYOK
+                # or Kokoro), notify the user once.
+                if e.status == 402:
+                    self.cfg["heard_plan"] = "expired"
+                    try:
+                        config.set_value("heard_plan", "expired")
+                    except Exception:
+                        pass
+                    self.tts = self._make_tts()
+                    _log("plan_expired_by_server", backend=type(self.tts).__name__)
+                    notify.notify(
+                        "Heard cloud voices ended",
+                        "Your plan ended. Switched to local voices. Open Heard to upgrade.",
+                        kind="cloud_expired",
+                    )
+                elif e.status == 429:
+                    notify.notify(
+                        "Heard daily limit reached",
+                        "Cloud voices come back tomorrow.",
+                        kind="cloud_daily_cap",
+                    )
+                elif e.status == 401:
+                    notify.notify(
+                        "Heard sign-in expired",
+                        "Run `heard signup` in your terminal to sign in again.",
+                        kind="cloud_token_unknown",
+                    )
+                else:
+                    notify.notify(
+                        "Heard cloud voices unreachable",
+                        "Open Heard from the menu and paste your own ElevenLabs key, or use local voices.",
+                        kind="cloud_unreachable",
+                    )
+                self._record_error("managed", str(e))
+                _log("synth_failed", backend=type(self.tts).__name__, err=str(e))
+                path.unlink(missing_ok=True)
+                continue
             if isinstance(e, ElevenLabsError):
                 msg = str(e)
                 # PRD §13: when ElevenLabs is unreachable AND the user

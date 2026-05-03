@@ -88,6 +88,23 @@ def _post_json(
         raise HeardApiError(0, "network_unreachable", str(e)) from e
 
 
+def request_anonymous_trial(base_url: str = DEFAULT_BASE_URL) -> TokenInfo:
+    """Mint an anonymous 30-day trial token from the proxy. No email,
+    no signup — used by the daemon on first launch so cloud voices
+    work out of the box. Server-side per-IP rate limit caps abuse."""
+    payload = _post_json(f"{base_url.rstrip('/')}/v1/auth/anonymous", {})
+    token = (payload.get("token") or "").strip()
+    if not token:
+        raise HeardApiError(500, "missing_token", json.dumps(payload)[:200])
+    return TokenInfo(
+        token=token,
+        plan=str(payload.get("plan") or "trial"),
+        email="",
+        trial_expires_at=int(payload.get("trial_expires_at") or 0),
+        returning=False,
+    )
+
+
 def request_code(email: str, base_url: str = DEFAULT_BASE_URL) -> None:
     """Trigger a 6-digit code email. Raises ``HeardApiError`` on
     invalid email, send failure, or network issue."""

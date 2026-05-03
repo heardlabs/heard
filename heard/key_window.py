@@ -147,6 +147,14 @@ def prompt() -> dict[str, Any]:
         "llm": "",
         "elevenlabs": "",
         "agents": [],
+        # Trial-signup fields populated by screen 2's JS state machine
+        # on a successful /v1/auth/verify call. Empty means user
+        # skipped the trial (chose local voices) or never reached
+        # screen 2 — caller should leave existing config untouched.
+        "heard_token": "",
+        "heard_plan": "",
+        "heard_email": "",
+        "heard_trial_expires_at": 0,
     }
     state: dict[str, Any] = {"window": None, "stopped": False}
 
@@ -169,6 +177,13 @@ def prompt() -> dict[str, Any]:
         result["elevenlabs"] = (payload.get("elevenlabs") or "").strip()
         agents_raw = (payload.get("agents") or "").strip()
         result["agents"] = [a.strip() for a in agents_raw.split(",") if a.strip()] if agents_raw else []
+        result["heard_token"] = (payload.get("heard_token") or "").strip()
+        result["heard_plan"] = (payload.get("heard_plan") or "").strip()
+        result["heard_email"] = (payload.get("heard_email") or "").strip()
+        try:
+            result["heard_trial_expires_at"] = int(payload.get("heard_trial_expires_at") or 0)
+        except (TypeError, ValueError):
+            result["heard_trial_expires_at"] = 0
         win = state.get("window")
         if win is not None and not state["stopped"]:
             state["stopped"] = True
