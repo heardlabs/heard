@@ -94,14 +94,6 @@ jobs:
 
             macOS will ask once for Accessibility access — click Allow.
 
-            ### Try without installing
-
-            ```bash
-            heard demo
-            ```
-
-            Plays a scripted ~20-second exchange so you can hear the voice + persona before wiring up any agent.
-
             ### CLI alternative
 
             ```bash

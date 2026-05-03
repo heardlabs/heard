@@ -27,24 +27,6 @@ def say(text: str) -> None:
 
 
 @app.command()
-def demo() -> None:
-    """Play a scripted ~20-second exchange so you can hear Heard before
-    installing the Claude Code hook. Uses your current persona + voice."""
-    from heard import demo as demo_mod
-
-    if not client.ensure_daemon():
-        typer.echo(
-            "Heard daemon couldn't start. Run `heard doctor` for details.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    typer.echo("Heard demo — speaking now (Ctrl+C to stop).")
-    sent = demo_mod.run_demo(sender=client.send_event)
-    typer.echo(f"Done. Played {sent} lines.")
-
-
-@app.command()
 def voices(
     all_: bool = typer.Option(
         False,

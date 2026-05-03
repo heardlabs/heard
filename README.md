@@ -35,8 +35,6 @@
 
 https://github.com/user-attachments/assets/d823a946-fb6f-438b-904f-aa66d4268ed1
 
-> Or run `heard demo` after install for a ~20-second preview of your current voice + persona.
-
 ## Install
 
 Bring an [ElevenLabs](https://elevenlabs.io) key for the best voices, or use **Kokoro** — free, local, no key.
@@ -56,7 +54,6 @@ Download the latest [`Heard.zip`](https://github.com/heardlabs/heard/releases/la
 ```bash
 pipx install heard           # or: uv tool install heard
 heard install claude-code    # wires the hook
-heard demo                   # ~15s preview
 ```
 
 ## What it does
