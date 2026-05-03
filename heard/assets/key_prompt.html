@@ -863,6 +863,10 @@
   // window.heardSetAccessibility(true) when the user toggles us on
   // in System Settings — no JS-side polling required.
 
+  // Tracks the JS-side timeout that resets "Waiting…" back to "Grant
+  // access" if the user dismisses the macOS dialog. Cleared on success.
+  var _axResetTimer = null;
+
   function requestAccessibility() {
     var btn = document.getElementById('ax-grant-btn');
     if (btn) {
@@ -870,10 +874,23 @@
       btn.textContent = 'Waiting…';
     }
     post('request_accessibility', {});
+    if (_axResetTimer) clearTimeout(_axResetTimer);
+    // Match Python's 60 s poll budget — once the poll stops, no callback
+    // is ever coming, so flip the button back so the user can retry.
+    _axResetTimer = setTimeout(function () {
+      var b = document.getElementById('ax-grant-btn');
+      if (!b) return;
+      // Don't clobber the success state if it landed in the meantime.
+      var ok = document.getElementById('ax-granted');
+      if (ok && ok.style.display !== 'none') return;
+      b.disabled = false;
+      b.textContent = 'Grant access';
+    }, 60000);
   }
 
   window.heardSetAccessibility = function (granted) {
     if (!granted) return;
+    if (_axResetTimer) { clearTimeout(_axResetTimer); _axResetTimer = null; }
     var pending = document.getElementById('ax-pending');
     var ok = document.getElementById('ax-granted');
     if (pending) pending.style.display = 'none';
