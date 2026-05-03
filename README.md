@@ -33,7 +33,9 @@
 
 ## See and hear it run
 
-https://github.com/heardlabs/heard/releases/download/demo-v1/heard-final-demo.mp4
+<p align="center">
+  <video src="https://github.com/heardlabs/heard/releases/download/demo-v1/heard-final-demo.mp4" controls width="720"></video>
+</p>
 
 > Or run `heard demo` after install for a ~20-second preview of your current voice + persona.
 
