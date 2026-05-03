@@ -33,9 +33,9 @@
 
 ## See and hear it run
 
-<!-- TODO: render a 20-30s screen recording (Claude Code session with Heard narrating, audio on) and drop it at docs/assets/heard-demo.mp4. GitHub renders <video> tags with a relative src inline. Replace the placeholder block below when ready. -->
+https://github.com/heardlabs/heard/releases/download/demo-v1/heard-final-demo.mp4
 
-> **Demo video coming soon.** Run `heard demo` after install for a 15-second preview of the current voice + persona.
+> Or run `heard demo` after install for a ~20-second preview of your current voice + persona.
 
 ## Install
 
