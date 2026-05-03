@@ -339,6 +339,36 @@
     display: flex; flex-direction: column; align-items: center;
     gap: 6px; margin: 8px 0 4px;
   }
+
+  /* Accessibility request — in-flow button or success badge.
+     Replaces the prior passive note ("macOS will ask…") so the
+     system dialog only fires on explicit click. */
+  .ax-block { margin: 6px 0 4px; }
+  .ax-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; padding: 10px 14px; border-radius: 10px;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    font-size: 12.5px; color: var(--ink-dim);
+  }
+  .ax-row.granted {
+    background: rgba(120, 180, 120, 0.18);
+    border-color: rgba(70, 140, 70, 0.3);
+    color: #2a5a2a;
+    justify-content: center;
+    gap: 8px;
+  }
+  .ax-row.granted svg { width: 14px; height: 14px; }
+  .ax-text { flex: 1; line-height: 1.4; }
+  .ax-grant {
+    padding: 7px 14px; border-radius: 8px; border: none;
+    background: var(--accent); color: white;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s ease;
+  }
+  .ax-grant:hover { opacity: 0.9; }
+  .ax-grant:disabled { opacity: 0.55; cursor: progress; }
   .keycap.large {
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     font-size: 22px;
@@ -574,10 +604,16 @@
           <span class="keycap-label">right option</span>
         </div>
 
-        <p>
-          macOS will ask once for Accessibility access —
-          <span class="em">click Allow</span>.
-        </p>
+        <div class="ax-block">
+          <div class="ax-row" id="ax-pending">
+            <span class="ax-text">macOS needs Accessibility access so the hotkey can be heard.</span>
+            <button class="ax-grant" id="ax-grant-btn" onclick="requestAccessibility()">Grant access</button>
+          </div>
+          <div class="ax-row granted" id="ax-granted" style="display: none">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3.5 3.5L13 5"/></svg>
+            <span>Accessibility enabled</span>
+          </div>
+        </div>
 
         <div class="footer">
           <div class="legal">&nbsp;</div>
@@ -818,6 +854,35 @@
         btn.disabled = false;
         trialSetLegalError('code', "No network. Try again or skip.");
       });
+  }
+
+  // ── Accessibility (screen 3) ───────────────────────────────────
+  // The macOS Accessibility dialog is fired on explicit button click
+  // (not at modal load) so users see exactly what the click does.
+  // Python polls is_trusted() after the click and calls
+  // window.heardSetAccessibility(true) when the user toggles us on
+  // in System Settings — no JS-side polling required.
+
+  function requestAccessibility() {
+    var btn = document.getElementById('ax-grant-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Waiting…';
+    }
+    post('request_accessibility', {});
+  }
+
+  window.heardSetAccessibility = function (granted) {
+    if (!granted) return;
+    var pending = document.getElementById('ax-pending');
+    var ok = document.getElementById('ax-granted');
+    if (pending) pending.style.display = 'none';
+    if (ok) ok.style.display = 'flex';
+  };
+
+  // Initial state — Python injects "true"/"false" before load.
+  if ({{ACCESSIBILITY_GRANTED}}) {
+    window.heardSetAccessibility(true);
   }
 
   // ── Final submit ───────────────────────────────────────────────

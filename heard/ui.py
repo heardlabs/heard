@@ -645,11 +645,11 @@ class HeardApp(rumps.App):
                         file=sys.stderr,
                     )
 
-        # Now — and only now — fire the macOS Accessibility permission
-        # dialog. Deferred from daemon spawn so the system prompt doesn't
-        # appear behind the onboarding card. Screen 3 of onboarding
-        # promised "macOS will ask once for Accessibility access — click
-        # Allow," so this is the moment the user is expecting it.
+        # Restart the hotkey listener so it picks up any Accessibility
+        # grant the user made via screen 3's in-flow button. If the user
+        # skipped the in-flow grant, ensure_trusted(prompt=True) inside
+        # the handler is a no-op when already trusted and a fallback
+        # dialog otherwise — either way, safe.
         try:
             client.send({"cmd": "request_accessibility"})
         except Exception:

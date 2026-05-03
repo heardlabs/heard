@@ -37,6 +37,8 @@ from WebKit import (
     WKWebViewConfiguration,
 )
 
+from heard import accessibility
+
 # NSVisualEffectMaterial constants (raw — PyObjC's enum import is flaky):
 #   13 = HUDWindow        very translucent, system HUDs
 #   15 = FullScreenUI     translucent, balanced
@@ -94,6 +96,43 @@ def _total_system_memory_gb() -> float | None:
         return int(out) / (1024 ** 3)
     except Exception:
         return None
+
+
+def _start_accessibility_poll(webview, state: dict) -> None:
+    """Poll accessibility.is_trusted() every 0.5 s after the user clicks
+    the in-flow Grant button. The macOS dialog hands off to System
+    Settings; we have no direct callback for the toggle, so we poll.
+
+    On grant: call window.heardSetAccessibility(true) in JS to flip the
+    UI to the green "Enabled" state. Stop after 60 s either way."""
+    if state.get("ax_polling"):
+        return
+    state["ax_polling"] = True
+    counter = {"n": 0}
+
+    def _tick(_timer):
+        counter["n"] += 1
+        try:
+            granted = accessibility.is_trusted()
+        except Exception:
+            granted = False
+        if granted:
+            try:
+                webview.evaluateJavaScript_completionHandler_(
+                    "if (window.heardSetAccessibility) "
+                    "window.heardSetAccessibility(true);",
+                    None,
+                )
+            except Exception:
+                pass
+            _timer.invalidate()
+            state["ax_polling"] = False
+            return
+        if counter["n"] >= 120:  # ~60 s
+            _timer.invalidate()
+            state["ax_polling"] = False
+
+    NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.5, True, _tick)
 
 
 class _KeyableWindow(NSWindow):
@@ -172,6 +211,20 @@ def prompt() -> dict[str, Any]:
                         pass
             return
 
+        # In-flow accessibility grant: fired by screen 3's "Grant access"
+        # button. Trigger the system dialog inline (instead of after the
+        # modal closes), then poll is_trusted() and signal the webview
+        # once the user toggles us on in System Settings.
+        if action == "request_accessibility":
+            try:
+                accessibility.ensure_trusted(prompt=True)
+            except Exception:
+                pass
+            wv = state.get("webview")
+            if wv is not None:
+                _start_accessibility_poll(wv, state)
+            return
+
         result["action"] = action
         result["llm"] = (payload.get("llm") or "").strip()
         result["elevenlabs"] = (payload.get("elevenlabs") or "").strip()
@@ -236,6 +289,7 @@ def prompt() -> dict[str, Any]:
 
     webview = WKWebView.alloc().initWithFrame_configuration_(rect, config)
     webview.setValue_forKey_(False, "drawsBackground")  # transparent webview
+    state["webview"] = webview
 
     if HTML_PATH.exists():
         html = HTML_PATH.read_text(encoding="utf-8")
@@ -254,6 +308,12 @@ def prompt() -> dict[str, Any]:
     ).replace(
         "{{LOW_RAM_GB}}",
         f"{ram_gb:.0f}" if ram_gb is not None else "",
+    ).replace(
+        # Screen 3 starts in green "Enabled" state when the user has
+        # already trusted Heard from a prior install or via System
+        # Settings before reaching this screen.
+        "{{ACCESSIBILITY_GRANTED}}",
+        "true" if accessibility.is_trusted() else "false",
     )
 
     webview.loadHTMLString_baseURL_(html, None)
