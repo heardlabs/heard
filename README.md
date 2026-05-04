@@ -32,7 +32,7 @@
 <br/>
 
 ## See and hear it run
-
+Don't forget to turn sound on:
 https://github.com/user-attachments/assets/d823a946-fb6f-438b-904f-aa66d4268ed1
 
 ## Install
