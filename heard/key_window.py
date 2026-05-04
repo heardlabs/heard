@@ -30,7 +30,7 @@ from AppKit import (
     NSWindow,
     NSWindowStyleMaskBorderless,
 )
-from Foundation import NSRunLoop, NSTimer
+from Foundation import NSOperationQueue, NSTimer
 from WebKit import (
     WKUserContentController,
     WKWebView,
@@ -45,12 +45,6 @@ from heard import accessibility
 #   21 = UnderWindowBackground   most see-through
 _VIBRANCY_MATERIAL = 21
 
-# NSTimer scheduled via the convenience class methods lands in the
-# default mode only — which doesn't fire while NSApp.runModalForWindow
-# is pumping. Add timers explicitly to NSRunLoopCommonModes so they
-# tick during modal sessions too. Constant import is unreliable from
-# PyObjC, so use the literal.
-_NS_RUNLOOP_COMMON_MODES = "kCFRunLoopCommonModes"
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 HTML_PATH = ASSETS_DIR / "key_prompt.html"
@@ -107,44 +101,59 @@ def _total_system_memory_gb() -> float | None:
 
 def _start_accessibility_poll(webview, state: dict) -> None:
     """Poll accessibility.is_trusted() every 0.5 s after the user clicks
-    the in-flow Grant button. The macOS dialog hands off to System
-    Settings; we have no direct callback for the toggle, so we poll.
+    the in-flow Grant button. NSTimer in PyObjC has been unreliable
+    inside NSApp.runModalForWindow_ — the timer object is retained but
+    the block fires inconsistently or not at all. Use a Python
+    threading.Thread instead and dispatch the JS callback back onto the
+    main thread via NSOperationQueue.mainQueue(), which bypasses the
+    runloop-mode quirk entirely.
 
     On grant: call window.heardSetAccessibility(true) in JS to flip the
-    UI to the green "Enabled" state. Stop after 60 s either way.
-
-    Timer must be installed in common-modes — NSApp.runModalForWindow
-    pumps NSModalPanelRunLoopMode, and a default-mode-only timer never
-    ticks while the onboarding window is up."""
+    UI to the green "Enabled" state. Stop after 60 s either way."""
     if state.get("ax_polling"):
         return
     state["ax_polling"] = True
-    counter = {"n": 0}
 
-    def _tick(_timer):
-        counter["n"] += 1
-        try:
-            granted = accessibility.is_trusted()
-        except Exception:
-            granted = False
-        if granted:
+    def _poll() -> None:
+        import time as _time
+
+        for _ in range(120):  # 120 * 0.5 s = 60 s budget
+            if not state.get("ax_polling"):
+                return
             try:
-                webview.evaluateJavaScript_completionHandler_(
-                    "if (window.heardSetAccessibility) "
-                    "window.heardSetAccessibility(true);",
-                    None,
-                )
+                granted = accessibility.is_trusted()
             except Exception:
-                pass
-            _timer.invalidate()
-            state["ax_polling"] = False
-            return
-        if counter["n"] >= 120:  # ~60 s
-            _timer.invalidate()
-            state["ax_polling"] = False
+                granted = False
+            if granted:
+                def _on_main():
+                    # Restore the floating level — the modal regains
+                    # "above everything" priority now that the user is
+                    # done in System Settings and ready to continue.
+                    win = state.get("window")
+                    if win is not None:
+                        try:
+                            win.setLevel_(3)  # NSFloatingWindowLevel
+                        except Exception:
+                            pass
+                    try:
+                        webview.evaluateJavaScript_completionHandler_(
+                            "if (window.heardSetAccessibility) "
+                            "window.heardSetAccessibility(true);",
+                            None,
+                        )
+                    except Exception:
+                        pass
+                try:
+                    NSOperationQueue.mainQueue().addOperationWithBlock_(_on_main)
+                except Exception:
+                    pass
+                state["ax_polling"] = False
+                return
+            _time.sleep(0.5)
+        state["ax_polling"] = False
 
-    timer = NSTimer.timerWithTimeInterval_repeats_block_(0.5, True, _tick)
-    NSRunLoop.currentRunLoop().addTimer_forMode_(timer, _NS_RUNLOOP_COMMON_MODES)
+    import threading
+    threading.Thread(target=_poll, daemon=True, name="heard-ax-poll").start()
 
 
 class _KeyableWindow(NSWindow):
@@ -235,6 +244,17 @@ def prompt() -> dict[str, Any]:
                 accessibility.is_trusted()  # registers Heard in the list
             except Exception:
                 pass
+            # Drop the window level so System Settings can come to the
+            # front. The modal stays visible (just no longer floats above
+            # everything), and we restore the floating level after the
+            # grant lands so the user is immediately back to "modal
+            # priority" once they're done granting.
+            win = state.get("window")
+            if win is not None:
+                try:
+                    win.setLevel_(0)  # NSNormalWindowLevel
+                except Exception:
+                    pass
             try:
                 subprocess.Popen([
                     "open",
