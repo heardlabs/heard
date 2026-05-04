@@ -289,25 +289,38 @@ class Daemon:
         threading.Thread(target=_tick, daemon=True).start()
 
     def _start_accessibility_watcher(self) -> None:
-        def _poll() -> None:
-            while True:
-                time.sleep(5.0)
-                try:
-                    now_trusted = accessibility.is_trusted()
-                except Exception:
-                    continue
-                if now_trusted and not self._accessibility_trusted:
-                    _log("accessibility_granted", action="restarting_hotkey")
-                    if self._hotkey_listener is not None:
-                        try:
-                            self._hotkey_listener.stop()
-                        except Exception:
-                            pass
-                        self._hotkey_listener = None
-                    self._start_hotkey()
-                self._accessibility_trusted = now_trusted
+        """Listen for AX trust-state changes and restart the hotkey
+        listener when the user grants Heard.
 
-        threading.Thread(target=_poll, daemon=True).start()
+        Polling doesn't work — `AXIsProcessTrustedWithOptions` caches
+        per-process and never reflects a fresh grant during the
+        process's lifetime (per Apple DTS guidance, see
+        accessibility.py). We subscribe to the
+        `com.apple.accessibility.api` distributed notification instead;
+        the callback runs on the main thread after a brief delay, by
+        which point TCC has settled and the next is_trusted() call
+        returns the fresh value."""
+
+        def _on_change() -> None:
+            try:
+                now_trusted = accessibility.is_trusted()
+            except Exception:
+                return
+            if now_trusted and not self._accessibility_trusted:
+                _log("accessibility_granted", action="restarting_hotkey")
+                if self._hotkey_listener is not None:
+                    try:
+                        self._hotkey_listener.stop()
+                    except Exception:
+                        pass
+                    self._hotkey_listener = None
+                self._start_hotkey()
+            self._accessibility_trusted = now_trusted
+
+        # Stash the observer on the daemon instance so it stays alive
+        # for the daemon's lifetime — distributed-notification observers
+        # that go out of scope stop firing.
+        self._ax_observer = accessibility.subscribe(_on_change)
 
     def _kokoro_fallback_to(
         self, text: str, voice: str, speed: float, lang: str, path: Path

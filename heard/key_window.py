@@ -30,7 +30,7 @@ from AppKit import (
     NSWindow,
     NSWindowStyleMaskBorderless,
 )
-from Foundation import NSOperationQueue, NSTimer
+from Foundation import NSTimer
 from WebKit import (
     WKUserContentController,
     WKWebView,
@@ -99,61 +99,49 @@ def _total_system_memory_gb() -> float | None:
         return None
 
 
-def _start_accessibility_poll(webview, state: dict) -> None:
-    """Poll accessibility.is_trusted() every 0.5 s after the user clicks
-    the in-flow Grant button. NSTimer in PyObjC has been unreliable
-    inside NSApp.runModalForWindow_ — the timer object is retained but
-    the block fires inconsistently or not at all. Use a Python
-    threading.Thread instead and dispatch the JS callback back onto the
-    main thread via NSOperationQueue.mainQueue(), which bypasses the
-    runloop-mode quirk entirely.
+def _watch_accessibility(webview, state: dict) -> None:
+    """Subscribe to AX trust-change notifications so the badge flips to
+    green when the user toggles Heard on in System Settings.
 
-    On grant: call window.heardSetAccessibility(true) in JS to flip the
-    UI to the green "Enabled" state. Stop after 60 s either way."""
-    if state.get("ax_polling"):
-        return
-    state["ax_polling"] = True
+    Polling can't detect this — `AXIsProcessTrustedWithOptions` caches
+    its result for the life of the process (per Apple DTS guidance, see
+    accessibility.py docstring). The only reliable signal is the
+    `com.apple.accessibility.api` distributed notification, which we
+    subscribe to in accessibility.subscribe().
 
-    def _poll() -> None:
-        import time as _time
+    The callback fires on the main thread after a brief delay; we then
+    re-check is_trusted() and update the JS UI if granted."""
+    if state.get("ax_observer") is not None:
+        return  # already subscribed for this modal session
 
-        for _ in range(120):  # 120 * 0.5 s = 60 s budget
-            if not state.get("ax_polling"):
-                return
+    def _on_change():
+        try:
+            granted = accessibility.is_trusted()
+        except Exception:
+            granted = False
+        if not granted:
+            return
+        # Restore the floating window level — modal regains priority
+        # now that the user is done in System Settings.
+        win = state.get("window")
+        if win is not None:
             try:
-                granted = accessibility.is_trusted()
+                win.setLevel_(3)  # NSFloatingWindowLevel
             except Exception:
-                granted = False
-            if granted:
-                def _on_main():
-                    # Restore the floating level — the modal regains
-                    # "above everything" priority now that the user is
-                    # done in System Settings and ready to continue.
-                    win = state.get("window")
-                    if win is not None:
-                        try:
-                            win.setLevel_(3)  # NSFloatingWindowLevel
-                        except Exception:
-                            pass
-                    try:
-                        webview.evaluateJavaScript_completionHandler_(
-                            "if (window.heardSetAccessibility) "
-                            "window.heardSetAccessibility(true);",
-                            None,
-                        )
-                    except Exception:
-                        pass
-                try:
-                    NSOperationQueue.mainQueue().addOperationWithBlock_(_on_main)
-                except Exception:
-                    pass
-                state["ax_polling"] = False
-                return
-            _time.sleep(0.5)
-        state["ax_polling"] = False
+                pass
+        try:
+            webview.evaluateJavaScript_completionHandler_(
+                "if (window.heardSetAccessibility) "
+                "window.heardSetAccessibility(true);",
+                None,
+            )
+        except Exception:
+            pass
+        # One-shot: tear down the observer once we've flipped to green.
+        obs = state.pop("ax_observer", None)
+        accessibility.unsubscribe(obs)
 
-    import threading
-    threading.Thread(target=_poll, daemon=True, name="heard-ax-poll").start()
+    state["ax_observer"] = accessibility.subscribe(_on_change)
 
 
 class _KeyableWindow(NSWindow):
@@ -264,7 +252,7 @@ def prompt() -> dict[str, Any]:
                 pass
             wv = state.get("webview")
             if wv is not None:
-                _start_accessibility_poll(wv, state)
+                _watch_accessibility(wv, state)
             return
 
         result["action"] = action
