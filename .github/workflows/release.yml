@@ -37,6 +37,121 @@ jobs:
           cd packaging
           ./build-app.sh
 
+      - name: Import codesigning cert into a temporary keychain
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          # Build inside a throwaway keychain so we don't pollute the
+          # runner's default. The keychain dies with the runner; the
+          # .p12 is decoded to a tmp path and unlinked the moment it's
+          # imported.
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          P12_PATH="$RUNNER_TEMP/cert.p12"
+
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$P12_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$P12_PATH" \
+            -P "$APPLE_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          # Add to the search list so codesign can find it without
+          # an explicit -k flag, and authorise codesign to use the
+          # private key non-interactively.
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychain -d user | tr -d '"')
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          rm -f "$P12_PATH"
+
+          # Sanity check — confirm the identity is visible to codesign.
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Sign Heard.app with hardened runtime
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          APP="packaging/dist/Heard.app"
+          IDENTITY="Developer ID Application: Jianing Sun ($APPLE_TEAM_ID)"
+
+          # Sign deepest items first. find -d traverses depth-first so
+          # leaf binaries get sealed before their containing bundles —
+          # required because each container's seal references the
+          # signatures of its contents.
+          while IFS= read -r -d '' f; do
+            codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY" "$f"
+          done < <(find -d "$APP" -type f \( -name "*.so" -o -name "*.dylib" \) -print0)
+
+          # Sign the bundled Python framework binary, then the framework
+          # bundle itself. Order matters — the bundle seal references
+          # the inner binary's signature.
+          if [ -f "$APP/Contents/Frameworks/Python.framework/Versions/3.13/Python" ]; then
+            codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY" \
+              "$APP/Contents/Frameworks/Python.framework/Versions/3.13/Python"
+            codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY" \
+              "$APP/Contents/Frameworks/Python.framework"
+          fi
+
+          # The Python interpreter copy py2app drops in MacOS/.
+          if [ -f "$APP/Contents/MacOS/python" ]; then
+            codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY" "$APP/Contents/MacOS/python"
+          fi
+
+          # Finally seal the app bundle with our entitlements. This
+          # also signs Contents/MacOS/Heard automatically (codesign
+          # always signs the bundle's main executable when sealing
+          # the bundle), so we don't list it explicitly.
+          codesign --force --options runtime --timestamp \
+            --entitlements packaging/entitlements.plist \
+            --sign "$IDENTITY" "$APP"
+
+          # Verify the seal is intact end-to-end.
+          codesign --verify --strict --verbose=2 "$APP"
+
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          APP="packaging/dist/Heard.app"
+          NOTARIZE_ZIP="$RUNNER_TEMP/Heard-for-notarization.zip"
+
+          # notarytool wants a .zip submission. ditto preserves the
+          # bundle's symlinks (Python.framework/Current → 3.13) which
+          # plain zip mangles into duplicate files.
+          ditto -c -k --keepParent "$APP" "$NOTARIZE_ZIP"
+
+          # --wait blocks until Apple finishes scanning (typically 1-5
+          # min). Returns non-zero on Invalid; on success we proceed
+          # to staple.
+          xcrun notarytool submit "$NOTARIZE_ZIP" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+
+          # Staple the notarization ticket onto the .app so Gatekeeper
+          # accepts it offline (no network call needed at first launch).
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+
+          # Final Gatekeeper smoke test — should print "accepted".
+          spctl --assess --type execute --verbose "$APP"
+
       - name: Zip the bundle
         # Build two zips with identical contents:
         #   Heard-vX.Y.Z.zip  → versioned, for archival download
@@ -68,7 +183,7 @@ jobs:
 
             Paste this into Claude Code, Codex, or your agent of choice:
 
-            > Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
+            > Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
 
             ---
 
@@ -77,7 +192,7 @@ jobs:
             1. Download `Heard-${{ github.ref_name }}.zip` below (or the unversioned `Heard.zip`)
             2. Unzip
             3. Drag `Heard.app` into `/Applications`
-            4. **First launch:** right-click `Heard.app` → **Open** (unsigned build, so macOS Gatekeeper will refuse a normal double-click — right-click bypasses that one time)
+            4. Double-click to launch — the build is signed and notarized, so Gatekeeper opens it without warnings
             5. The onboarding window walks you through four screens: API key (optional, for in-character persona rewrites), voice, the silence/replay hotkey, and which agents to wire up
             6. Done — Heard is in the menu bar, hooks installed, ready to narrate
 

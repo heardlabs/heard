@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- py2app bundles Python.framework + libcrypto/libssl/libffi
+         that are signed by Apple (or upstream), not by our Developer
+         ID. Hardened-runtime's strict library validation rejects
+         binaries that chain to a different identity than the host,
+         crashing the app at launch. Disabling library validation lets
+         the bundled Python framework load nested .dylibs the loader
+         sees as "third-party". -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- packaging/app_entry.py sets SSL_CERT_FILE / REQUESTS_CA_BUNDLE
+         before any HTTPS-using import (the frozen Python in the bundle
+         has no system CA path). Hardened runtime blocks DYLD_* and
+         related env-var manipulation by default; this re-allows the
+         narrow set we actually use for bootstrapping. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+</dict>
+</plist>
