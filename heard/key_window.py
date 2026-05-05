@@ -304,7 +304,12 @@ def prompt() -> dict[str, Any]:
     # the rounded mask).
     window.setHasShadow_(False)
     window.setLevel_(3)  # NSFloatingWindowLevel
-    window.setMovableByWindowBackground_(True)
+    # Don't enable setMovableByWindowBackground — the WKWebView is the
+    # only subview, so the OS sees the entire window as background and
+    # races with mousedown on embedded HTML inputs (the OS doesn't know
+    # about controls inside the webview). The JS-side mousedown handler
+    # in key_prompt.html routes drags through performWindowDragWithEvent_
+    # instead, and bails on form controls so input focus survives.
 
     # Native macOS frosted-glass backdrop. Blurs the actual desktop /
     # other windows behind us — what CSS backdrop-filter cannot do.

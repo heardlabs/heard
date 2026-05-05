@@ -1038,6 +1038,12 @@
     if (e.key === 'Escape') { e.preventDefault(); finish(); }
   });
 
+  // Drag the window when the user mousedowns on any non-control area.
+  // Bails on form controls so input focus isn't intercepted. The
+  // OS-level setMovableByWindowBackground is intentionally NOT enabled
+  // (key_window.py) — that flag races with embedded HTML inputs because
+  // AppKit can't see WKWebView's controls. Routing through this JS
+  // handler keeps the wide drag affordance without the input race.
   document.addEventListener('mousedown', function (e) {
     if (e.target.closest('button, input, label, .field, a')) return;
     post('drag', {});
