@@ -82,13 +82,28 @@ jobs:
           APP="packaging/dist/Heard.app"
           IDENTITY="Developer ID Application: Jianing Sun ($APPLE_TEAM_ID)"
 
+          # py2app bundles a chunk of the stdlib + site-packages into
+          # python313.zip for faster cold start. Apple's notary service
+          # peeks inside that zip and rejects any unsigned Mach-O
+          # binaries it finds — but `find` and `codesign` can't reach
+          # them while they're still archived. Extract into the
+          # already-present lib/python3.13 directory (which is on the
+          # frozen Python's sys.path) and delete the zip; modules load
+          # identically either way, only the on-disk shape changes.
+          ZIP_PATH="$APP/Contents/Resources/lib/python313.zip"
+          if [ -f "$ZIP_PATH" ]; then
+            EXTRACT_DIR="$APP/Contents/Resources/lib/python3.13"
+            mkdir -p "$EXTRACT_DIR"
+            unzip -oq "$ZIP_PATH" -d "$EXTRACT_DIR"
+            rm "$ZIP_PATH"
+            echo "Expanded python313.zip into $EXTRACT_DIR so notarytool can see the .so files inside."
+          fi
+
           # Find every Mach-O binary inside the bundle (executables and
           # dynamic libs) by content type — extension-only matching
-          # missed py2app's Python.framework/Versions/3.13/Python and
-          # Contents/MacOS/Heard previously, which Apple's notary
-          # service then rejected for not having the hardened runtime
-          # flag set. find -d emits leaves first so seals chain
-          # bottom-up.
+          # would miss the bundled Python interp at
+          # Frameworks/Python.framework/Versions/3.13/Python.
+          # find -d emits leaves first so seals chain bottom-up.
           MACHO_LIST="$RUNNER_TEMP/macho-list.txt"
           : > "$MACHO_LIST"
           while IFS= read -r -d '' f; do
@@ -168,8 +183,12 @@ jobs:
           echo "::endgroup::"
 
           if [ "$STATUS" != "Accepted" ]; then
+            # notarytool --wait returns 0 even when status is Invalid
+            # (the submission itself succeeded; only the verdict is
+            # bad). Hardcode 1 so this step actually fails the run
+            # and we don't attach a non-notarized .app to the release.
             echo "::error::Notarization status was $STATUS — see Apple notary log above"
-            exit "${NOTARIZE_RC:-1}"
+            exit 1
           fi
 
           # Staple the notarization ticket onto the .app so Gatekeeper
