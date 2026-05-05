@@ -1,6 +1,6 @@
 [project]
 name = "heard"
-version = "0.5.9"
+version = "0.5.10"
 description = "A voice companion for your AI coding agents. Heard speaks your agent's replies so you can keep working."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -33,6 +33,14 @@ dependencies = [
     # explicitly so it's installed and bundled, then point SSL_CERT_FILE
     # at certifi.where() in app_entry.py.
     "certifi>=2024.0.0",
+    # py2app bundles these explicitly (packaging/setup.py "packages")
+    # because requests/httpx import them at startup; pin them as direct
+    # deps so the CI build environment installs them even when no
+    # transitive consumer is in the dep graph (anthropic moved off
+    # requests, which used to pull charset_normalizer transitively).
+    "charset-normalizer>=3.0",
+    "idna>=3.0",
+    "urllib3>=2.0",
     "pynput>=1.7",
     "rumps>=0.4",
     # Explicit pyobjc frameworks for the WKWebView onboarding window.
