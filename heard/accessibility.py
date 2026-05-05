@@ -6,20 +6,20 @@ monitoring. The polished way to request that is via
 true — shows the native macOS dialog with an "Open System Settings"
 button and pre-selects the requesting app in the Accessibility list.
 
-Without this explicit call, pynput's listener silently fails with
-"This process is not trusted!" in the daemon log and users are left
-to navigate System Settings manually (bad UX, especially for the
-loose-Python-script case where they have to file-pick the binary).
+`AXIsProcessTrustedWithOptions` does NOT cache the False answer for the
+process lifetime — observed behaviour on macOS 14.6 is that after the
+distributed `com.apple.accessibility.api` notification fires and TCC
+has had ~150 ms to settle, a fresh call returns the new True value.
+(Apple DTS guidance to "relaunch on grant" is conservative; the
+notification-then-recheck pattern Hammerspoon uses is reliable in
+practice — verified on 2026-05-04 with v0.5.9 instrumentation.)
 
-`AXIsProcessTrustedWithOptions` returns a value cached at the level of
-the process — it does NOT refresh after a fresh grant during the
-process's lifetime (confirmed by Apple DTS on the developer forums,
-which is also why macOS prompts to relaunch the app after toggling).
-So polling won't detect mid-lifetime grants. The canonical pattern,
-used by Hammerspoon, MonitorControl, and other shipping apps, is to
-subscribe to `com.apple.accessibility.api` distributed notifications
-and re-check from the main thread after a brief delay so TCC writes
-have settled — see `subscribe()` below.
+Process-lifecycle is still load-bearing for pynput though — see
+`heard.ui` for the auto-relaunch-after-grant flow. We don't try to
+restart pynput's keyboard listener in-process: macOS 14.6+ enforces
+`dispatch_assert_queue` on the Carbon TSM functions pynput pulls in,
+and reinitialising the listener from the AX-notification callback
+crashed the daemon with SIGTRAP.
 
 Safe to call on non-Darwin platforms and when PyObjC isn't available;
 both paths short-circuit to False.
@@ -27,9 +27,50 @@ both paths short-circuit to False.
 
 from __future__ import annotations
 
+import os
 import sys
+import threading
+import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+
+# Diagnostic log for AX trust-state plumbing. Lives next to daemon.log
+# so it survives a daemon restart but doesn't get rotated in with the
+# structured event log. Best-effort: any write failure is silently
+# dropped so instrumentation can never break the main flow.
+_DBG_PATH = Path(
+    os.environ.get(
+        "HEARD_AX_DEBUG_LOG",
+        os.path.expanduser("~/Library/Application Support/heard/ax-debug.log"),
+    )
+)
+_DBG_LOCK = threading.Lock()
+
+
+def _dbg(event: str, **fields: Any) -> None:
+    """Append one line to the AX debug log. Format mirrors daemon._log
+    so a future scraper can parse both with the same regex.
+
+    Cheap to leave on — only fires on subscribe / notification / trust
+    state transitions, not in any hot path."""
+    try:
+        _DBG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        ms = int((time.time() % 1) * 1000)
+        parts = [f"t={ts}.{ms:03d}", f"ev={event}"]
+        for k, v in fields.items():
+            s = str(v).replace("\n", " ")
+            if " " in s or "=" in s:
+                s = '"' + s.replace('"', "'") + '"'
+            parts.append(f"{k}={s}")
+        line = " ".join(parts) + "\n"
+        with _DBG_LOCK:
+            with _DBG_PATH.open("a", encoding="utf-8") as f:
+                f.write(line)
+                f.flush()
+    except Exception:
+        pass
 
 
 def is_trusted() -> bool:
@@ -75,30 +116,31 @@ def subscribe(callback: Callable[[], None]) -> Any:
 
     The block fires on `NSOperationQueue.mainQueue()`, then we sleep
     150 ms in a side thread and re-dispatch the user callback to main —
-    `AXIsProcessTrustedWithOptions` returns stale cached values for a
-    brief window after the notification fires (TCC writes settle
+    `AXIsProcessTrustedWithOptions` returns stale values for a brief
+    window after the notification fires (TCC writes settle
     asynchronously). Hammerspoon and other shipping apps use the same
     pattern.
 
     Returns None on non-Darwin platforms or when PyObjC is unavailable.
     """
+    _dbg("subscribe_called", pid=os.getpid())
     if sys.platform != "darwin":
         return None
     try:
         from Foundation import NSDistributedNotificationCenter, NSOperationQueue
-    except Exception:
+    except Exception as e:
+        _dbg("subscribe_import_error", err=repr(e))
         return None
 
     def _on_notification(_note):
-        import threading
-        import time as _time
+        _dbg("notification_fired")
 
         def _delayed():
-            _time.sleep(0.15)
+            time.sleep(0.15)
             try:
                 NSOperationQueue.mainQueue().addOperationWithBlock_(callback)
-            except Exception:
-                pass
+            except Exception as e:
+                _dbg("dispatch_to_main_error", err=repr(e))
 
         threading.Thread(target=_delayed, daemon=True).start()
 
@@ -110,8 +152,10 @@ def subscribe(callback: Callable[[], None]) -> Any:
                 _on_notification,
             )
         )
+        _dbg("subscribe_registered")
         return token
-    except Exception:
+    except Exception as e:
+        _dbg("subscribe_register_error", err=repr(e))
         return None
 
 

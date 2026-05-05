@@ -99,18 +99,15 @@ def _total_system_memory_gb() -> float | None:
         return None
 
 
-def _watch_accessibility(webview, state: dict) -> None:
+def _watch_accessibility(webview, state: dict, result: dict) -> None:
     """Subscribe to AX trust-change notifications so the badge flips to
-    green when the user toggles Heard on in System Settings.
+    green when the user toggles Heard on in System Settings, and stamp
+    `accessibility_granted=True` on the modal's result dict so the
+    caller in heard.ui can auto-relaunch the app once onboarding ends.
 
-    Polling can't detect this — `AXIsProcessTrustedWithOptions` caches
-    its result for the life of the process (per Apple DTS guidance, see
-    accessibility.py docstring). The only reliable signal is the
-    `com.apple.accessibility.api` distributed notification, which we
-    subscribe to in accessibility.subscribe().
-
-    The callback fires on the main thread after a brief delay; we then
-    re-check is_trusted() and update the JS UI if granted."""
+    The callback fires on the main thread ~150 ms after the
+    `com.apple.accessibility.api` notification (TCC settle delay), then
+    re-checks is_trusted() and updates the JS UI if granted."""
     if state.get("ax_observer") is not None:
         return  # already subscribed for this modal session
 
@@ -121,6 +118,10 @@ def _watch_accessibility(webview, state: dict) -> None:
             granted = False
         if not granted:
             return
+        # Stamp the result so heard.ui knows to relaunch after the
+        # modal closes. Re-instantiating pynput in-process crashes
+        # macOS 14.6+; a fresh launch is the safe path.
+        result["accessibility_granted"] = True
         # Restore the floating window level — modal regains priority
         # now that the user is done in System Settings.
         win = state.get("window")
@@ -203,6 +204,11 @@ def prompt() -> dict[str, Any]:
         "heard_plan": "",
         "heard_email": "",
         "heard_trial_expires_at": 0,
+        # Set to True by _watch_accessibility's callback when the user
+        # toggles Heard on mid-flow. heard.ui consumes this to schedule
+        # an auto-relaunch after the modal closes (fresh process avoids
+        # the pynput-restart crash on macOS 14.6+).
+        "accessibility_granted": False,
     }
     state: dict[str, Any] = {"window": None, "stopped": False}
 
@@ -252,7 +258,7 @@ def prompt() -> dict[str, Any]:
                 pass
             wv = state.get("webview")
             if wv is not None:
-                _watch_accessibility(wv, state)
+                _watch_accessibility(wv, state, result)
             return
 
         result["action"] = action

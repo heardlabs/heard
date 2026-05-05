@@ -161,14 +161,15 @@ class Daemon:
         self._queue_max = 5
         self._start_hotkey()
         self._start_audio_monitor()
-        # Watch for the user granting Accessibility AFTER daemon
-        # startup — if they did so via System Settings directly
-        # (without clicking through onboarding's request_accessibility
-        # flow), pynput's listener is permanently dead until something
-        # restarts it. Polling thread re-inits the listener on the
-        # False→True transition so the hotkey "just works" eventually.
-        self._accessibility_trusted = accessibility.is_trusted()
-        self._start_accessibility_watcher()
+        # We deliberately do NOT subscribe to AX trust-state changes
+        # from the daemon. Re-initialising pynput in-process after a
+        # mid-lifetime grant crashes on macOS 14.6+ — pynput's worker
+        # thread calls Carbon TSMGetInputSourceProperty, which now
+        # asserts on the main dispatch queue and SIGTRAPs us when called
+        # from a non-main thread. The onboarding modal owns the in-flow
+        # grant signal (heard.key_window) and triggers an auto-relaunch
+        # via heard.ui after onboarding completes; macOS itself prompts
+        # the user to relaunch for grants that happen outside the modal.
         self._start_digest_timer()
         # Latest pending update info so the menu bar can surface a
         # "Update to vX.Y.Z →" item without polling itself. None until
@@ -287,40 +288,6 @@ class Daemon:
                 self._start_speech(summary, cfg=self.cfg, persona=self.persona, session_id="__digest__")
 
         threading.Thread(target=_tick, daemon=True).start()
-
-    def _start_accessibility_watcher(self) -> None:
-        """Listen for AX trust-state changes and restart the hotkey
-        listener when the user grants Heard.
-
-        Polling doesn't work — `AXIsProcessTrustedWithOptions` caches
-        per-process and never reflects a fresh grant during the
-        process's lifetime (per Apple DTS guidance, see
-        accessibility.py). We subscribe to the
-        `com.apple.accessibility.api` distributed notification instead;
-        the callback runs on the main thread after a brief delay, by
-        which point TCC has settled and the next is_trusted() call
-        returns the fresh value."""
-
-        def _on_change() -> None:
-            try:
-                now_trusted = accessibility.is_trusted()
-            except Exception:
-                return
-            if now_trusted and not self._accessibility_trusted:
-                _log("accessibility_granted", action="restarting_hotkey")
-                if self._hotkey_listener is not None:
-                    try:
-                        self._hotkey_listener.stop()
-                    except Exception:
-                        pass
-                    self._hotkey_listener = None
-                self._start_hotkey()
-            self._accessibility_trusted = now_trusted
-
-        # Stash the observer on the daemon instance so it stays alive
-        # for the daemon's lifetime — distributed-notification observers
-        # that go out of scope stop firing.
-        self._ax_observer = accessibility.subscribe(_on_change)
 
     def _kokoro_fallback_to(
         self, text: str, voice: str, speed: float, lang: str, path: Path

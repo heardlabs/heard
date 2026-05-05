@@ -31,6 +31,17 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 ICON_PATH = ASSETS_DIR / "menubar.png"
 
 
+def _find_bundle_path() -> Path | None:
+    """Return the path to the enclosing Heard.app bundle, or None when
+    running from a venv / source checkout (where there's no bundle to
+    relaunch). Used by the AX-grant auto-relaunch flow."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
 class HeardApp(rumps.App):
     def __init__(self) -> None:
         # template=True asks macOS to auto-tint the icon to match the menu
@@ -590,7 +601,17 @@ class HeardApp(rumps.App):
         # clicked Skip — so we don't re-prompt on every launch.
         config.set_value("onboarded", True)
 
-        if result.get("action") != "finish":
+        action = result.get("action")
+        ax_granted = bool(result.get("accessibility_granted"))
+
+        # Credential and hook persistence is gated on a clean Finish so
+        # half-typed keys / unchecked agent boxes don't leak into config.
+        # Accessibility relaunch, however, is independent: a runtime AX
+        # grant means pynput is permanently dead in this process whether
+        # or not the user clicked Finish, so we must relaunch.
+        if action != "finish":
+            if ax_granted:
+                self._schedule_relaunch()
             return
 
         # LLM key — auto-route by prefix
@@ -645,13 +666,15 @@ class HeardApp(rumps.App):
                         file=sys.stderr,
                     )
 
-        # The in-flow grant button on screen 3 handles Accessibility
-        # directly (opens System Settings to the right pane). The
-        # daemon's accessibility_watcher polls every 5 s and restarts
-        # the hotkey listener as soon as the user toggles us on, so we
-        # don't need to fire anything here. Skipping this also avoids
-        # the deferred dialog re-popping inside macOS's TCC propagation
-        # window after a fresh grant.
+        # If the user granted Accessibility mid-flow, schedule an
+        # auto-relaunch. Restarting pynput in-process crashes on macOS
+        # 14.6+ (Carbon TSM dispatch_assert_queue from a worker thread),
+        # so a fresh process is the safe path. _schedule_relaunch waits
+        # for our pid to exit before re-opening the bundle, so the new
+        # instance starts with a clean AX cache and a clean pynput init.
+        if ax_granted:
+            self._schedule_relaunch()
+            return
 
         # Voice-path nudges — three branches:
         #   - Heard token minted in the trial flow → cloud voices
@@ -677,6 +700,63 @@ class HeardApp(rumps.App):
                 "or paste an ElevenLabs key in Options → Set API key.",
                 kind="onboarding_voice_choice",
             )
+
+    def _schedule_relaunch(self) -> None:
+        """Relaunch Heard.app once the current process exits.
+
+        Used after an in-flow Accessibility grant: pynput can't be
+        re-initialised in the same process (TSM dispatch_assert_queue
+        crash on macOS 14.6+), so a fresh launch is the only safe path.
+
+        Spawns a detached shell that polls our pid and reopens the
+        bundle once we're gone, then quits via NSApp.terminate_. The
+        sub-second `open` is safe because /Applications/Heard.app
+        single-instances itself via LSUIElement + bundle id.
+
+        No-op outside the .app bundle (dev runs from the venv don't
+        have a .app to relaunch — print a notice instead)."""
+        import os as _os
+        import subprocess as _sp
+
+        bundle_path = _find_bundle_path()
+        if bundle_path is None:
+            from heard.notify import notify
+            notify(
+                "Heard — restart to activate hotkey",
+                "Accessibility granted. Quit and relaunch Heard so the "
+                "global hotkey listener picks up the new permissions.",
+                kind="ax_grant_relaunch_dev",
+            )
+            return
+
+        pid = _os.getpid()
+        # Detached so the parent's exit doesn't kill the waiter. The
+        # `open` reuses the existing bundle path; LSUIElement keeps the
+        # new instance in the menu bar without bouncing the Dock.
+        _sp.Popen(
+            [
+                "/bin/sh",
+                "-c",
+                f"while kill -0 {pid} 2>/dev/null; do sleep 0.1; done; "
+                f"sleep 0.3; open {bundle_path!s}",
+            ],
+            start_new_session=True,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+        )
+        # Give the modal a moment to render the green badge before we
+        # tear down the process — the user just toggled the checkbox
+        # and we want the visual confirmation to land.
+        from AppKit import NSApp as _NSApp
+        from Foundation import NSTimer as _NSTimer
+
+        def _quit(_timer):
+            try:
+                _NSApp.terminate_(None)
+            except Exception:
+                _os._exit(0)
+
+        _NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.6, False, _quit)
 
     def _self_test_async(self) -> None:
         """Background pipeline check after onboarding. We do a single
