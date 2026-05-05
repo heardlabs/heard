@@ -74,7 +74,7 @@ class HeardApp(rumps.App):
         # default mode is tap-hold on Right Option, not the combo
         # form. Now the label reads "Silence (tap right_option)" or
         # "Silence (⌘⇧.)" depending on which mode is active.
-        self.silence_item = rumps.MenuItem("Silence", callback=self.on_silence)
+        self.silence_item = rumps.MenuItem("Stop narrating", callback=self.on_silence)
         self.replay_item = rumps.MenuItem("Replay last", callback=self.on_replay)
 
         # Update-available callout. Pre-created but not added to the
@@ -278,7 +278,7 @@ class HeardApp(rumps.App):
         # on Right Option. Pull from live config so the menu reflects
         # what's actually wired up.
         silence_hint, replay_hint = self._hotkey_hints(cfg)
-        self.silence_item.title = f"Silence  ({silence_hint})"
+        self.silence_item.title = f"Stop narrating  ({silence_hint})"
         self.replay_item.title = f"Replay last  ({replay_hint})"
 
         # Update-available callout. Mount under the status row when
