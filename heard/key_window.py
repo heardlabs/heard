@@ -99,15 +99,43 @@ def _total_system_memory_gb() -> float | None:
         return None
 
 
+def _flip_badge_to_enabled(webview, state: dict, result: dict) -> None:
+    """Flip screen 3's badge to green and (if AX was not already granted
+    at modal mount) stamp accessibility_granted on the result so
+    heard.ui auto-relaunches.
+
+    AX-was-already-granted-at-mount case: the daemon's pynput listener
+    started healthy at app launch, so no relaunch is needed — we just
+    update the UI and let the user finish onboarding normally.
+
+    Idempotent — safe to call multiple times."""
+    if not state.get("ax_initial", False):
+        result["accessibility_granted"] = True
+    win = state.get("window")
+    if win is not None:
+        try:
+            win.setLevel_(3)  # NSFloatingWindowLevel — re-float modal
+        except Exception:
+            pass
+    try:
+        webview.evaluateJavaScript_completionHandler_(
+            "if (window.heardSetAccessibility) "
+            "window.heardSetAccessibility(true);",
+            None,
+        )
+    except Exception:
+        pass
+
+
 def _watch_accessibility(webview, state: dict, result: dict) -> None:
     """Subscribe to AX trust-change notifications so the badge flips to
-    green when the user toggles Heard on in System Settings, and stamp
-    `accessibility_granted=True` on the modal's result dict so the
-    caller in heard.ui can auto-relaunch the app once onboarding ends.
+    green the moment the user toggles Heard on in System Settings.
 
-    The callback fires on the main thread ~150 ms after the
-    `com.apple.accessibility.api` notification (TCC settle delay), then
-    re-checks is_trusted() and updates the JS UI if granted."""
+    Subscribed at modal mount (not just after Grant access click) so a
+    user who toggles AX directly — or who already had it granted from a
+    previous install — gets the same auto-detection. The callback fires
+    on the main thread ~150 ms after the `com.apple.accessibility.api`
+    notification (TCC settle delay)."""
     if state.get("ax_observer") is not None:
         return  # already subscribed for this modal session
 
@@ -118,26 +146,7 @@ def _watch_accessibility(webview, state: dict, result: dict) -> None:
             granted = False
         if not granted:
             return
-        # Stamp the result so heard.ui knows to relaunch after the
-        # modal closes. Re-instantiating pynput in-process crashes
-        # macOS 14.6+; a fresh launch is the safe path.
-        result["accessibility_granted"] = True
-        # Restore the floating window level — modal regains priority
-        # now that the user is done in System Settings.
-        win = state.get("window")
-        if win is not None:
-            try:
-                win.setLevel_(3)  # NSFloatingWindowLevel
-            except Exception:
-                pass
-        try:
-            webview.evaluateJavaScript_completionHandler_(
-                "if (window.heardSetAccessibility) "
-                "window.heardSetAccessibility(true);",
-                None,
-            )
-        except Exception:
-            pass
+        _flip_badge_to_enabled(webview, state, result)
         # One-shot: tear down the observer once we've flipped to green.
         obs = state.pop("ax_observer", None)
         accessibility.unsubscribe(obs)
@@ -210,7 +219,15 @@ def prompt() -> dict[str, Any]:
         # the pynput-restart crash on macOS 14.6+).
         "accessibility_granted": False,
     }
-    state: dict[str, Any] = {"window": None, "stopped": False}
+    # ax_initial captures the trust state at modal mount so we can tell
+    # later whether a green-badge transition was a real grant (relaunch
+    # needed for pynput) or just reflecting state we already had at
+    # launch (relaunch would be a no-op).
+    try:
+        ax_initial = accessibility.is_trusted()
+    except Exception:
+        ax_initial = False
+    state: dict[str, Any] = {"window": None, "stopped": False, "ax_initial": ax_initial}
 
     def on_message(action: str, payload: dict) -> None:
         # "drag" is fired by JS on mousedown over the card background.
@@ -229,20 +246,26 @@ def prompt() -> dict[str, Any]:
         # In-flow accessibility grant: fired by screen 3's "Grant access"
         # button. Avoid the system AX dialog (it pops BEHIND our floating
         # modal — invisible to the user) and instead open System
-        # Settings directly to the Accessibility pane, then poll
-        # is_trusted() until the user toggles us on. is_trusted() with
-        # prompt=False still registers Heard in the AX list, so the
-        # System Settings page already shows our entry.
+        # Settings directly to the Accessibility pane.
         if action == "request_accessibility":
+            wv = state.get("webview")
             try:
-                accessibility.is_trusted()  # registers Heard in the list
+                already_granted = accessibility.is_trusted()
             except Exception:
-                pass
+                already_granted = False
+            if already_granted:
+                # User pre-granted (prior install, or toggled directly
+                # before clicking Grant access). Skip System Settings
+                # and flip the badge — daemon's hotkey is alive from
+                # launch in this case so heard.ui will see ax_granted
+                # but skip the relaunch (it'd be a no-op).
+                if wv is not None:
+                    _flip_badge_to_enabled(wv, state, result)
+                return
             # Drop the window level so System Settings can come to the
-            # front. The modal stays visible (just no longer floats above
-            # everything), and we restore the floating level after the
-            # grant lands so the user is immediately back to "modal
-            # priority" once they're done granting.
+            # front. The modal stays visible (just no longer floats
+            # above everything); the AX subscriber re-floats it once
+            # the grant lands.
             win = state.get("window")
             if win is not None:
                 try:
@@ -256,9 +279,6 @@ def prompt() -> dict[str, Any]:
                 ])
             except Exception:
                 pass
-            wv = state.get("webview")
-            if wv is not None:
-                _watch_accessibility(wv, state, result)
             return
 
         result["action"] = action
@@ -364,6 +384,12 @@ def prompt() -> dict[str, Any]:
     vibrancy.addSubview_(webview)
     window.center()
     state["window"] = window
+
+    # Subscribe to AX trust-change notifications from modal mount, not
+    # from the Grant access click. Lets us catch a grant the user makes
+    # directly in System Settings (without going through our flow), or
+    # one they toggle in the brief window between modal load and click.
+    _watch_accessibility(webview, state, result)
 
     # Tell the window which view should become first responder when the
     # window goes key. For a borderless NSWindow embedding a WKWebView,

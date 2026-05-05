@@ -133,10 +133,11 @@ def subscribe(callback: Callable[[], None]) -> Any:
         return None
 
     def _on_notification(_note):
-        _dbg("notification_fired")
+        _dbg("notification_fired", trusted_now=is_trusted())
 
         def _delayed():
             time.sleep(0.15)
+            _dbg("delayed_check", trusted_after_settle=is_trusted())
             try:
                 NSOperationQueue.mainQueue().addOperationWithBlock_(callback)
             except Exception as e:
