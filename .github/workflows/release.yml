@@ -82,37 +82,39 @@ jobs:
           APP="packaging/dist/Heard.app"
           IDENTITY="Developer ID Application: Jianing Sun ($APPLE_TEAM_ID)"
 
-          # Sign deepest items first. find -d traverses depth-first so
-          # leaf binaries get sealed before their containing bundles —
-          # required because each container's seal references the
-          # signatures of its contents.
+          # Find every Mach-O binary inside the bundle (executables and
+          # dynamic libs) by content type — extension-only matching
+          # missed py2app's Python.framework/Versions/3.13/Python and
+          # Contents/MacOS/Heard previously, which Apple's notary
+          # service then rejected for not having the hardened runtime
+          # flag set. find -d emits leaves first so seals chain
+          # bottom-up.
+          MACHO_LIST="$RUNNER_TEMP/macho-list.txt"
+          : > "$MACHO_LIST"
+          while IFS= read -r -d '' f; do
+            if file -b "$f" 2>/dev/null | grep -qE 'Mach-O.*(executable|bundle|dynamically linked shared library)'; then
+              printf '%s\0' "$f" >> "$MACHO_LIST"
+            fi
+          done < <(find -d "$APP" -type f -print0)
+
+          echo "Signing $(grep -c '' "$MACHO_LIST" || true) Mach-O files..."
           while IFS= read -r -d '' f; do
             codesign --force --options runtime --timestamp \
               --sign "$IDENTITY" "$f"
-          done < <(find -d "$APP" -type f \( -name "*.so" -o -name "*.dylib" \) -print0)
+          done < "$MACHO_LIST"
 
-          # Sign the bundled Python framework binary, then the framework
-          # bundle itself. Order matters — the bundle seal references
-          # the inner binary's signature.
-          if [ -f "$APP/Contents/Frameworks/Python.framework/Versions/3.13/Python" ]; then
-            codesign --force --options runtime --timestamp \
-              --sign "$IDENTITY" \
-              "$APP/Contents/Frameworks/Python.framework/Versions/3.13/Python"
+          # Sign nested framework bundles (the .framework directory
+          # itself, after all its inner binaries are signed).
+          if [ -d "$APP/Contents/Frameworks/Python.framework" ]; then
             codesign --force --options runtime --timestamp \
               --sign "$IDENTITY" \
               "$APP/Contents/Frameworks/Python.framework"
           fi
 
-          # The Python interpreter copy py2app drops in MacOS/.
-          if [ -f "$APP/Contents/MacOS/python" ]; then
-            codesign --force --options runtime --timestamp \
-              --sign "$IDENTITY" "$APP/Contents/MacOS/python"
-          fi
-
           # Finally seal the app bundle with our entitlements. This
           # also signs Contents/MacOS/Heard automatically (codesign
           # always signs the bundle's main executable when sealing
-          # the bundle), so we don't list it explicitly.
+          # the bundle).
           codesign --force --options runtime --timestamp \
             --entitlements packaging/entitlements.plist \
             --sign "$IDENTITY" "$APP"
@@ -135,14 +137,40 @@ jobs:
           # plain zip mangles into duplicate files.
           ditto -c -k --keepParent "$APP" "$NOTARIZE_ZIP"
 
-          # --wait blocks until Apple finishes scanning (typically 1-5
-          # min). Returns non-zero on Invalid; on success we proceed
-          # to staple.
+          # Submit and capture the JSON-formatted result so we can
+          # extract the submission id even on Invalid (notarytool's
+          # human output buries the id mid-stream and is annoying to
+          # parse). --wait blocks until Apple finishes scanning
+          # (typically 1-5 min).
+          SUBMIT_OUT="$RUNNER_TEMP/notarytool-submit.json"
+          set +e
           xcrun notarytool submit "$NOTARIZE_ZIP" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait
+            --wait \
+            --output-format json > "$SUBMIT_OUT"
+          NOTARIZE_RC=$?
+          set -e
+
+          cat "$SUBMIT_OUT"
+          SUBMISSION_ID=$(python3 -c "import json,sys; print(json.load(open('$SUBMIT_OUT'))['id'])")
+          STATUS=$(python3 -c "import json,sys; print(json.load(open('$SUBMIT_OUT'))['status'])")
+
+          # Always fetch the per-issue log — even on Accepted Apple
+          # may have warnings worth surfacing. On Invalid this is the
+          # only way to see why.
+          echo "::group::Apple notary log for $SUBMISSION_ID"
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" || true
+          echo "::endgroup::"
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "::error::Notarization status was $STATUS — see Apple notary log above"
+            exit "${NOTARIZE_RC:-1}"
+          fi
 
           # Staple the notarization ticket onto the .app so Gatekeeper
           # accepts it offline (no network call needed at first launch).
