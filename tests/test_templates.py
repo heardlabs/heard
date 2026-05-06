@@ -17,9 +17,23 @@ def test_bash_generic_uses_description():
     assert line == "Do the thing."
 
 
-def test_edit_uses_basename():
+def test_edit_uses_basename_without_extension():
+    # Extension is dropped so TTS doesn't read ".py" as "dot py".
     line = templates.pre_tool_line("Edit", {"file_path": "/Users/x/project/auth.py"})
-    assert line == "Editing auth.py."
+    assert line == "Editing auth."
+
+
+def test_edit_keeps_dotfile_stem():
+    # Dotfiles like .zshrc have empty stem on splitext; we keep the
+    # dotted name rather than narrating an empty filename.
+    line = templates.pre_tool_line("Edit", {"file_path": "/Users/x/.zshrc"})
+    assert line == "Editing .zshrc."
+
+
+def test_edit_keeps_extensionless_name():
+    # Dockerfile, Makefile, etc. — no extension to strip.
+    line = templates.pre_tool_line("Edit", {"file_path": "/repo/Dockerfile"})
+    assert line == "Editing Dockerfile."
 
 
 def test_read_is_silent():
