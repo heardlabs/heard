@@ -86,37 +86,61 @@ jobs:
           # python313.zip for faster cold start. Apple's notary service
           # peeks inside that zip and rejects any unsigned Mach-O
           # binaries it finds — but `find` and `codesign` can't reach
-          # them while they're still archived. Extract into the
-          # already-present lib/python3.13 directory (which is on the
-          # frozen Python's sys.path) and delete the zip; modules load
-          # identically either way, only the on-disk shape changes.
+          # them while archived.
+          #
+          # v0.5.13 expanded the zip into lib/python3.13 and left it
+          # expanded; that worked for signing but turned 1 file into
+          # ~20K loose ones, and Apple's notary scanner stalled past
+          # 6h enumerating them all. Round-trip instead: extract,
+          # sign Mach-O contents, re-archive into python313.zip in
+          # place. Apple unzips during scanning (proven by v0.5.12's
+          # reject path quoting "python313.zip/google/_upb/...") so
+          # signatures are still seen, but the wire shape stays small
+          # and the scan is back to ~2 min.
           ZIP_PATH="$APP/Contents/Resources/lib/python313.zip"
+          UNZIP_TMP="$RUNNER_TEMP/python313-unzipped"
           if [ -f "$ZIP_PATH" ]; then
-            EXTRACT_DIR="$APP/Contents/Resources/lib/python3.13"
-            mkdir -p "$EXTRACT_DIR"
-            unzip -oq "$ZIP_PATH" -d "$EXTRACT_DIR"
-            rm "$ZIP_PATH"
-            echo "Expanded python313.zip into $EXTRACT_DIR so notarytool can see the .so files inside."
+            rm -rf "$UNZIP_TMP"
+            mkdir -p "$UNZIP_TMP"
+            unzip -oq "$ZIP_PATH" -d "$UNZIP_TMP"
+            echo "Expanded $(unzip -l "$ZIP_PATH" | tail -1 | awk '{print $2}') files from python313.zip for inner-binary signing."
           fi
 
-          # Find every Mach-O binary inside the bundle (executables and
-          # dynamic libs) by content type — extension-only matching
-          # would miss the bundled Python interp at
-          # Frameworks/Python.framework/Versions/3.13/Python.
-          # find -d emits leaves first so seals chain bottom-up.
+          # Sign every Mach-O binary by content type — extension-only
+          # matching would miss the bundled Python interp at
+          # Frameworks/Python.framework/Versions/3.13/Python. Walk
+          # both the bundle and the unzipped python313.zip workspace.
+          # find -d emits leaves first so container seals chain
+          # bottom-up.
           MACHO_LIST="$RUNNER_TEMP/macho-list.txt"
           : > "$MACHO_LIST"
-          while IFS= read -r -d '' f; do
-            if file -b "$f" 2>/dev/null | grep -qE 'Mach-O.*(executable|bundle|dynamically linked shared library)'; then
-              printf '%s\0' "$f" >> "$MACHO_LIST"
-            fi
-          done < <(find -d "$APP" -type f -print0)
+          for ROOT in "$APP" "$UNZIP_TMP"; do
+            [ -d "$ROOT" ] || continue
+            while IFS= read -r -d '' f; do
+              if file -b "$f" 2>/dev/null | grep -qE 'Mach-O.*(executable|bundle|dynamically linked shared library)'; then
+                printf '%s\0' "$f" >> "$MACHO_LIST"
+              fi
+            done < <(find -d "$ROOT" -type f -print0)
+          done
 
-          echo "Signing $(grep -c '' "$MACHO_LIST" || true) Mach-O files..."
+          echo "Signing $(tr -cd '\0' < "$MACHO_LIST" | wc -c | tr -d ' ') Mach-O files..."
           while IFS= read -r -d '' f; do
             codesign --force --options runtime --timestamp \
               --sign "$IDENTITY" "$f"
           done < "$MACHO_LIST"
+
+          # Re-archive the (now-signed) python313.zip contents in
+          # place. zip -X strips OS metadata so the archive is
+          # reproducible across runs. ZIP_PATH is relative to the
+          # workspace, so resolve to absolute before cd-ing into the
+          # unzip workspace.
+          if [ -d "$UNZIP_TMP" ]; then
+            ZIP_PATH_ABS="$PWD/$ZIP_PATH"
+            rm -f "$ZIP_PATH_ABS"
+            ( cd "$UNZIP_TMP" && zip -rqX "$ZIP_PATH_ABS" . )
+            rm -rf "$UNZIP_TMP"
+            echo "Re-archived signed contents into python313.zip ($(du -h "$ZIP_PATH_ABS" | cut -f1))."
+          fi
 
           # Sign nested framework bundles (the .framework directory
           # itself, after all its inner binaries are signed).
@@ -152,25 +176,43 @@ jobs:
           # plain zip mangles into duplicate files.
           ditto -c -k --keepParent "$APP" "$NOTARIZE_ZIP"
 
-          # Submit and capture the JSON-formatted result so we can
-          # extract the submission id even on Invalid (notarytool's
-          # human output buries the id mid-stream and is annoying to
-          # parse). --wait blocks until Apple finishes scanning
-          # (typically 1-5 min).
+          # Submit WITHOUT --wait so we own the polling loop. Apple's
+          # --wait long-polls indefinitely on their side, and a stalled
+          # response stream gives no signal back to us — v0.5.13 sat
+          # in --wait for 6 hours before GitHub force-cancelled the
+          # job at the runner timeout, with zero diagnostics. Owning
+          # the loop ourselves caps blast radius at TIMEOUT_S below.
           SUBMIT_OUT="$RUNNER_TEMP/notarytool-submit.json"
-          set +e
           xcrun notarytool submit "$NOTARIZE_ZIP" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-            --wait \
             --output-format json > "$SUBMIT_OUT"
-          NOTARIZE_RC=$?
-          set -e
-
           cat "$SUBMIT_OUT"
-          SUBMISSION_ID=$(python3 -c "import json,sys; print(json.load(open('$SUBMIT_OUT'))['id'])")
-          STATUS=$(python3 -c "import json,sys; print(json.load(open('$SUBMIT_OUT'))['status'])")
+          SUBMISSION_ID=$(python3 -c "import json; print(json.load(open('$SUBMIT_OUT'))['id'])")
+
+          # Poll info until we get a terminal status (Accepted /
+          # Invalid / Rejected) or hit the cap. Apple's stated SLA
+          # is "minutes"; 30 min is generous and bounds the run so a
+          # stalled queue fails fast instead of dangling.
+          TIMEOUT_S=1800
+          POLL_INTERVAL_S=30
+          DEADLINE=$(( $(date +%s) + TIMEOUT_S ))
+          STATUS="Unknown"
+          INFO_OUT="$RUNNER_TEMP/notarytool-info.json"
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            xcrun notarytool info "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --output-format json > "$INFO_OUT" || true
+            STATUS=$(python3 -c "import json; print(json.load(open('$INFO_OUT')).get('status','Unknown'))" 2>/dev/null || echo "Unknown")
+            echo "  [$(date +%H:%M:%S)] notary status: $STATUS"
+            case "$STATUS" in
+              Accepted|Invalid|Rejected) break ;;
+            esac
+            sleep $POLL_INTERVAL_S
+          done
 
           # Always fetch the per-issue log — even on Accepted Apple
           # may have warnings worth surfacing. On Invalid this is the
@@ -183,11 +225,12 @@ jobs:
           echo "::endgroup::"
 
           if [ "$STATUS" != "Accepted" ]; then
-            # notarytool --wait returns 0 even when status is Invalid
-            # (the submission itself succeeded; only the verdict is
-            # bad). Hardcode 1 so this step actually fails the run
-            # and we don't attach a non-notarized .app to the release.
-            echo "::error::Notarization status was $STATUS — see Apple notary log above"
+            # Three failure modes funnel here: Invalid (Apple has a
+            # specific reason — see log above), Rejected (rare; Apple's
+            # malware scan flagged something), and our own timeout
+            # (status still In Progress at the cap, treat as queue
+            # backlog and surface a clear retry signal).
+            echo "::error::Notarization status was $STATUS — see Apple notary log above (or retry later if the queue is stuck)"
             exit 1
           fi
 
