@@ -389,16 +389,18 @@ def _build_user_message(
         is_file_change = bool(file_name) and tag in ("tool_edit", "tool_write")
         if is_file_change:
             lines.append(
-                "Output the form: '<gerund verb> <file>, <intent phrase>'. "
-                "PRESENT tense. Drop the file extension. The verb names "
-                "the operation (editing, writing, refactoring, scaffolding, "
-                "etc). The intent phrase is 2-4 words describing what "
-                "THIS specific change does. Examples: 'editing key_window, "
-                "wiring start_step', 'editing templates, dropping "
-                "extensions', 'writing key_prompt, scaffolding modal'. "
-                "Reject: full sentences, articles (a/an/the), code tokens, "
-                "the persona's signature address. One optional trailing "
-                "period; no other punctuation beyond the comma."
+                "Output the form: '<intent phrase> in <file>'. The "
+                "filename is REQUIRED — an output that omits it is "
+                "invalid; emit it again with the file. PRESENT tense, "
+                "4-7 words total. Drop the file extension when speaking "
+                "the name. The intent phrase is 2-4 words on what THIS "
+                "specific change does. Examples: 'fixing skip step in "
+                "key_prompt', 'wiring start_step in key_window', "
+                "'dropping extensions in templates', 'adding ElevenLabs "
+                "field in key_prompt'. Reject: full sentences, articles "
+                "(a/an/the), code tokens, the persona's signature "
+                "address, outputs without a file. One optional trailing "
+                "period; no other punctuation."
             )
         else:
             lines.append(
