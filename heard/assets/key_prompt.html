@@ -448,7 +448,7 @@
           </span>
           <span>heard</span>
         </div>
-        <button class="skip-top" onclick="finish()">Skip</button>
+        <button class="skip-top" onclick="skipStep()">Skip</button>
       </div>
 
       <div class="screens-area">
@@ -724,6 +724,16 @@
     }
   }
   function goto(n) { setStep(n); }
+
+  // Top-of-modal Skip button. Advances to the next step rather than
+  // closing the whole flow — most users want to skip *this* step
+  // (trial signup, key entry, etc.) and continue, not bail entirely.
+  // On the final step there's nowhere to advance to, so we defer to
+  // finish() which submits whatever's been entered so far.
+  function skipStep() {
+    if (current < TOTAL_STEPS) goto(current + 1);
+    else finish();
+  }
   function post(action, payload) {
     try {
       window.webkit.messageHandlers.heard.postMessage({ action: action, payload: payload || {} });
