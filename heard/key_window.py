@@ -189,11 +189,19 @@ class _MessageHandler(NSObject):
         self._cb(action, payload_dict)
 
 
-def prompt() -> dict[str, Any]:
+def prompt(start_step: int = 1) -> dict[str, Any]:
     """Show the onboarding flow modally. Returns
     {action, llm, elevenlabs, agents}. action is 'finish' (with
     possibly empty keys if the user skipped) or 'cancel'. agents is
-    a list of agent names the user wants hooks installed for."""
+    a list of agent names the user wants hooks installed for.
+
+    ``start_step`` controls which screen the modal opens on. 1 (default)
+    is the trial-signup landing for first-launch onboarding; 2 is the
+    keys screen, used when the user invoked "Set API key…" from the menu
+    so they don't get bounced through the trial again.
+    """
+    if start_step < 1 or start_step > 4:
+        start_step = 1
     # Cmd-V / Cmd-C / Cmd-A only work if NSApp has a main menu wired
     # to the standard editing selectors. LSUIElement apps don't get one
     # by default; install a hidden minimal Edit menu before the modal
@@ -375,6 +383,9 @@ def prompt() -> dict[str, Any]:
         # Settings before reaching this screen.
         "{{ACCESSIBILITY_GRANTED}}",
         "true" if accessibility.is_trusted() else "false",
+    ).replace(
+        "{{START_STEP}}",
+        str(start_step),
     )
 
     webview.loadHTMLString_baseURL_(html, None)

@@ -578,25 +578,31 @@ class HeardApp(rumps.App):
             pass
 
     def on_set_api_keys(self, _sender) -> None:
-        self._prompt_api_key()
+        # Land on Screen 2 (keys) so menu users skip the trial-signup
+        # landing — they're explicitly here to enter a key, not sign in.
+        self._prompt_api_key(start_step=2)
         try:
             client.send({"cmd": "reload"})
         except Exception:
             pass
         self.refresh(None)
 
-    def _prompt_api_key(self) -> None:
+    def _prompt_api_key(self, start_step: int = 1) -> None:
         """Four-step onboarding window. Saves whichever keys the user
         provides into config, installs hooks for the agents they
         selected, and marks the user as onboarded so we never re-show
-        this on subsequent launches."""
+        this on subsequent launches.
+
+        ``start_step`` selects which screen the modal opens on (1 = trial
+        signup, 2 = keys). Defaults to 1 for first-launch onboarding.
+        """
         try:
             from heard import key_window
         except Exception as e:
             print(f"key_window unavailable: {e}", file=sys.stderr)
             return
 
-        result = key_window.prompt()
+        result = key_window.prompt(start_step=start_step)
         # Always mark onboarded once they've seen the flow — even if they
         # clicked Skip — so we don't re-prompt on every launch.
         config.set_value("onboarded", True)
