@@ -66,7 +66,7 @@ def test_filter_unspoken_skips_already_marked():
     assert out == ["Second prose."]
 
 
-def test_pre_tool_speaks_intermediate_then_skips_tool_announcement(
+def test_pre_tool_speaks_intermediate_then_announces_tool_with_intent(
     tmp_path, monkeypatch
 ):
     transcript = tmp_path / "t.jsonl"
@@ -95,10 +95,15 @@ def test_pre_tool_speaks_intermediate_then_skips_tool_announcement(
         }
     )
 
-    # We expect ONE event: the prose, NOT a tool announcement.
-    assert len(sent) == 1
+    # Both fire: prose narrates the overall intent, tool_pre carries the
+    # specific action with recent_intent in ctx so persona Haiku can
+    # combine them into a purposeful per-tool status line.
+    assert len(sent) == 2
     assert sent[0]["kind"] == "intermediate"
     assert "Doing what I can automatically" in sent[0]["neutral"]
+    assert sent[1]["kind"] == "tool_pre"
+    assert sent[1]["ctx"].get("recent_intent")
+    assert "Doing what I can automatically" in sent[1]["ctx"]["recent_intent"]
 
 
 def test_pre_tool_announces_tool_when_no_preceding_prose(tmp_path, monkeypatch):

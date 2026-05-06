@@ -506,26 +506,33 @@ def handle_cc_pre_tool(data: dict) -> None:
     cfg = config.load()
     session = _session_from_data(data)
 
-    # First, surface any prose Claude wrote leading up to this tool call.
-    # If we said something, the tool announcement would just be noise on
-    # top of it — skip the tool announcement in that case.
+    # Surface any prose Claude wrote leading up to this tool call. We no
+    # longer suppress the tool announcement when prose just spoke — the
+    # tool_pre carries per-file specifics ("Adding the field to the
+    # modal" vs. the prose-level overview), so both narrate.
     transcript = data.get("transcript_path")
-    spoke_text = 0
     if transcript:
-        spoke_text = _speak_unspoken_texts(transcript, session, cfg, finalize=False)
+        _speak_unspoken_texts(transcript, session, cfg, finalize=False)
 
-    if spoke_text > 0:
-        return
     if not cfg.get("narrate_tools", True):
         return
     ev = templates.pre_tool_event(data.get("tool_name") or "", data.get("tool_input") or {})
     if ev is None:
         return
+    # Pull the latest assistant prose into the tool_pre ctx so persona
+    # Haiku can combine the current intent ("…wire up the ElevenLabs
+    # key…") with the specific tool action ("Editing key_window") into
+    # one purposeful status line.
+    ctx = dict(ev.ctx)
+    if transcript:
+        recent = extract_last_assistant_text(transcript)
+        if recent:
+            ctx["recent_intent"] = recent[:400]
     send_event(
         kind="tool_pre",
         neutral=ev.text,
         tag=ev.tag,
-        ctx=ev.ctx,
+        ctx=ctx,
         session=session,
     )
 

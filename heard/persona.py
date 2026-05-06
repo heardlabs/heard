@@ -313,11 +313,20 @@ def _build_user_message(
     ctx: dict[str, Any],
     session: dict[str, Any],
 ) -> str:
+    # Recent assistant prose flows in via ctx for tool_pre events so we
+    # can produce purposeful status lines ("Adding the field to the
+    # modal") instead of bare templates ("Editing key_window"). Pop it
+    # so it's formatted as its own line, not stuffed into "Context:".
+    ctx = dict(ctx) if ctx else {}
+    recent_intent = (ctx.pop("recent_intent", "") or "").strip()
+
     lines = [f"Event: {event_kind}", f"Tag: {tag}", f"Neutral narration: {neutral}"]
     if ctx:
         nice = ", ".join(f"{k}={v}" for k, v in ctx.items() if v)
         if nice:
             lines.append(f"Context: {nice}")
+    if recent_intent:
+        lines.append(f"Current goal (from recent prose): {recent_intent}")
     if session:
         repo = session.get("repo_name")
         fails = session.get("failure_count") or 0
@@ -344,8 +353,20 @@ def _build_user_message(
             "Write ONE sentence describing what just happened. PAST tense — "
             "the tool has run. Stay in character. No markdown."
         )
+    elif event_kind == "tool_pre" and recent_intent:
+        # When we have intent context, we want a purposeful status line
+        # — not just the template verb + filename. Tell Haiku to lean
+        # on the goal and stay specific to THIS file/action.
+        lines.append(
+            "Write ONE brief status sentence I will speak aloud while this "
+            "is happening. PRESENT tense. Combine the current goal with "
+            "this specific tool action — e.g. 'Adding the ElevenLabs field "
+            "to the modal' rather than 'Editing key_prompt'. Mention the "
+            "file by its bare name (no extension). Stay in character. "
+            "No markdown. Do not restate the tag."
+        )
     else:
-        # tool_pre, intermediate — work is in flight
+        # tool_pre without intent, intermediate — work is in flight.
         lines.append(
             "Write ONE sentence I will speak aloud while this is happening. "
             "PRESENT tense — the work is in progress, not done. Stay in "
