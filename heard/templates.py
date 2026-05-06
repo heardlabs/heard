@@ -26,6 +26,14 @@ class Narration:
     ctx: dict[str, Any] = field(default_factory=dict)
 
 
+# Per-side cap for change snippets passed into tool_pre ctx (Edit
+# old/new, Write content, NotebookEdit new_source). Persona Haiku
+# reads them as raw context, not for narration. 400 chars is enough
+# for Haiku to identify a feature add / refactor / config tweak
+# without bloating the prompt for very large rewrites.
+_CHANGE_SNIPPET_CAP = 400
+
+
 def _basename(path: str | None) -> str:
     return os.path.basename(path or "")
 
@@ -173,17 +181,39 @@ def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narrati
         spoken = _spoken_filename(tool_input.get("file_path"))
         ctx_name = _basename(tool_input.get("file_path"))
         text = f"Editing {spoken}." if spoken else "Editing a file."
-        return Narration(tag="tool_edit", text=text, ctx={"file": ctx_name})
+        return Narration(
+            tag="tool_edit",
+            text=text,
+            ctx={
+                "file": ctx_name,
+                "change_old": (tool_input.get("old_string") or "")[:_CHANGE_SNIPPET_CAP],
+                "change_new": (tool_input.get("new_string") or "")[:_CHANGE_SNIPPET_CAP],
+            },
+        )
     if tn == "Write":
         spoken = _spoken_filename(tool_input.get("file_path"))
         ctx_name = _basename(tool_input.get("file_path"))
         text = f"Writing {spoken}." if spoken else "Writing a file."
-        return Narration(tag="tool_write", text=text, ctx={"file": ctx_name})
+        return Narration(
+            tag="tool_write",
+            text=text,
+            ctx={
+                "file": ctx_name,
+                "change_new": (tool_input.get("content") or "")[:_CHANGE_SNIPPET_CAP],
+            },
+        )
     if tn == "NotebookEdit":
         spoken = _spoken_filename(tool_input.get("notebook_path"))
         ctx_name = _basename(tool_input.get("notebook_path"))
         text = f"Editing {spoken}." if spoken else "Editing a notebook."
-        return Narration(tag="tool_edit", text=text, ctx={"file": ctx_name})
+        return Narration(
+            tag="tool_edit",
+            text=text,
+            ctx={
+                "file": ctx_name,
+                "change_new": (tool_input.get("new_source") or "")[:_CHANGE_SNIPPET_CAP],
+            },
+        )
     if tn == "Read":
         return None
     if tn == "Glob":
