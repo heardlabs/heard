@@ -382,18 +382,35 @@ def _build_user_message(
     elif event_kind == "tool_pre" and recent_intent:
         # Status while a specific tool runs. Phrase, not a sentence —
         # these fire dozens of times per turn and every word costs
-        # listening time. Default 2-4 words; only stretch to ~7 when
-        # the change genuinely can't be summarised shorter.
-        lines.append(
-            "Output a PHRASE (not a full sentence). 2-4 words by "
-            "default; extend only if the change is genuinely too "
-            "complex for that. PRESENT-tense gerund verb + object. "
-            "Examples: 'adding ElevenLabs field', 'wiring start_step', "
-            "'dropping extensions'. Reject: full sentences, 'I am…', "
-            "'editing X' (zero info), filenames, articles (a/an/the), "
-            "code tokens, the persona's signature address. No "
-            "punctuation beyond one optional trailing period."
-        )
+        # listening time. For file-touching tools we bake the filename
+        # in so the user knows WHICH file is being changed; for shell
+        # / search tools we stay pure-phrase.
+        file_name = (ctx.get("file") or "").strip()
+        is_file_change = bool(file_name) and tag in ("tool_edit", "tool_write")
+        if is_file_change:
+            lines.append(
+                "Output the form: '<gerund verb> <file>, <intent phrase>'. "
+                "PRESENT tense. Drop the file extension. The verb names "
+                "the operation (editing, writing, refactoring, scaffolding, "
+                "etc). The intent phrase is 2-4 words describing what "
+                "THIS specific change does. Examples: 'editing key_window, "
+                "wiring start_step', 'editing templates, dropping "
+                "extensions', 'writing key_prompt, scaffolding modal'. "
+                "Reject: full sentences, articles (a/an/the), code tokens, "
+                "the persona's signature address. One optional trailing "
+                "period; no other punctuation beyond the comma."
+            )
+        else:
+            lines.append(
+                "Output a PHRASE (not a full sentence). 2-4 words by "
+                "default; extend only if the change is genuinely too "
+                "complex for that. PRESENT-tense gerund verb + object. "
+                "Examples: 'adding ElevenLabs field', 'wiring start_step', "
+                "'dropping extensions'. Reject: full sentences, 'I am…', "
+                "filenames (no file context here), articles (a/an/the), "
+                "code tokens, the persona's signature address. No "
+                "punctuation beyond one optional trailing period."
+            )
     else:
         # tool_pre without intent, intermediate — work is in flight.
         lines.append(
