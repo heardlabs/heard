@@ -95,10 +95,57 @@ def test_pre_tool_speaks_intermediate_then_skips_tool_announcement(
         }
     )
 
-    # We expect ONE event: the prose, NOT a tool announcement.
+    # We expect ONE event: the prose, NOT a tool announcement. The
+    # prose IS the intent; doubling it with "Running ps." would be
+    # noise.
     assert len(sent) == 1
     assert sent[0]["kind"] == "intermediate"
     assert "Doing what I can automatically" in sent[0]["neutral"]
+
+
+def test_pre_tool_carries_recent_intent_when_prior_prose_already_spoken(
+    tmp_path, monkeypatch
+):
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        [
+            ("user", [{"type": "text", "text": "go"}]),
+            ("assistant", [{"type": "text", "text": "Wiring up the ElevenLabs key."}]),
+            ("assistant", [{"type": "tool_use", "name": "Edit"}]),
+        ],
+    )
+    sent: list[dict] = []
+    monkeypatch.setattr(client, "send_event", lambda **kw: sent.append(kw))
+
+    # Pretend the prose was spoken in an earlier hook so it doesn't
+    # fire fresh in this call — tool_pre will reach the send path.
+    spoken.mark_spoken("session-recent", "Wiring up the ElevenLabs key.")
+
+    client.handle_cc_pre_tool(
+        {
+            "session_id": "session-recent",
+            "transcript_path": str(transcript),
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": "/repo/heard/key_window.py",
+                "old_string": "def prompt():",
+                "new_string": "def prompt(start_step: int = 1):",
+            },
+        }
+    )
+
+    # Tool_pre fires (no fresh prose to suppress) with the prior
+    # prose riding along as recent_intent so Haiku has the goal,
+    # plus the change snippets so it can see what's actually
+    # different. This is what enables "Wiring up the ElevenLabs
+    # key entry in key_window" instead of bare "Editing key_window".
+    assert len(sent) == 1
+    assert sent[0]["kind"] == "tool_pre"
+    ctx = sent[0]["ctx"]
+    assert "Wiring up the ElevenLabs key" in ctx.get("recent_intent", "")
+    assert ctx.get("change_old") == "def prompt():"
+    assert ctx.get("change_new") == "def prompt(start_step: int = 1):"
 
 
 def test_pre_tool_announces_tool_when_no_preceding_prose(tmp_path, monkeypatch):

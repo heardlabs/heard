@@ -508,7 +508,10 @@ def handle_cc_pre_tool(data: dict) -> None:
 
     # First, surface any prose Claude wrote leading up to this tool call.
     # If we said something, the tool announcement would just be noise on
-    # top of it — skip the tool announcement in that case.
+    # top of it — skip it in that case. When the tool_pre DOES fire (no
+    # fresh prose to suppress), we still enrich its ctx with the latest
+    # transcript prose + the actual change content so persona Haiku can
+    # produce a purposeful status line instead of a bare template verb.
     transcript = data.get("transcript_path")
     spoke_text = 0
     if transcript:
@@ -521,11 +524,16 @@ def handle_cc_pre_tool(data: dict) -> None:
     ev = templates.pre_tool_event(data.get("tool_name") or "", data.get("tool_input") or {})
     if ev is None:
         return
+    ctx = dict(ev.ctx)
+    if transcript:
+        recent = extract_last_assistant_text(transcript)
+        if recent:
+            ctx["recent_intent"] = recent[:400]
     send_event(
         kind="tool_pre",
         neutral=ev.text,
         tag=ev.tag,
-        ctx=ev.ctx,
+        ctx=ctx,
         session=session,
     )
 

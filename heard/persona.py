@@ -104,16 +104,30 @@ class Persona:
 
         Falls back gracefully: Haiku → template → neutral.
 
-        Haiku only fires for `final` events (the summary at end of a turn).
-        Tool events (tool_pre / tool_post) always use templates — they are
-        short, repetitive, and don't need a model to rewrite, so this keeps
-        per-event TTFA near 300ms instead of ~1.5s.
+        Haiku fires for `final` events and for `tool_pre` events that
+        carry enough ctx (preceding prose intent or actual change
+        content) to do better than the bare template. Templated
+        tool_pre paths without that context still skip Haiku to keep
+        per-event TTFA near 300ms — the rewrite only earns its latency
+        when there's real content to translate.
         """
         if self.is_raw:
             return neutral
 
-        if event_kind == "final" and _haiku_enabled():
-            haiku = _haiku_rewrite(self, event_kind, neutral, tag, ctx or {}, session or {})
+        ctx_for_haiku = ctx or {}
+        haiku_eligible = event_kind == "final"
+        if event_kind == "tool_pre" and (
+            ctx_for_haiku.get("recent_intent")
+            or ctx_for_haiku.get("change_new")
+            or ctx_for_haiku.get("change_old")
+        ):
+            # Enough context for a purposeful rewrite — "Adding the
+            # ElevenLabs field to the modal" beats "Editing key_prompt"
+            # and is worth the Haiku round trip.
+            haiku_eligible = True
+
+        if haiku_eligible and _haiku_enabled():
+            haiku = _haiku_rewrite(self, event_kind, neutral, tag, ctx_for_haiku, session or {})
             if haiku:
                 return haiku
 
@@ -313,11 +327,32 @@ def _build_user_message(
     ctx: dict[str, Any],
     session: dict[str, Any],
 ) -> str:
+    # Recent assistant prose flows in via ctx for tool_pre events so we
+    # can produce purposeful status lines ("Adding the field to the
+    # modal") instead of bare templates ("Editing key_window"). The
+    # change snippets (Edit old/new, Write content) flow in similarly so
+    # Haiku can read what's actually being changed and translate to
+    # intent. Pop them so they're formatted as their own labelled lines,
+    # not stuffed into the generic "Context:" key=value bag.
+    ctx = dict(ctx) if ctx else {}
+    recent_intent = (ctx.pop("recent_intent", "") or "").strip()
+    change_old = (ctx.pop("change_old", "") or "").strip()
+    change_new = (ctx.pop("change_new", "") or "").strip()
+
     lines = [f"Event: {event_kind}", f"Tag: {tag}", f"Neutral narration: {neutral}"]
     if ctx:
         nice = ", ".join(f"{k}={v}" for k, v in ctx.items() if v)
         if nice:
             lines.append(f"Context: {nice}")
+    if recent_intent:
+        lines.append(f"Current goal (from recent prose): {recent_intent}")
+    if change_old or change_new:
+        # Wrap in delimiters so multi-line code in the snippet doesn't
+        # blur into the surrounding instructions when Haiku reads it.
+        if change_old:
+            lines.append(f"--- Removed by this edit:\n{change_old}\n---")
+        if change_new:
+            lines.append(f"--- Added by this edit:\n{change_new}\n---")
     if session:
         repo = session.get("repo_name")
         fails = session.get("failure_count") or 0
@@ -344,8 +379,23 @@ def _build_user_message(
             "Write ONE sentence describing what just happened. PAST tense — "
             "the tool has run. Stay in character. No markdown."
         )
+    elif event_kind == "tool_pre" and recent_intent:
+        # Status while a specific tool runs. Phrase, not a sentence —
+        # these fire dozens of times per turn and every word costs
+        # listening time. Default 2-4 words; only stretch to ~7 when
+        # the change genuinely can't be summarised shorter.
+        lines.append(
+            "Output a PHRASE (not a full sentence). 2-4 words by "
+            "default; extend only if the change is genuinely too "
+            "complex for that. PRESENT-tense gerund verb + object. "
+            "Examples: 'adding ElevenLabs field', 'wiring start_step', "
+            "'dropping extensions'. Reject: full sentences, 'I am…', "
+            "'editing X' (zero info), filenames, articles (a/an/the), "
+            "code tokens, the persona's signature address. No "
+            "punctuation beyond one optional trailing period."
+        )
     else:
-        # tool_pre, intermediate — work is in flight
+        # tool_pre without intent, intermediate — work is in flight.
         lines.append(
             "Write ONE sentence I will speak aloud while this is happening. "
             "PRESENT tense — the work is in progress, not done. Stay in "

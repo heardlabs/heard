@@ -26,8 +26,27 @@ class Narration:
     ctx: dict[str, Any] = field(default_factory=dict)
 
 
+# Per-side cap for change snippets passed into tool_pre ctx (Edit
+# old/new, Write content, NotebookEdit new_source). Persona Haiku
+# reads them as raw context, not for narration. 400 chars is enough
+# for Haiku to identify a feature add / refactor / config tweak
+# without bloating the prompt for very large rewrites.
+_CHANGE_SNIPPET_CAP = 400
+
+
 def _basename(path: str | None) -> str:
     return os.path.basename(path or "")
+
+
+def _spoken_filename(path: str | None) -> str:
+    """Filename for TTS — drops the extension so we don't speak ".py"
+    aloud ("ui dot py"). Bare files like Dockerfile / Makefile keep
+    their full name; dotfiles like .zshrc keep their stem."""
+    name = _basename(path)
+    if not name:
+        return ""
+    stem, ext = os.path.splitext(name)
+    return stem if stem else name
 
 
 _BUILD_VERBS = ("build", "compile", "bundle")
@@ -159,15 +178,42 @@ def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narrati
             ctx={"command": (tool_input.get("command") or "").strip()[:200]},
         )
     if tn == "Edit":
-        name = _basename(tool_input.get("file_path"))
-        return Narration(tag="tool_edit", text=f"Editing {name}." if name else "Editing a file.", ctx={"file": name})
+        spoken = _spoken_filename(tool_input.get("file_path"))
+        ctx_name = _basename(tool_input.get("file_path"))
+        text = f"Editing {spoken}." if spoken else "Editing a file."
+        return Narration(
+            tag="tool_edit",
+            text=text,
+            ctx={
+                "file": ctx_name,
+                "change_old": (tool_input.get("old_string") or "")[:_CHANGE_SNIPPET_CAP],
+                "change_new": (tool_input.get("new_string") or "")[:_CHANGE_SNIPPET_CAP],
+            },
+        )
     if tn == "Write":
-        name = _basename(tool_input.get("file_path"))
-        return Narration(tag="tool_write", text=f"Writing {name}." if name else "Writing a file.", ctx={"file": name})
+        spoken = _spoken_filename(tool_input.get("file_path"))
+        ctx_name = _basename(tool_input.get("file_path"))
+        text = f"Writing {spoken}." if spoken else "Writing a file."
+        return Narration(
+            tag="tool_write",
+            text=text,
+            ctx={
+                "file": ctx_name,
+                "change_new": (tool_input.get("content") or "")[:_CHANGE_SNIPPET_CAP],
+            },
+        )
     if tn == "NotebookEdit":
-        name = _basename(tool_input.get("notebook_path"))
-        text = f"Editing {name}." if name else "Editing a notebook."
-        return Narration(tag="tool_edit", text=text, ctx={"file": name})
+        spoken = _spoken_filename(tool_input.get("notebook_path"))
+        ctx_name = _basename(tool_input.get("notebook_path"))
+        text = f"Editing {spoken}." if spoken else "Editing a notebook."
+        return Narration(
+            tag="tool_edit",
+            text=text,
+            ctx={
+                "file": ctx_name,
+                "change_new": (tool_input.get("new_source") or "")[:_CHANGE_SNIPPET_CAP],
+            },
+        )
     if tn == "Read":
         return None
     if tn == "Glob":
