@@ -23,9 +23,11 @@ def test_darwin_missing_pyobjc_returns_false(monkeypatch):
         assert accessibility.ensure_trusted() is False
 
 
-def test_is_trusted_passes_prompt_false():
-    # Just verify the wrapper is a thin pass-through
-    with patch.object(accessibility, "ensure_trusted") as mock_ensure:
-        mock_ensure.return_value = True
+def test_is_trusted_does_not_prompt():
+    # is_trusted must never fire the system permission dialog —
+    # confirms it calls the underlying API with prompt=False.
+    with patch("sys.platform", "darwin"), \
+         patch.object(accessibility, "_ax_api_says_trusted") as mock_api:
+        mock_api.return_value = True
         assert accessibility.is_trusted() is True
-        mock_ensure.assert_called_once_with(prompt=False)
+        mock_api.assert_called_once_with(prompt=False)
