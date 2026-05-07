@@ -661,8 +661,22 @@ class Daemon:
                 # Auth failures DON'T trigger fallback — that's a
                 # config bug the user needs to fix, and silently
                 # routing through Kokoro hides it.
-                is_auth = "401" in msg or "invalid_api_key" in msg.lower()
-                if not is_auth and self._kokoro_fallback_to(chunk, voice, speed, lang, path):
+                msg_l = msg.lower()
+                is_auth = "401" in msg or "403" in msg or "invalid_api_key" in msg_l
+                is_rate = (
+                    "429" in msg
+                    or "rate limit" in msg_l
+                    or "quota" in msg_l
+                    or "credit" in msg_l
+                    or "out of credits" in msg_l
+                )
+                # Auth + rate failures are user-fixable config bugs;
+                # don't paper over them with a Kokoro fallback. Other
+                # transient errors (network blips, 5xx) get the silent
+                # downgrade so the next narration goes out anyway.
+                if not is_auth and not is_rate and self._kokoro_fallback_to(
+                    chunk, voice, speed, lang, path
+                ):
                     notify.notify(
                         "Heard — using local voice",
                         "ElevenLabs is unreachable. Falling back to the local model for now.",
@@ -677,6 +691,14 @@ class Daemon:
                             "Heard — ElevenLabs key invalid",
                             "Your ElevenLabs key was rejected. Open Heard from the menu bar to fix it.",
                             kind="elevenlabs_auth",
+                        )
+                    elif is_rate:
+                        self._record_error("elevenlabs_rate", msg)
+                        notify.notify(
+                            "Heard — ElevenLabs out of credits",
+                            "Your ElevenLabs account is rate-limited or out of credits. "
+                            "Top up or replace the key from Heard's menu bar.",
+                            kind="elevenlabs_rate",
                         )
                     elif "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
                         self._record_error("ssl", msg)
