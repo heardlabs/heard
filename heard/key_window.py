@@ -1,15 +1,13 @@
-"""Custom-styled API-key prompt — a frameless NSWindow hosting a WKWebView
-that renders our own HTML/CSS. Replaces rumps.Window for the API-key
-flow so we can control the entire visual treatment (rounded corners,
-matte palette, brand fonts, custom buttons) — things macOS NSAlert
-doesn't allow.
+"""Onboarding / API-key prompt — a titled NSWindow hosting a WKWebView
+that renders our own HTML/CSS. Window uses a standard macOS title bar
+(traffic lights + system drag) but with NSWindowStyleMaskFullSizeContentView
++ a transparent title bar so the HTML pink background extends edge-to-edge.
 
-Returns a dict like {"action": "save"|"cancel", "value": "<key>"}.
+Replaces rumps.Window for the four-screen onboarding flow.
 """
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -17,18 +15,15 @@ from typing import Any
 import objc
 from AppKit import (
     NSApp,
-    NSAppearance,
     NSBackingStoreBuffered,
-    NSColor,
     NSMakeRect,
     NSMenu,
     NSMenuItem,
     NSObject,
-    NSVisualEffectBlendingModeBehindWindow,
-    NSVisualEffectStateActive,
-    NSVisualEffectView,
     NSWindow,
-    NSWindowStyleMaskBorderless,
+    NSWindowStyleMaskClosable,
+    NSWindowStyleMaskFullSizeContentView,
+    NSWindowStyleMaskTitled,
 )
 from Foundation import NSTimer
 from WebKit import (
@@ -38,13 +33,6 @@ from WebKit import (
 )
 
 from heard import accessibility
-
-# NSVisualEffectMaterial constants (raw — PyObjC's enum import is flaky):
-#   13 = HUDWindow        very translucent, system HUDs
-#   15 = FullScreenUI     translucent, balanced
-#   21 = UnderWindowBackground   most see-through
-_VIBRANCY_MATERIAL = 21
-
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 HTML_PATH = ASSETS_DIR / "key_prompt.html"
@@ -78,25 +66,6 @@ def _ensure_edit_menu() -> None:
     edit_top.setSubmenu_(edit_menu)
 
     NSApp.setMainMenu_(main_menu)
-
-
-def _total_system_memory_gb() -> float | None:
-    """Return total physical RAM in GB by reading ``sysctl hw.memsize``.
-    Returns ``None`` if the lookup fails — caller treats that as "no
-    warning to show", not a fatal."""
-    sysctl = shutil.which("sysctl")
-    if not sysctl:
-        return None
-    try:
-        out = subprocess.run(
-            [sysctl, "-n", "hw.memsize"],
-            capture_output=True,
-            text=True,
-            timeout=1.0,
-        ).stdout.strip()
-        return int(out) / (1024 ** 3)
-    except Exception:
-        return None
 
 
 def _flip_badge_to_enabled(webview, state: dict, result: dict) -> None:
@@ -133,9 +102,12 @@ def _watch_accessibility(webview, state: dict, result: dict) -> None:
 
     Subscribed at modal mount (not just after Grant access click) so a
     user who toggles AX directly — or who already had it granted from a
-    previous install — gets the same auto-detection. The callback fires
-    on the main thread ~150 ms after the `com.apple.accessibility.api`
-    notification (TCC settle delay)."""
+    previous install — gets the same auto-detection. The observer polls
+    `is_trusted()` every 500 ms on the main run loop (in
+    NSRunLoopCommonModes so the timer fires while the modal session is
+    up) and triggers the callback within ~1 s of a True transition.
+    See `heard/accessibility.py` for why polling beats the
+    NSDistributedNotification approach we used pre-v0.5.15."""
     if state.get("ax_observer") is not None:
         return  # already subscribed for this modal session
 
@@ -155,9 +127,7 @@ def _watch_accessibility(webview, state: dict, result: dict) -> None:
 
 
 class _KeyableWindow(NSWindow):
-    """Borderless NSWindow that's allowed to become key + receive text
-    input. Stock NSWindowStyleMaskBorderless returns False for both,
-    leaving inputs un-focusable."""
+    """Titled NSWindow that's explicitly allowed to become key + main."""
 
     def canBecomeKeyWindow(self):
         return True
@@ -238,8 +208,9 @@ def prompt(start_step: int = 1) -> dict[str, Any]:
     state: dict[str, Any] = {"window": None, "stopped": False, "ax_initial": ax_initial}
 
     def on_message(action: str, payload: dict) -> None:
-        # "drag" is fired by JS on mousedown over the card background.
-        # Trigger an OS-level window drag from the in-flight mouse event.
+        # JS-side drag: mousedown over any non-control area triggers an
+        # OS-level window drag from the in-flight event. Lets the user
+        # grab the window anywhere, not just the title bar.
         if action == "drag":
             win = state.get("window")
             if win is not None:
@@ -321,43 +292,23 @@ def prompt(start_step: int = 1) -> dict[str, Any]:
     config.setUserContentController_(controller)
 
     rect = NSMakeRect(0, 0, WINDOW_W, WINDOW_H)
-    window = _KeyableWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-        rect, NSWindowStyleMaskBorderless, NSBackingStoreBuffered, False
+    style_mask = (
+        NSWindowStyleMaskTitled
+        | NSWindowStyleMaskClosable
+        | NSWindowStyleMaskFullSizeContentView
     )
-    window.setOpaque_(False)
-    window.setBackgroundColor_(NSColor.clearColor())
-    # The OS draws a rectangular shadow around the borderless window which
-    # leaves sharp corners outside the rounded vibrancy view. Disable the
-    # window shadow and let the layer's own shadow do the job (it follows
-    # the rounded mask).
-    window.setHasShadow_(False)
-    window.setLevel_(3)  # NSFloatingWindowLevel
-    # Don't enable setMovableByWindowBackground — the WKWebView is the
-    # only subview, so the OS sees the entire window as background and
-    # races with mousedown on embedded HTML inputs (the OS doesn't know
-    # about controls inside the webview). The JS-side mousedown handler
-    # in key_prompt.html routes drags through performWindowDragWithEvent_
-    # instead, and bails on form controls so input focus survives.
-
-    # Native macOS frosted-glass backdrop. Blurs the actual desktop /
-    # other windows behind us — what CSS backdrop-filter cannot do.
-    vibrancy = NSVisualEffectView.alloc().initWithFrame_(rect)
-    vibrancy.setMaterial_(_VIBRANCY_MATERIAL)
-    vibrancy.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
-    vibrancy.setState_(NSVisualEffectStateActive)
-    # Force light frosted glass regardless of system Dark Mode — the
-    # pink branding only reads on a light vibrant background.
-    light_appearance = NSAppearance.appearanceNamed_("NSAppearanceNameVibrantLight")
-    if light_appearance is not None:
-        vibrancy.setAppearance_(light_appearance)
-    vibrancy.setWantsLayer_(True)
-    layer = vibrancy.layer()
-    if layer is not None:
-        layer.setCornerRadius_(22.0)
-        layer.setMasksToBounds_(True)
+    window = _KeyableWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+        rect, style_mask, NSBackingStoreBuffered, False
+    )
+    # Hide title chrome but keep the title-bar drag region + traffic
+    # lights. Content extends behind the (invisible) title bar, so the
+    # HTML's background fills the whole window.
+    window.setTitle_("")
+    window.setTitlebarAppearsTransparent_(True)
+    window.setMovableByWindowBackground_(False)
+    window.setLevel_(3)  # NSFloatingWindowLevel — keep modal above others
 
     webview = WKWebView.alloc().initWithFrame_configuration_(rect, config)
-    webview.setValue_forKey_(False, "drawsBackground")  # transparent webview
     state["webview"] = webview
 
     if HTML_PATH.exists():
@@ -365,19 +316,7 @@ def prompt(start_step: int = 1) -> dict[str, Any]:
     else:
         html = "<h1>API key</h1><p>HTML asset missing.</p>"
 
-    # Inject a low-RAM notice if the machine is below the threshold
-    # where Kokoro's free local voice would feel sluggish. The HTML
-    # ships with the notice always present but display:none — we flip
-    # it via the placeholder substitution below.
-    ram_gb = _total_system_memory_gb()
-    low_ram = ram_gb is not None and ram_gb < 12.0
     html = html.replace(
-        "{{LOW_RAM_NOTICE_DISPLAY}}",
-        "block" if low_ram else "none",
-    ).replace(
-        "{{LOW_RAM_GB}}",
-        f"{ram_gb:.0f}" if ram_gb is not None else "",
-    ).replace(
         # Screen 3 starts in green "Enabled" state when the user has
         # already trusted Heard from a prior install or via System
         # Settings before reaching this screen.
@@ -390,9 +329,9 @@ def prompt(start_step: int = 1) -> dict[str, Any]:
 
     webview.loadHTMLString_baseURL_(html, None)
 
-    # Compose: vibrancy is the content view, webview is its subview
-    window.setContentView_(vibrancy)
-    vibrancy.addSubview_(webview)
+    # WKWebView is the window's content view directly — no vibrancy in
+    # between. The HTML draws an opaque background.
+    window.setContentView_(webview)
     window.center()
     state["window"] = window
 

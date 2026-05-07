@@ -10,57 +10,54 @@
     --field-bg: #ffffff;
     --accent: #1a1018;
     --warn: #b03050;
+    --border: #e6d5dd;
+    --border-strong: #c9b3be;
+    --soft: #f0e6eb;
+    --hover: #fdf6f9;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   html, body {
-    background: transparent;
     color: var(--ink);
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     font-size: 13px;
     -webkit-user-select: none;
     height: 100%;
   }
-
-  /* Card sits over the native NSVisualEffectView. We add a subtle pink
-     wash over the system glass so brand colour shows through without
-     dominating the wallpaper behind. */
-  .stage {
-    position: absolute;
-    inset: 0;
+  body {
     background:
-      radial-gradient(80% 60% at 0% 0%, rgba(255, 200, 220, 0.32) 0%, transparent 70%),
-      radial-gradient(80% 70% at 100% 100%, rgba(220, 170, 195, 0.30) 0%, transparent 70%),
-      rgba(255, 230, 240, 0.08);
-    border-radius: 22px;
+      radial-gradient(80% 60% at 0% 0%, #ffd1dc 0%, transparent 65%),
+      radial-gradient(80% 70% at 100% 100%, #ffcabe 0%, transparent 65%),
+      #fff0f3;
   }
+
+  .stage { position: absolute; inset: 0; }
 
   .card {
     position: absolute;
     inset: 0;
-    padding: 26px 30px 22px;
+    padding: 48px 30px 22px;
     display: flex;
     flex-direction: column;
     gap: 14px;
   }
 
-  /* Step indicator — three dots at top center */
   .stepper {
     position: absolute;
-    top: 16px;
+    top: 38px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     gap: 7px;
+    z-index: 1;
   }
   .stepper .dot {
     width: 5px; height: 5px; border-radius: 50%;
-    background: rgba(31, 25, 34, 0.18);
-    transition: background 0.25s ease, width 0.25s ease;
+    background: #e0d2da;
   }
   .stepper .dot.active { background: var(--ink); width: 18px; border-radius: 999px; }
-  .stepper .dot.done { background: rgba(31, 25, 34, 0.5); }
+  .stepper .dot.done { background: #7d6a72; }
 
   /* Top brand row with Skip */
   .top {
@@ -105,70 +102,35 @@
   }
   p .em { color: var(--ink); font-weight: 500; }
 
-  /* Screens — stacked in same area, slide horizontally between steps.
-     Default state = "ahead" (offscreen-right, waiting to be reached).
-     .active = currently shown.
-     .past = "behind" (already visited, exited left). */
+  /* Screens — instant swap, no slide. */
   .screens-area {
     position: relative;
     flex: 1;
-    /* Clip the slide so screens don't bleed past the rounded card. */
-    overflow: hidden;
-    /* Negative inline margins recover the card's horizontal padding so
-       sliding screens use the full card width without re-introducing
-       padding on each one. */
     margin: 0 -30px;
     padding: 0 30px;
   }
   .screen {
     position: absolute;
     inset: 0 30px;
-    display: flex;
+    display: none;
     flex-direction: column;
     gap: 14px;
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transform: translate3d(40px, 0, 0);
-    transition:
-      opacity 360ms cubic-bezier(0.22, 1, 0.36, 1),
-      transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
-      visibility 0s linear 360ms;
-    will-change: opacity, transform;
   }
-  .screen.active {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transform: translate3d(0, 0, 0);
-    transition:
-      opacity 360ms cubic-bezier(0.22, 1, 0.36, 1),
-      transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
-      visibility 0s linear 0s;
-  }
-  .screen.past {
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transform: translate3d(-40px, 0, 0);
-    transition:
-      opacity 360ms cubic-bezier(0.22, 1, 0.36, 1),
-      transform 360ms cubic-bezier(0.22, 1, 0.36, 1),
-      visibility 0s linear 360ms;
-  }
+  .screen.active { display: flex; }
 
   /* Input fields */
   .field {
     display: flex; align-items: center; gap: 12px;
     background: var(--field-bg);
+    border: 1px solid var(--border);
     border-radius: 999px;
     padding: 12px 18px;
-    box-shadow: 0 2px 8px rgba(60, 30, 50, 0.05);
   }
+  .field:focus-within { border-color: var(--border-strong); }
   .field .leading {
     width: 24px; height: 24px;
     border-radius: 50%;
-    background: rgba(0, 0, 0, 0.05);
+    background: var(--soft);
     display: inline-flex; align-items: center; justify-content: center;
     flex-shrink: 0;
   }
@@ -181,14 +143,6 @@
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
   }
   .field input::placeholder { color: var(--ink-faint); }
-  .field-label {
-    font-size: 11.5px;
-    color: var(--ink-faint);
-    margin-left: 16px;
-    margin-bottom: -10px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-  }
 
   /* Footer row with primary action */
   .footer {
@@ -212,11 +166,9 @@
     cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
     flex-shrink: 0;
-    transition: transform 0.15s ease, opacity 0.15s ease;
   }
-  .next:hover:not(:disabled) { opacity: 0.9; }
-  .next:active:not(:disabled) { transform: scale(0.95); }
-  .next:disabled { opacity: 0.45; cursor: not-allowed; }
+  .next:hover:not(:disabled) { opacity: 0.85; }
+  .next:disabled { opacity: 0.4; cursor: not-allowed; }
   .next svg { width: 16px; height: 16px; }
 
   /* Inline links inside copy — used on screen 2 for "use local
@@ -240,7 +192,7 @@
   .inline-link {
     color: var(--ink);
     text-decoration: underline;
-    text-decoration-color: rgba(31, 25, 34, 0.35);
+    text-decoration-color: #a08e96;
     text-underline-offset: 2px;
     cursor: pointer;
   }
@@ -266,20 +218,18 @@
   .signin-btn {
     display: flex; align-items: center; gap: 12px;
     padding: 12px 14px;
-    border: 1px solid rgba(31, 25, 34, 0.18);
+    border: 1px solid var(--border);
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.55);
+    background: #ffffff;
     color: var(--ink);
     cursor: pointer;
     font: inherit;
     text-align: left;
-    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
   }
   .signin-btn:hover {
-    background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(31, 25, 34, 0.32);
+    background: var(--hover);
+    border-color: var(--border-strong);
   }
-  .signin-btn:active { transform: scale(0.99); }
   .signin-btn .signin-ico {
     width: 22px; height: 22px;
     display: inline-flex; align-items: center; justify-content: center;
@@ -295,22 +245,12 @@
     font-size: 10.5px;
     font-weight: 500;
     color: var(--ink-dim);
-    background: rgba(31, 25, 34, 0.08);
+    background: var(--soft);
     padding: 2px 8px;
     border-radius: 999px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
-
-  /* Welcome — large hero text */
-  .hero {
-    font-size: 30px;
-    font-weight: 600;
-    letter-spacing: -0.8px;
-    line-height: 1.05;
-    margin-top: 4px;
-  }
-  .hero .accent { color: var(--ink-dim); }
 
   /* Agent picker (screen 4) — checkbox list of agents to install hooks for */
   .agent-list {
@@ -321,12 +261,11 @@
     display: flex; align-items: center; gap: 12px;
     padding: 12px 16px;
     background: var(--field-bg);
+    border: 1px solid var(--border);
     border-radius: 14px;
-    box-shadow: 0 2px 8px rgba(60, 30, 50, 0.05);
     cursor: pointer;
-    transition: background 0.15s ease;
   }
-  .agent-row:hover { background: rgba(255, 255, 255, 0.95); }
+  .agent-row:hover { background: var(--hover); border-color: var(--border-strong); }
   .agent-row input[type="checkbox"] {
     width: 18px; height: 18px;
     accent-color: var(--accent);
@@ -337,65 +276,50 @@
   .agent-name { font-size: 13.5px; font-weight: 500; color: var(--ink); }
   .agent-sub { font-size: 11px; color: var(--ink-faint); }
 
-  /* Low-RAM notice — shown on screen 2 only when injected by Python */
-  .ram-notice {
-    background: rgba(255, 222, 173, 0.4);
-    border: 1px solid rgba(180, 110, 60, 0.25);
-    border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 12px;
-    color: #5a3a20;
-    line-height: 1.5;
-  }
-  .ram-notice .em { color: #2a1a0a; font-weight: 500; }
-
   /* Hotkey screen — single-key shortcut, two actions (tap vs hold) */
   .single-key {
     display: flex; flex-direction: column; align-items: center;
     gap: 6px; margin: 8px 0 4px;
   }
 
-  /* Accessibility request — in-flow button or success badge.
-     Replaces the prior passive note ("macOS will ask…") so the
-     system dialog only fires on explicit click. */
+  /* Accessibility request — single row whose button transforms from
+     "Grant access" (black) to "Granted ✓" (green) once the user
+     toggles us on in System Settings. */
   .ax-block { margin: 6px 0 4px; }
   .ax-row {
     display: flex; align-items: center; justify-content: space-between;
     gap: 14px; padding: 10px 14px; border-radius: 10px;
-    background: rgba(255, 255, 255, 0.55);
-    border: 1px solid rgba(0, 0, 0, 0.06);
+    background: #ffffff;
+    border: 1px solid var(--border);
     font-size: 12.5px; color: var(--ink-dim);
   }
-  .ax-row.granted {
-    background: rgba(120, 180, 120, 0.18);
-    border-color: rgba(70, 140, 70, 0.3);
-    color: #2a5a2a;
-    justify-content: center;
-    gap: 8px;
-  }
-  .ax-row.granted svg { width: 14px; height: 14px; }
   .ax-text { flex: 1; line-height: 1.4; }
   .ax-grant {
     padding: 7px 14px; border-radius: 8px; border: none;
     background: var(--accent); color: white;
     font-size: 12px; font-weight: 500; cursor: pointer;
     white-space: nowrap;
-    transition: opacity 0.15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
   }
-  .ax-grant:hover { opacity: 0.9; }
+  .ax-grant svg { width: 12px; height: 12px; }
+  .ax-grant:hover { opacity: 0.85; }
   .ax-grant:disabled { opacity: 0.55; cursor: progress; }
+  .ax-grant.granted {
+    background: #2a7a3a;
+    cursor: default;
+  }
+  .ax-grant.granted:hover { opacity: 1; }
   .keycap.large {
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     font-size: 22px;
     font-weight: 500;
-    background: rgba(255, 255, 255, 0.7);
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: #ffffff;
+    border: 1px solid var(--border);
     border-radius: 10px;
     min-width: 56px;
     padding: 12px 14px;
     text-align: center;
     color: var(--ink);
-    box-shadow: 0 2px 0 rgba(0, 0, 0, 0.06);
   }
   .keycap-label {
     font-size: 11px;
@@ -409,19 +333,10 @@
     color: var(--ink-dim);
   }
   .actions b { color: var(--ink); font-weight: 600; }
-
-  /* Drag handle — top of card always draggable */
-  .drag-handle {
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 36px;
-  }
 </style>
 </head>
 <body>
   <div class="stage">
-    <div class="drag-handle" id="drag-handle"></div>
-
     <div class="stepper">
       <div class="dot active" id="dot-1"></div>
       <div class="dot" id="dot-2"></div>
@@ -448,7 +363,7 @@
           </span>
           <span>heard</span>
         </div>
-        <button class="skip-top" onclick="skipStep()">Skip</button>
+        <button class="skip-top" id="back-top-btn" onclick="backStep()">Back</button>
       </div>
 
       <div class="screens-area">
@@ -634,13 +549,9 @@
         </div>
 
         <div class="ax-block">
-          <div class="ax-row" id="ax-pending">
+          <div class="ax-row">
             <span class="ax-text">macOS needs Accessibility access so the hotkey can be heard.</span>
             <button class="ax-grant" id="ax-grant-btn" onclick="requestAccessibility()">Grant access</button>
-          </div>
-          <div class="ax-row granted" id="ax-granted" style="display: none">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3.5 3.5L13 5"/></svg>
-            <span>Accessibility enabled</span>
           </div>
         </div>
 
@@ -712,27 +623,47 @@
       if (i < n) screen.classList.add('past');
       else if (i === n) screen.classList.add('active');
     }
-    if (n === 1) {
-      // Make sure the active sub-state's input (if any) gets focus.
-      setTimeout(function () {
-        var visible = document.querySelector('#screen-1 .substate:not([style*="display: none"]) input');
-        if (visible) visible.focus();
-      }, 380);
-    }
+    // Coming back into screen 1 (from screen 2 via Back) should always
+    // land on the welcome/choose substate, not whatever substate the
+    // user happened to leave it in.
+    if (n === 1) showSubstate('choose');
+    refreshBackButton();
     if (n === 2) {
-      setTimeout(function () { document.getElementById('llm-key').focus(); }, 380);
+      setTimeout(function () { document.getElementById('llm-key').focus(); }, 200);
     }
   }
   function goto(n) { setStep(n); }
 
-  // Top-of-modal Skip button. Advances to the next step rather than
-  // closing the whole flow — most users want to skip *this* step
-  // (trial signup, key entry, etc.) and continue, not bail entirely.
-  // On the final step there's nowhere to advance to, so we defer to
-  // finish() which submits whatever's been entered so far.
-  function skipStep() {
-    if (current < TOTAL_STEPS) goto(current + 1);
-    else finish();
+  // Show/hide the top Back button based on where we are. Hidden only at
+  // the very start of onboarding (screen 1 / choose substate); visible
+  // everywhere else, including screen 1's email/code/soon substates so
+  // a stuck user can always retreat.
+  function refreshBackButton() {
+    var btn = document.getElementById('back-top-btn');
+    if (!btn) return;
+    var atStart = (current === 1) && _currentSubstate() === 'choose';
+    btn.style.visibility = atStart ? 'hidden' : 'visible';
+  }
+
+  function _currentSubstate() {
+    var ids = ['choose', 'email', 'code', 'success', 'soon'];
+    for (var i = 0; i < ids.length; i++) {
+      var el = document.getElementById('substate-' + ids[i]);
+      if (el && el.style.display !== 'none') return ids[i];
+    }
+    return 'choose';
+  }
+
+  // Top-of-modal Back button. Inside screen 1's email/code/success/soon
+  // substates, retreats to the welcome/choose substate. Otherwise
+  // returns to the previous step.
+  function backStep() {
+    if (current === 1) {
+      var sub = _currentSubstate();
+      if (sub !== 'choose') showSubstate('choose');
+      return;
+    }
+    goto(current - 1);
   }
   function post(action, payload) {
     try {
@@ -749,6 +680,7 @@
       if (!el) continue;
       el.style.display = ids[i] === ('substate-' + name) ? 'flex' : 'none';
     }
+    refreshBackButton();
     setTimeout(function () {
       var input = document.querySelector('#substate-' + name + ' input');
       if (input) input.focus();
@@ -982,10 +914,7 @@
     // is ever coming, so flip the button back so the user can retry.
     _axResetTimer = setTimeout(function () {
       var b = document.getElementById('ax-grant-btn');
-      if (!b) return;
-      // Don't clobber the success state if it landed in the meantime.
-      var ok = document.getElementById('ax-granted');
-      if (ok && ok.style.display !== 'none') return;
+      if (!b || b.classList.contains('granted')) return;
       b.disabled = false;
       b.textContent = 'Grant access';
     }, 60000);
@@ -994,10 +923,15 @@
   window.heardSetAccessibility = function (granted) {
     if (!granted) return;
     if (_axResetTimer) { clearTimeout(_axResetTimer); _axResetTimer = null; }
-    var pending = document.getElementById('ax-pending');
-    var ok = document.getElementById('ax-granted');
-    if (pending) pending.style.display = 'none';
-    if (ok) ok.style.display = 'flex';
+    var btn = document.getElementById('ax-grant-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('granted');
+      btn.innerHTML =
+        '<svg viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="2.4" ' +
+        'stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M3 8l3.5 3.5L13 5"/></svg>Granted';
+    }
     // Enforce: can't advance past screen 3 without a working hotkey.
     var nextBtn = document.getElementById('screen-3-next');
     if (nextBtn) nextBtn.disabled = false;
@@ -1059,12 +993,9 @@
     if (e.key === 'Escape') { e.preventDefault(); finish(); }
   });
 
-  // Drag the window when the user mousedowns on any non-control area.
-  // Bails on form controls so input focus isn't intercepted. The
-  // OS-level setMovableByWindowBackground is intentionally NOT enabled
-  // (key_window.py) — that flag races with embedded HTML inputs because
-  // AppKit can't see WKWebView's controls. Routing through this JS
-  // handler keeps the wide drag affordance without the input race.
+  // Drag the window when the user mousedowns anywhere that isn't a
+  // form control — restores the "grab anywhere" feel of the borderless
+  // version on top of the new titled window.
   document.addEventListener('mousedown', function (e) {
     if (e.target.closest('button, input, label, .field, a')) return;
     post('drag', {});
