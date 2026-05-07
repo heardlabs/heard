@@ -265,8 +265,38 @@ def _anthropic_key() -> str:
     return cfg_key or env
 
 
+def _managed_rewrite_available() -> bool:
+    """True if the user has a Heard cloud token with an active (non-
+    expired) plan. Drives the BYOK→cloud→none ladder in `_haiku_rewrite`."""
+    try:
+        from heard import config as _config
+
+        cfg = _config.load()
+    except Exception:
+        return False
+    token = (cfg.get("heard_token") or "").strip()
+    plan = (cfg.get("heard_plan") or "").strip()
+    if not token or plan == "expired":
+        return False
+    if plan == "trial":
+        try:
+            expires_at_ms = int(cfg.get("heard_trial_expires_at") or 0)
+        except (TypeError, ValueError):
+            expires_at_ms = 0
+        if expires_at_ms > 0:
+            import time
+
+            if int(time.time() * 1000) >= expires_at_ms:
+                # Local check matches the server's lazy-expiry logic;
+                # avoids burning a round-trip on a token we know is dead.
+                return False
+    return True
+
+
 def _haiku_enabled() -> bool:
-    return bool(_anthropic_key())
+    """True if either signal is available: BYOK Anthropic key, or
+    Heard cloud LLM via an active plan."""
+    return bool(_anthropic_key()) or _managed_rewrite_available()
 
 
 _client = None
@@ -299,6 +329,94 @@ def _haiku_rewrite(
     ctx: dict[str, Any],
     session: dict[str, Any],
 ) -> str | None:
+    """Dispatch a Haiku rewrite. Prefers the user's BYOK Anthropic key
+    (they pay their own bill); falls back to Heard's cloud /v1/persona-
+    rewrite proxy when the user is on a trial/pro plan; returns None
+    when neither path is available, so callers fall through to
+    template-only narration."""
+    if _anthropic_key():
+        return _byok_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
+    if _managed_rewrite_available():
+        return _managed_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
+    return None
+
+
+def _notify_managed_http_failure(err: BaseException) -> None:
+    """Cloud LLM HTTPError handler. Routes to the same notification
+    kinds the TTS path uses so dedup works across both paths."""
+    try:
+        from heard import notify as _notify
+    except Exception:
+        return
+    status = getattr(err, "code", None)
+    if status == 401:
+        _notify.notify(
+            "Heard — cloud token unknown",
+            "Your Heard token isn't recognised. Sign in again from the menu bar.",
+            kind="cloud_token_unknown",
+        )
+    elif status == 402:
+        _notify.notify(
+            "Heard — trial ended",
+            "Your Heard trial ended. Add your own keys from the menu bar, or upgrade.",
+            kind="cloud_expired",
+        )
+    elif status == 429:
+        _notify.notify(
+            "Heard — daily cap reached",
+            "Today's cloud usage is used up. Resets at midnight UTC.",
+            kind="cloud_daily_cap",
+        )
+
+
+def _notify_anthropic_failure(err: BaseException) -> None:
+    """Fire a deduped notification when a BYOK Anthropic call fails for
+    a reason the user needs to act on (401/403 = bad key, 429 = rate
+    limit / out of credits). Silently no-ops on transient network /
+    server errors so we don't pop a banner for every flaky network."""
+    try:
+        from heard import notify as _notify
+    except Exception:
+        return
+    status = getattr(err, "status_code", None) or getattr(err, "code", None)
+    msg = str(err).lower()
+    is_auth = (
+        status in (401, 403)
+        or "401" in msg
+        or "403" in msg
+        or "invalid_api_key" in msg
+        or "authentication" in msg
+    )
+    is_rate = (
+        status == 429
+        or "rate" in msg
+        or "credit" in msg
+        or "balance" in msg
+        or "quota" in msg
+    )
+    if is_auth:
+        _notify.notify(
+            "Heard — Anthropic key invalid",
+            "Your Anthropic key was rejected. Update it from Heard's menu bar.",
+            kind="anthropic_auth",
+        )
+    elif is_rate:
+        _notify.notify(
+            "Heard — Anthropic out of credits",
+            "Your Anthropic key is rate-limited or out of credits. "
+            "Add credits or replace the key from Heard's menu bar.",
+            kind="anthropic_rate",
+        )
+
+
+def _byok_haiku_rewrite(
+    persona: Persona,
+    event_kind: str,
+    neutral: str,
+    tag: str,
+    ctx: dict[str, Any],
+    session: dict[str, Any],
+) -> str | None:
     client = _get_client()
     if client is None:
         return None
@@ -316,7 +434,86 @@ def _haiku_rewrite(
         parts = [b.text for b in msg.content if getattr(b, "type", "") == "text"]
         out = " ".join(p.strip() for p in parts if p).strip()
         return out or None
+    except Exception as e:
+        # Hard fail with a loud notification on auth + credit errors so
+        # the user knows to fix their key. Other failures (transient
+        # network, 5xx) stay silent and just fall through to templates.
+        _notify_anthropic_failure(e)
+        return None
+
+
+def _managed_haiku_rewrite(
+    persona: Persona,
+    event_kind: str,
+    neutral: str,
+    tag: str,
+    ctx: dict[str, Any],
+    session: dict[str, Any],
+) -> str | None:
+    """Cloud-LLM path: POST to api.heard.dev/v1/persona-rewrite with
+    Bearer auth. The proxy gates on the same token+plan+cap as TTS,
+    swaps in our server-side Anthropic key, and returns the standard
+    Messages API response shape."""
+    import json as _json
+    import ssl as _ssl
+    import urllib.error as _urlerr
+    import urllib.request as _urlreq
+
+    try:
+        from heard import config as _config
+
+        cfg = _config.load()
     except Exception:
+        return None
+    token = (cfg.get("heard_token") or "").strip()
+    if not token:
+        return None
+    base_url = (cfg.get("heard_api_base") or "https://api.heard.dev").rstrip("/")
+
+    user_msg = _build_user_message(event_kind, neutral, tag, ctx, session)
+    full_system = _SHARED_NARRATION_RULES + "\n\n" + persona.system_prompt
+    body = {
+        "system": full_system,
+        "messages": [{"role": "user", "content": user_msg}],
+        "model": HAIKU_MODEL,
+        "max_tokens": HAIKU_MAX_TOKENS,
+    }
+
+    try:
+        try:
+            import certifi  # type: ignore
+
+            ssl_ctx = _ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            ssl_ctx = _ssl.create_default_context()
+
+        req = _urlreq.Request(
+            f"{base_url}/v1/persona-rewrite",
+            data=_json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        with _urlreq.urlopen(req, timeout=HAIKU_TIMEOUT_S, context=ssl_ctx) as resp:
+            data = _json.loads(resp.read().decode("utf-8") or "{}")
+        # Anthropic Messages response: {"content": [{"type":"text","text":"..."}]}
+        parts = [
+            b.get("text", "")
+            for b in data.get("content", [])
+            if b.get("type") == "text"
+        ]
+        out = " ".join(p.strip() for p in parts if p).strip()
+        return out or None
+    except _urlerr.HTTPError as e:
+        # Surface the cases the user can act on. Kinds match the TTS
+        # path's cloud_* kinds so the notify module dedupes a single
+        # banner even when both rewrite and synth fail at the same time.
+        _notify_managed_http_failure(e)
+        return None
+    except (_urlerr.URLError, TimeoutError, OSError, ValueError):
         return None
 
 
