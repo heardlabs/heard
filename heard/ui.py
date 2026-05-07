@@ -66,6 +66,11 @@ class HeardApp(rumps.App):
     # --- menu construction --------------------------------------------------
 
     def _build_menu(self) -> None:
+        # Account row at the top of the menu — shows email + plan when
+        # the user is signed in, or "Sign in to Heard…" when not. Title
+        # and callback are rebuilt every refresh from config state.
+        self.account_item = rumps.MenuItem("Sign in to Heard…", callback=self.on_signin)
+
         self.status_item = rumps.MenuItem("…")
         self.status_item.set_callback(None)
 
@@ -168,12 +173,21 @@ class HeardApp(rumps.App):
             callback=self.on_toggle_auto_silence,
         )
 
+        # API-keys submenu — shows masked-tail indicator for each key
+        # (or "not set"). Clicking either opens the keys modal where
+        # both can be updated at once.
+        self.api_keys_menu = rumps.MenuItem("API keys")
+        self.llm_key_item = rumps.MenuItem("LLM: not set", callback=self.on_set_api_keys)
+        self.el_key_item = rumps.MenuItem("ElevenLabs: not set", callback=self.on_set_api_keys)
+        self.api_keys_menu["LLM"] = self.llm_key_item
+        self.api_keys_menu["ElevenLabs"] = self.el_key_item
+
         options_menu = rumps.MenuItem("Options")
         options_menu["Narrate tool calls"] = self.narrate_tools_item
         options_menu["Narrate tool results"] = self.narrate_results_item
         options_menu["Narrate failures"] = self.narrate_failures_item
         options_menu["Auto-silence on call"] = self.auto_silence_item
-        options_menu["Set API key…"] = rumps.MenuItem("Set API key…", callback=self.on_set_api_keys)
+        options_menu["API keys"] = self.api_keys_menu
         options_menu["Download voice model"] = rumps.MenuItem(
             "Download voice model", callback=self.on_download_kokoro
         )
@@ -186,6 +200,8 @@ class HeardApp(rumps.App):
         options_menu["GitHub"] = rumps.MenuItem("GitHub", callback=self.on_github)
 
         self.menu = [
+            self.account_item,
+            None,
             self.status_item,
             None,
             self.silence_item,
@@ -209,6 +225,9 @@ class HeardApp(rumps.App):
         alive = bool(status) or client.is_daemon_alive()
         if alive:
             self._daemon_ever_alive = True
+
+        self._refresh_account_row(cfg)
+        self._refresh_api_key_labels(cfg)
 
         # First-launch onboarding: only if the user hasn't been through it
         # yet. The flag is set inside _prompt_api_key once the flow
@@ -392,10 +411,12 @@ class HeardApp(rumps.App):
     def _error_label(self, kind: str) -> str:
         return {
             "elevenlabs_auth": "ElevenLabs key invalid",
+            "elevenlabs_rate": "ElevenLabs out of credits",
             "ssl": "TLS handshake failed",
             "elevenlabs_network": "ElevenLabs unreachable",
             "synth_generic": "couldn't synthesise",
             "memory_pressure": "system memory low",
+            "managed": "cloud voices error",
         }.get(kind, kind or "synth failed")
 
     # --- action callbacks ---------------------------------------------------
@@ -576,6 +597,11 @@ class HeardApp(rumps.App):
             client.send({"cmd": "reload"})
         except Exception:
             pass
+        # Force a status refresh — the rumps timer that normally drives
+        # this is paused while the modal is up (NSDefaultRunLoopMode
+        # doesn't tick during NSApp.runModalForWindow_), so without this
+        # the menu bar can stay stuck on "starting…" until the next tick.
+        self.refresh(None)
 
     def on_set_api_keys(self, _sender) -> None:
         # Land on Screen 2 (keys) so menu users skip the trial-signup
@@ -586,6 +612,92 @@ class HeardApp(rumps.App):
         except Exception:
             pass
         self.refresh(None)
+
+    def on_signin(self, _sender) -> None:
+        """Open the cloud-voices sign-in flow from the menu — same modal
+        as first-launch onboarding, just routed by the same plumbing."""
+        self._prompt_api_key(start_step=1)
+        try:
+            client.send({"cmd": "reload"})
+        except Exception:
+            pass
+        self.refresh(None)
+
+    def on_signout(self, _sender) -> None:
+        """Clear the cloud-voices token + plan + email and reload the
+        daemon so it falls back to whatever's configured locally."""
+        for key in ("heard_token", "heard_plan", "heard_email"):
+            config.set_value(key, "")
+        config.set_value("heard_trial_expires_at", 0)
+        try:
+            client.send({"cmd": "reload"})
+        except Exception:
+            pass
+        self.refresh(None)
+
+    # --- account + api-key row builders -----------------------------------
+
+    @staticmethod
+    def _mask_key(value: str) -> str:
+        """Return ``…<last 4>`` for a non-empty key, else "not set"."""
+        v = (value or "").strip()
+        if not v:
+            return "not set"
+        if len(v) <= 4:
+            return "…" + v
+        return "…" + v[-4:]
+
+    def _refresh_account_row(self, cfg: dict) -> None:
+        token = (cfg.get("heard_token") or "").strip()
+        if not token:
+            self.account_item.title = "Sign in to Heard…"
+            self.account_item.set_callback(self.on_signin)
+            return
+
+        email = (cfg.get("heard_email") or "").strip() or "Signed in"
+        plan = (cfg.get("heard_plan") or "trial").strip() or "trial"
+        self.account_item.title = f"{email} · {self._plan_suffix(plan, cfg)}"
+        # Display-only leaf — no submenu (would render a chevron with
+        # nothing to click). Sign-out is intentionally not in the menu;
+        # users who need it can run `heard signout` from the CLI.
+        self.account_item.set_callback(None)
+
+    @staticmethod
+    def _plan_suffix(plan: str, cfg: dict) -> str:
+        """Render the bit after "email · " — adds an expiry countdown for
+        trial, a one-line nudge after expiry, and just the plan label
+        for pro/expired/unknown."""
+        if plan != "trial":
+            if plan == "expired":
+                return "trial expired — add keys or upgrade"
+            return plan
+        try:
+            expires_at_ms = int(cfg.get("heard_trial_expires_at") or 0)
+        except (TypeError, ValueError):
+            expires_at_ms = 0
+        if expires_at_ms <= 0:
+            return "trial"
+        import time
+
+        now_ms = int(time.time() * 1000)
+        if now_ms >= expires_at_ms:
+            return "trial expired — add keys or upgrade"
+        # Round up so the user sees "1 day left" instead of "0 days left"
+        # in the final 24 hours.
+        days_left = max(1, (expires_at_ms - now_ms + 86_399_999) // 86_400_000)
+        if days_left == 1:
+            return "trial (1 day left)"
+        return f"trial ({days_left} days left)"
+
+    def _refresh_api_key_labels(self, cfg: dict) -> None:
+        anthropic = (cfg.get("anthropic_api_key") or "").strip()
+        openai = (cfg.get("openai_api_key") or "").strip()
+        # Either provider populates the LLM slot — show whichever's set.
+        llm = anthropic or openai
+        self.llm_key_item.title = f"LLM: {self._mask_key(llm)}"
+        self.el_key_item.title = (
+            f"ElevenLabs: {self._mask_key(cfg.get('elevenlabs_api_key', ''))}"
+        )
 
     def _prompt_api_key(self, start_step: int = 1) -> None:
         """Four-step onboarding window. Saves whichever keys the user
@@ -646,6 +758,9 @@ class HeardApp(rumps.App):
         if heard_token:
             config.set_value("heard_token", heard_token)
             config.set_value("heard_plan", (result.get("heard_plan") or "trial").strip())
+            # Persist the email so the menu bar can show "<email> · <plan>"
+            # without having to round-trip through the API.
+            config.set_value("heard_email", (result.get("heard_email") or "").strip())
             try:
                 config.set_value(
                     "heard_trial_expires_at",
