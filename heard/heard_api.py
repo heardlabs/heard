@@ -68,7 +68,14 @@ def _post_json(
         url,
         data=json.dumps(body).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            # Cloudflare's bot-fight rules reject the default urllib UA
+            # with a 403 on some routes. Identify as Heard explicitly so
+            # auth requests stay reachable across all routes.
+            "User-Agent": "Heard-cli/1.0",
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout_s, context=_ssl_ctx()) as resp:

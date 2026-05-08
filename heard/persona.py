@@ -495,6 +495,9 @@ def _managed_haiku_rewrite(
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                # Cloudflare's bot-fight rule rejects the default urllib
+                # UA with 403. Identify as Heard so the proxy lets us in.
+                "User-Agent": "Heard-daemon/1.0",
             },
         )
         with _urlreq.urlopen(req, timeout=HAIKU_TIMEOUT_S, context=ssl_ctx) as resp:

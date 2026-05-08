@@ -160,6 +160,10 @@ class ManagedTTS:
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
                 "Accept": "audio/mpeg",
+                # Cloudflare's bot-fight rule on /v1/synth blocks the
+                # default "Python-urllib/3.X" UA with a 403. Identify
+                # explicitly so the proxy lets us through.
+                "User-Agent": "Heard-daemon/1.0",
             },
         )
 

@@ -188,17 +188,13 @@ def _step_synth() -> bool:
     """Run the active backend end-to-end. We deliberately go through
     the same code the daemon runs (config-driven backend selection)
     so an SSL/auth failure here is identical to what the daemon would
-    hit at speech time."""
+    hit at speech time. Order matches daemon's selector: BYOK
+    ElevenLabs → Heard cloud (managed) → local Kokoro."""
     print("Synth")
     cfg = config.load()
     api_key = (cfg.get("elevenlabs_api_key") or "").strip()
-    # ElevenLabs aliases / 20-char IDs and Kokoro IDs (`<accent_gender>_<name>`)
-    # don't resolve under the other backend, so pick the right field
-    # for whichever backend the daemon is about to instantiate.
-    if api_key:
-        voice = cfg.get("voice", "george")
-    else:
-        voice = cfg.get("kokoro_voice", "bm_george")
+    heard_token = (cfg.get("heard_token") or "").strip()
+    heard_plan = (cfg.get("heard_plan") or "").strip()
     speed = float(cfg.get("speed", 1.0))
     lang = cfg.get("lang", "en-us")
 
@@ -210,14 +206,28 @@ def _step_synth() -> bool:
             from heard.tts.elevenlabs import ElevenLabsTTS
 
             backend = ElevenLabsTTS(api_key=api_key)
+            voice = cfg.get("voice", "george")
             out = out.with_suffix(".mp3")
-            _line("backend", DASH, "ElevenLabs")
+            _line("backend", DASH, "ElevenLabs (BYOK)")
+        elif heard_token and heard_plan != "expired":
+            # Heard cloud / managed voices. Catches UA/auth/cap issues
+            # against api.heard.dev that the daemon would also hit.
+            from heard.tts.managed import ManagedTTS
+
+            backend = ManagedTTS(
+                token=heard_token,
+                base_url=cfg.get("heard_api_base") or "https://api.heard.dev",
+            )
+            voice = cfg.get("voice", "george")
+            out = out.with_suffix(".mp3")
+            _line("backend", DASH, f"Heard cloud (plan: {heard_plan or 'trial'})")
         else:
             from heard.tts.kokoro import KokoroTTS
 
             backend = KokoroTTS(config.MODELS_DIR)
+            voice = cfg.get("kokoro_voice", "bm_george")
             out = out.with_suffix(".wav")
-            _line("backend", DASH, "Kokoro (no ElevenLabs key configured)")
+            _line("backend", DASH, "Kokoro (local — no key, no Heard token)")
     except Exception as e:
         _line("init", CROSS, f"{type(e).__name__}: {e}")
         return False
