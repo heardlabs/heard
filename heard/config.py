@@ -52,7 +52,13 @@ DEFAULTS: dict[str, Any] = {
     # even when they've muted general tool noise — the only reason to
     # turn this off is if you're explicitly debugging silently.
     "narrate_failures": True,
-    "persona": "raw",
+    # Default to jarvis so first-launch users get the in-character
+    # narration ("very good, sir." / "Three failures in auth.py.")
+    # instead of the bare template ("Tests are green."). Existing
+    # users who explicitly chose a different persona keep their choice
+    # — config.save only persists keys whose values differ from
+    # DEFAULTS, so we never overwrite an explicit selection.
+    "persona": "jarvis",
     # Verbosity profile names (heard/profiles/<name>.yaml). Bundled:
     # quiet / brief / normal / verbose. Custom: drop your own YAML in
     # $CONFIG_DIR/profiles/<name>.yaml. swarm_verbosity applies to
