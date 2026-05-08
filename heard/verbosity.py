@@ -111,11 +111,12 @@ def _classify_pre_with_profile(prof: dict[str, Any], tag: str, density: int) -> 
 
 
 def classify_post(cfg: dict[str, Any], tag: str) -> str:
-    """Pre-tool failure handling lives outside the profile (always
-    speaks via narrate_failures); successes follow the profile's
-    post_success switch."""
+    """Failures always pierce — even at the quietest verbosity, hearing
+    'command failed' beats silently missing a regression. Use the
+    master `narrate_tools` toggle to mute Heard entirely.
+    Successes follow the profile's post_success switch."""
     if tag in _FAILURE_TAGS:
-        return "speak" if cfg.get("narrate_failures", True) else "drop"
+        return "speak"
     if not cfg.get("narrate_tools", True):
         return "drop"
     if not cfg.get("narrate_tool_results", True):

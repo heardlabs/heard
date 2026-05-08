@@ -53,7 +53,7 @@ def test_brief_profile_digests_routine_speaks_long_running():
 
 def test_verbose_profile_speaks_post_success():
     """Only verbose narrates post-tool successes. Normal stays silent
-    on success (failures speak via narrate_failures regardless)."""
+    on success (failures always pierce regardless of profile)."""
     cfg_normal = {"narrate_tools": True, "narrate_tool_results": True, "verbosity": "normal"}
     cfg_verbose = {"narrate_tools": True, "narrate_tool_results": True, "verbosity": "verbose"}
     assert verbosity.classify_post(cfg_normal, "tool_post_success") == "drop"
@@ -106,8 +106,8 @@ def test_final_char_budget():
 
 def test_narrate_tools_disabled_silences_pre_but_not_failures():
     """narrate_tools=False mutes pre-tool announcements, but failures
-    have their own gate (narrate_failures) so 'Command failed' still
-    speaks. Earlier a single off-switch killed both."""
+    pierce regardless — losing a "command failed" notification has a
+    much worse cost than enduring a chatty success message."""
     cfg = {"narrate_tools": False, "verbosity": "high"}
     assert verbosity.should_narrate_pre(cfg, "tool_bash_test", density=0) is False
     # Failures still speak — they're a separate signal class.
@@ -115,11 +115,14 @@ def test_narrate_tools_disabled_silences_pre_but_not_failures():
     assert verbosity.should_narrate_post(cfg, "tool_post_command_failed") is True
 
 
-def test_narrate_failures_can_be_explicitly_muted():
-    """The user CAN silence failures with the dedicated key."""
+def test_failures_always_speak_regardless_of_legacy_flag():
+    """The narrate_failures toggle was removed in favour of letting
+    verbosity own the dimension (quiet = errors only, etc.). A stale
+    `narrate_failures: false` in someone's old config.yaml must NOT
+    silence failures."""
     cfg = {"narrate_failures": False, "narrate_tools": True, "verbosity": "high"}
-    assert verbosity.should_narrate_post(cfg, "tool_post_failure") is False
-    assert verbosity.should_narrate_post(cfg, "tool_post_command_failed") is False
+    assert verbosity.should_narrate_post(cfg, "tool_post_failure") is True
+    assert verbosity.should_narrate_post(cfg, "tool_post_command_failed") is True
 
 
 def test_narrate_tool_results_disabled_keeps_failures():

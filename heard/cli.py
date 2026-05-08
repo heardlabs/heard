@@ -20,9 +20,13 @@ app.add_typer(config_app, name="config")
 app.add_typer(service_app, name="service")
 
 
-@app.command()
+@app.command(hidden=True)
 def say(text: str) -> None:
-    """Speak TEXT through Heard (starts the daemon if needed)."""
+    """[Diagnostic] Speak TEXT through Heard (starts the daemon if
+    needed). Skips persona Haiku rewriting — goes straight to TTS in
+    the current voice. Hidden from `heard --help` because real users
+    get narration via the agent hook; `heard doctor` is the supported
+    end-to-end check."""
     client.speak(text)
 
 
@@ -671,7 +675,6 @@ _VALID_HOTKEY_MODE = ("taphold", "combo")
 _BOOL_KEYS = (
     "narrate_tools",
     "narrate_tool_results",
-    "narrate_failures",
     "hotkey_enabled",
     "auto_silence_on_mic",
     "auto_resume_on_mic_release",
