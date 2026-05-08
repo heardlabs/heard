@@ -97,6 +97,10 @@ DEFAULTS: dict[str, Any] = {
     # Epoch ms when the trial expires. Used by the menu bar countdown
     # and the day-31 silent downgrade. Ignored when plan == "pro".
     "heard_trial_expires_at": 0,
+    # Email tied to the heard_token. Surfaced in the menu bar account
+    # row ("yk@example.com · trial") so the user can confirm which
+    # account is active without opening Settings. Saved on /v1/auth/verify.
+    "heard_email": "",
     # Override for local dev / staging — never set in production.
     "heard_api_base": "https://api.heard.dev",
     # Auto-silence Heard whenever any app starts recording from the mic

@@ -610,7 +610,26 @@
 
   var API_BASE = "https://api.heard.dev";
 
+  // Snapshot whatever's currently entered and post it to native so it
+  // gets persisted incrementally. Empty fields are no-ops on the
+  // native side, so navigating back-and-forth doesn't clobber.
+  function commitPartial() {
+    try {
+      post('commit_partial', {
+        llm: (document.getElementById('llm-key') || {}).value || '',
+        elevenlabs: (document.getElementById('el-key') || {}).value || '',
+        heard_token: trial.token,
+        heard_plan: trial.plan,
+        heard_email: trial.email,
+        heard_trial_expires_at: String(trial.trial_expires_at || 0),
+      });
+    } catch (e) {}
+  }
+
   function setStep(n) {
+    // Capture state from whatever step the user is leaving before we
+    // swap visible screens — covers Continue / Back / Skip transitions.
+    commitPartial();
     current = n;
     for (var i = 1; i <= TOTAL_STEPS; i++) {
       var dot = document.getElementById('dot-' + i);
@@ -869,6 +888,10 @@
               "output, picks the parts worth narrating, and reads them " +
               "back to you. Switch to local voices anytime in settings.";
           }
+          // Persist immediately so closing the modal here keeps the
+          // sign-in even if the user bails before clicking through
+          // the rest of onboarding.
+          commitPartial();
           showSubstate('success');
           return;
         }

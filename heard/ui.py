@@ -199,6 +199,12 @@ class HeardApp(rumps.App):
         options_menu["Restart daemon"] = rumps.MenuItem("Restart daemon", callback=self.on_restart_daemon)
         options_menu["GitHub"] = rumps.MenuItem("GitHub", callback=self.on_github)
 
+        # Sign-out leaf — sits below Quit so it's findable but never the
+        # accidental click. Visibility is controlled by enabling/disabling
+        # the callback in refresh(): a callback=None entry renders as a
+        # greyed-out item that can't be clicked.
+        self.signout_item = rumps.MenuItem("Sign out", callback=self.on_signout)
+
         self.menu = [
             self.account_item,
             None,
@@ -215,6 +221,7 @@ class HeardApp(rumps.App):
             options_menu,
             None,
             rumps.MenuItem("Quit menu bar", callback=self.on_quit),
+            self.signout_item,
         ]
 
     # --- state refresh ------------------------------------------------------
@@ -652,15 +659,16 @@ class HeardApp(rumps.App):
         if not token:
             self.account_item.title = "Sign in to Heard…"
             self.account_item.set_callback(self.on_signin)
+            # Sign-out item greys out when there's nothing to sign out of.
+            self.signout_item.set_callback(None)
             return
 
         email = (cfg.get("heard_email") or "").strip() or "Signed in"
         plan = (cfg.get("heard_plan") or "trial").strip() or "trial"
         self.account_item.title = f"{email} · {self._plan_suffix(plan, cfg)}"
-        # Display-only leaf — no submenu (would render a chevron with
-        # nothing to click). Sign-out is intentionally not in the menu;
-        # users who need it can run `heard signout` from the CLI.
+        # Display-only leaf — no submenu chevron.
         self.account_item.set_callback(None)
+        self.signout_item.set_callback(self.on_signout)
 
     @staticmethod
     def _plan_suffix(plan: str, cfg: dict) -> str:

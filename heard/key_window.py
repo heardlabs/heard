@@ -96,6 +96,54 @@ def _flip_badge_to_enabled(webview, state: dict, result: dict) -> None:
         pass
 
 
+def _save_partial_to_config(payload: dict) -> None:
+    """Persist whatever's filled in on the modal so far. Empty values
+    are no-ops so a back-and-forth navigation (where password fields
+    are blanked for security) doesn't clobber a previously-saved key.
+
+    Called from the `commit_partial` action handler — JS fires this on
+    every successful step transition so closing the modal mid-flow
+    keeps whatever progress was made (signed in, keys entered, etc.)
+    instead of throwing it all away."""
+    try:
+        from heard import config as _config
+    except Exception:
+        return
+
+    token = (payload.get("heard_token") or "").strip()
+    if token:
+        _config.set_value("heard_token", token)
+        _config.set_value(
+            "heard_plan", (payload.get("heard_plan") or "trial").strip()
+        )
+        _config.set_value(
+            "heard_email", (payload.get("heard_email") or "").strip()
+        )
+        try:
+            _config.set_value(
+                "heard_trial_expires_at",
+                int(payload.get("heard_trial_expires_at") or 0),
+            )
+        except (TypeError, ValueError):
+            pass
+
+    llm = (payload.get("llm") or "").strip()
+    if llm:
+        # Auto-route by prefix; mirrors _prompt_api_key in heard.ui.
+        if llm.startswith("sk-ant-"):
+            _config.set_value("anthropic_api_key", llm)
+            _config.set_value("openai_api_key", "")
+        elif llm.startswith("sk-"):
+            _config.set_value("openai_api_key", llm)
+            _config.set_value("anthropic_api_key", "")
+        else:
+            _config.set_value("anthropic_api_key", llm)
+
+    eleven = (payload.get("elevenlabs") or "").strip()
+    if eleven:
+        _config.set_value("elevenlabs_api_key", eleven)
+
+
 def _watch_accessibility(webview, state: dict, result: dict) -> None:
     """Subscribe to AX trust-change notifications so the badge flips to
     green the moment the user toggles Heard on in System Settings.
@@ -134,6 +182,20 @@ class _KeyableWindow(NSWindow):
 
     def canBecomeMainWindow(self):
         return True
+
+
+class _CloseDelegate(NSObject):
+    """Window delegate that ends the modal session when the user
+    clicks the red close button. Without this, runModalForWindow_
+    keeps spinning the runloop after the window closes — which leaves
+    the menu bar's refresh timer stuck on its last tick. Hooked via
+    setDelegate_ on the modal window."""
+
+    def windowWillClose_(self, _notification):
+        try:
+            NSApp.stopModal()
+        except Exception:
+            pass
 
 
 class _MessageHandler(NSObject):
@@ -260,6 +322,13 @@ def prompt(start_step: int = 1) -> dict[str, Any]:
                 pass
             return
 
+        # Save whatever's filled in so far without ending the modal.
+        # Lets the user close mid-flow (e.g. AX failed) and keep what
+        # they completed (sign-in token, API keys).
+        if action == "commit_partial":
+            _save_partial_to_config(payload)
+            return
+
         result["action"] = action
         result["llm"] = (payload.get("llm") or "").strip()
         result["elevenlabs"] = (payload.get("elevenlabs") or "").strip()
@@ -334,6 +403,13 @@ def prompt(start_step: int = 1) -> dict[str, Any]:
     window.setContentView_(webview)
     window.center()
     state["window"] = window
+
+    # Hook the close delegate so the red X click ends the modal
+    # session. Hold the delegate on `state` so PyObjC's GC doesn't
+    # collect it while the window's still using it.
+    close_delegate = _CloseDelegate.alloc().init()
+    window.setDelegate_(close_delegate)
+    state["close_delegate"] = close_delegate
 
     # Subscribe to AX trust-change notifications from modal mount, not
     # from the Grant access click. Lets us catch a grant the user makes
