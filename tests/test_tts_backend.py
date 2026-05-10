@@ -24,6 +24,13 @@ def _quiet_hotkey(monkeypatch):
 
 def _make_daemon(tmp_path, monkeypatch, cfg_overrides):
     monkeypatch.setattr("heard.config.CONFIG_DIR", tmp_path)
+    # CONFIG_PATH is computed at module-load (CONFIG_DIR / "config.yaml")
+    # — patching CONFIG_DIR alone doesn't update it, so load() would
+    # otherwise read the user's real config file and pick up whatever
+    # heard_token / elevenlabs_api_key the test runner has set. Patch
+    # CONFIG_PATH explicitly so the test starts from a fresh DEFAULTS
+    # baseline and only the cfg_overrides it cares about apply.
+    monkeypatch.setattr("heard.config.CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("heard.config.MODELS_DIR", tmp_path / "models")
     monkeypatch.setattr("heard.config.SOCKET_PATH", tmp_path / "daemon.sock")
     monkeypatch.setattr("heard.config.LOG_PATH", tmp_path / "daemon.log")
@@ -177,6 +184,8 @@ def test_selector_re_picks_on_config_reload(tmp_path, monkeypatch):
     next reload should swap the backend without needing a restart."""
     state = {"key": ""}
     monkeypatch.setattr("heard.config.CONFIG_DIR", tmp_path)
+    # See _make_daemon for why CONFIG_PATH must be patched explicitly.
+    monkeypatch.setattr("heard.config.CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("heard.config.MODELS_DIR", tmp_path / "models")
     monkeypatch.setattr("heard.config.SOCKET_PATH", tmp_path / "daemon.sock")
     monkeypatch.setattr("heard.config.LOG_PATH", tmp_path / "daemon.log")
