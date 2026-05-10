@@ -93,6 +93,17 @@ class HeardApp(rumps.App):
         self._update_item_mounted = False
         self._update_url: str | None = None
 
+        # Upgrade to Pro callout. Visible to trial / expired / unsigned
+        # users, hidden once they're on pro (no point upselling someone
+        # who already pays). Permanent menu surface for the conversion
+        # CTA — complements the daemon's notification on cap/expiry,
+        # which only fires at specific moments.
+        self.upgrade_item = rumps.MenuItem(
+            "Upgrade to Pro →", callback=self.on_upgrade_clicked
+        )
+        self._upgrade_item_key = "Upgrade to Pro →"
+        self._upgrade_item_mounted = False
+
         # Active Sessions submenu. Populated dynamically each refresh
         # from the daemon's router status. Shows up empty (with a
         # "(no agents active)" placeholder) in solo mode; shows each
@@ -332,6 +343,22 @@ class HeardApp(rumps.App):
                 pass
             self._update_item_mounted = False
             self._update_url = None
+
+        # Upgrade to Pro callout. Mount when the user is on trial /
+        # expired / unsigned; unmount once they're on pro. Sits below
+        # the status row, above silence/replay — visible enough to
+        # convert without being the first click target.
+        plan = (cfg.get("heard_plan") or "").strip().lower()
+        should_show_upgrade = plan != "pro"
+        if should_show_upgrade and not self._upgrade_item_mounted:
+            self.menu.insert_after(self.status_item.title, self.upgrade_item)
+            self._upgrade_item_mounted = True
+        elif not should_show_upgrade and self._upgrade_item_mounted:
+            try:
+                del self.menu[self._upgrade_item_key]
+            except KeyError:
+                pass
+            self._upgrade_item_mounted = False
 
         # Active Sessions submenu — populated from daemon router state.
         self._refresh_active_sessions(status or {})
@@ -1117,6 +1144,13 @@ class HeardApp(rumps.App):
         # url, but defensive defaults keep the click from being a
         # silent no-op).
         webbrowser.open(self._update_url or "https://github.com/heardlabs/heard/releases/latest")
+
+    def on_upgrade_clicked(self, _sender) -> None:
+        """Open the Pro buy link in the user's browser. The URL is
+        the canonical surface — no upgrade flow inside the app, no
+        embedded Stripe checkout (would require py2app + WebKit
+        plumbing for a flow we'd rather Stripe own end-to-end)."""
+        webbrowser.open("https://buy.stripe.com/bJecMYdBFfEW2oe5DG77O00")
 
     def on_quit(self, _sender) -> None:
         rumps.quit_application()
