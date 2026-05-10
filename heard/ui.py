@@ -5,11 +5,10 @@ a GUI can still run heard headless. Everything this app does, the CLI
 can do too. The UI is for discoverability and quick toggles, not a
 required control plane.
 
-Icon in the menu bar shows heard's state at a glance:
-  🎙  — daemon alive, happy
-  🔇  — daemon alive but paused (narrate_tools=False)
-  ⚠️  — daemon stopped
-  ●   — daemon actively synthesising or playing
+The menu bar icon is a single static template-tinted glyph
+(`assets/menubar.png`) — it does not change with daemon state. Live
+state is shown in the menu's status row instead ("On · Persona ·
+Verbosity", "● Speaking · …", or "⚠ <kind>" on error).
 
 Menu structure is intentionally short; the Options submenu hides the
 less-used switches.
@@ -159,40 +158,49 @@ class HeardApp(rumps.App):
             self.swarm_verbosity_menu[label] = item
         self.verbosity_menu["Swarm (background agents)"] = self.swarm_verbosity_menu
 
-        self.narrate_tools_item = rumps.MenuItem("Narrate tool calls", callback=self.on_toggle_tools)
-        self.narrate_results_item = rumps.MenuItem(
-            "Narrate tool results",
-            callback=self.on_toggle_results,
-        )
         self.auto_silence_item = rumps.MenuItem(
             "Auto-silence on call",
             callback=self.on_toggle_auto_silence,
         )
 
-        # API-keys submenu — shows masked-tail indicator for each key
-        # (or "not set"). Clicking either opens the keys modal where
-        # both can be updated at once.
+        # API-keys submenu — top row shows the *active* voice path the
+        # daemon picked (cloud / BYOK ElevenLabs / Kokoro / none), then
+        # masked-tail indicators for each BYOK key. Driven off
+        # status.backend rather than config so it reflects what's
+        # actually running (e.g. shows "Offline voice" when a cloud
+        # trial has lapsed and the selector fell back).
         self.api_keys_menu = rumps.MenuItem("API keys")
+        self.active_path_item = rumps.MenuItem(
+            "Voice path: …", callback=None
+        )
         self.llm_key_item = rumps.MenuItem("LLM: not set", callback=self.on_set_api_keys)
         self.el_key_item = rumps.MenuItem("ElevenLabs: not set", callback=self.on_set_api_keys)
+        self.api_keys_menu["ActivePath"] = self.active_path_item
         self.api_keys_menu["LLM"] = self.llm_key_item
         self.api_keys_menu["ElevenLabs"] = self.el_key_item
 
+        # Kokoro download/delete labels — kept under stable rumps keys
+        # so refresh() can mount/unmount the delete leaf based on whether
+        # the model is on disk. Visible titles are set live in refresh().
+        self._download_voice_key = "DownloadOfflineVoice"
+        self._delete_voice_key = "DeleteOfflineVoice"
+        self.download_voice_item = rumps.MenuItem(
+            "Download offline voice…", callback=self.on_download_kokoro
+        )
+        self.delete_voice_item = rumps.MenuItem(
+            "Delete offline voice", callback=self.on_delete_kokoro
+        )
+        self._delete_voice_mounted = False
+
         options_menu = rumps.MenuItem("Options")
-        options_menu["Narrate tool calls"] = self.narrate_tools_item
-        options_menu["Narrate tool results"] = self.narrate_results_item
         options_menu["Auto-silence on call"] = self.auto_silence_item
         options_menu["API keys"] = self.api_keys_menu
-        options_menu["Download voice model"] = rumps.MenuItem(
-            "Download voice model", callback=self.on_download_kokoro
-        )
-        options_menu["Delete voice model"] = rumps.MenuItem(
-            "Delete voice model", callback=self.on_delete_kokoro
-        )
+        options_menu[self._download_voice_key] = self.download_voice_item
         options_menu["Open config file"] = rumps.MenuItem("Open config file", callback=self.on_open_config)
         options_menu["Open daemon log"] = rumps.MenuItem("Open daemon log", callback=self.on_open_log)
         options_menu["Restart daemon"] = rumps.MenuItem("Restart daemon", callback=self.on_restart_daemon)
         options_menu["GitHub"] = rumps.MenuItem("GitHub", callback=self.on_github)
+        self.options_menu = options_menu
 
         # Sign-out leaf — sits below Quit so it's findable but never the
         # accidental click. Visibility is controlled by enabling/disabling
@@ -229,7 +237,7 @@ class HeardApp(rumps.App):
             self._daemon_ever_alive = True
 
         self._refresh_account_row(cfg)
-        self._refresh_api_key_labels(cfg)
+        self._refresh_api_key_labels(cfg, status or {})
 
         # First-launch onboarding: only if the user hasn't been through it
         # yet. The flag is set inside _prompt_api_key once the flow
@@ -250,7 +258,9 @@ class HeardApp(rumps.App):
                 "⚠ daemon stopped" if self._daemon_ever_alive else "starting…"
             )
         elif last_error:
-            self.status_item.title = f"⚠ {self._error_label(last_error.get('kind', ''))}"
+            self.status_item.title = (
+                f"⚠ {self._error_label(last_error.get('kind', ''), last_error.get('message', ''))}"
+            )
         elif not cfg.get("narrate_tools", True):
             self.status_item.title = self._status_line(cfg, "muted")
         elif (status or {}).get("speaking"):
@@ -289,9 +299,8 @@ class HeardApp(rumps.App):
         for label, item in self.swarm_verbosity_menu.items():
             level = label.split()[0]
             item.state = 1 if level == swarm_level else 0
-        self.narrate_tools_item.state = 1 if cfg.get("narrate_tools", True) else 0
-        self.narrate_results_item.state = 1 if cfg.get("narrate_tool_results", True) else 0
         self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
+        self._refresh_offline_voice_items()
 
         # Hotkey binding labels — earlier the silence item label
         # hardcoded "⌘⇧." even though the actual default is tap-hold
@@ -326,6 +335,29 @@ class HeardApp(rumps.App):
 
         # Active Sessions submenu — populated from daemon router state.
         self._refresh_active_sessions(status or {})
+
+    def _refresh_offline_voice_items(self) -> None:
+        """Show "Delete offline voice" only when the Kokoro model is on
+        disk. Offering to delete what isn't there reads as broken; hiding
+        it keeps the menu honest."""
+        try:
+            from heard.tts.kokoro import KokoroTTS
+
+            installed = KokoroTTS(config.MODELS_DIR).is_downloaded()
+        except Exception:
+            installed = False
+
+        if installed and not self._delete_voice_mounted:
+            # Mount directly after the download item so the pair reads
+            # as a unit.
+            self.options_menu[self._delete_voice_key] = self.delete_voice_item
+            self._delete_voice_mounted = True
+        elif not installed and self._delete_voice_mounted:
+            try:
+                del self.options_menu[self._delete_voice_key]
+            except KeyError:
+                pass
+            self._delete_voice_mounted = False
 
     def _refresh_active_sessions(self, status: dict) -> None:
         """Rebuild the Active Sessions submenu from the daemon's
@@ -409,7 +441,23 @@ class HeardApp(rumps.App):
         verb = (cfg.get("verbosity") or "normal").capitalize()
         return f"{state.capitalize()} · {persona} · {verb}"
 
-    def _error_label(self, kind: str) -> str:
+    def _error_label(self, kind: str, message: str = "") -> str:
+        # ManagedError stringifies as "managed {status} {reason}: {detail}",
+        # so we parse the reason out to give the user something they can
+        # actually act on (cap reached vs. token bad vs. proxy down).
+        # Falls through to the generic label if the reason is unknown
+        # or the message format ever changes.
+        if kind == "managed":
+            reason = self._managed_reason(message)
+            return {
+                "daily_cap_exceeded": "Daily cloud limit reached — back tomorrow",
+                "trial_expired": "Trial ended — switching to local voices",
+                "token_unknown": "Sign-in expired — sign in again",
+                "no_token": "Cloud voices not signed in",
+                "network_unreachable": "Cloud unreachable",
+                "proxy_error": "Cloud voices unreachable",
+            }.get(reason, "cloud voices error")
+
         return {
             "elevenlabs_auth": "ElevenLabs key invalid",
             "elevenlabs_rate": "ElevenLabs out of credits",
@@ -417,8 +465,30 @@ class HeardApp(rumps.App):
             "elevenlabs_network": "ElevenLabs unreachable",
             "synth_generic": "couldn't synthesise",
             "memory_pressure": "system memory low",
-            "managed": "cloud voices error",
         }.get(kind, kind or "synth failed")
+
+    @staticmethod
+    def _managed_reason(message: str) -> str:
+        """Pull the reason token out of a ManagedError stringification.
+        Format from heard/tts/managed.py: ``managed {status} {reason}: {detail}``.
+        Returns "" when the message doesn't match (unknown future format)."""
+        msg = (message or "").strip()
+        if not msg.startswith("managed "):
+            return ""
+        # "managed 429 daily_cap_exceeded (9 chars left until reset): ..."
+        parts = msg.split(maxsplit=2)
+        if len(parts) < 3:
+            return ""
+        # Reason ends at the first space, paren, or colon (whichever is
+        # leftmost) — covers "trial_expired:" (colon-only),
+        # "daily_cap_exceeded (...)..." (space-then-paren), and
+        # everything in between.
+        reason_part = parts[2]
+        idx = next(
+            (i for i, ch in enumerate(reason_part) if ch in " (:"),
+            len(reason_part),
+        )
+        return reason_part[:idx].strip()
 
     # --- action callbacks ---------------------------------------------------
 
@@ -500,26 +570,6 @@ class HeardApp(rumps.App):
             self.refresh(None)
 
         return cb
-
-    def on_toggle_tools(self, _sender) -> None:
-        cfg = config.load()
-        current = cfg.get("narrate_tools", True)
-        config.set_value("narrate_tools", not current)
-        try:
-            client.send({"cmd": "reload"})
-        except Exception:
-            pass
-        self.refresh(None)
-
-    def on_toggle_results(self, _sender) -> None:
-        cfg = config.load()
-        current = cfg.get("narrate_tool_results", True)
-        config.set_value("narrate_tool_results", not current)
-        try:
-            client.send({"cmd": "reload"})
-        except Exception:
-            pass
-        self.refresh(None)
 
     def on_toggle_auto_silence(self, _sender) -> None:
         """Marquee feature in the README ('Auto-pause on calls') had
@@ -678,7 +728,14 @@ class HeardApp(rumps.App):
             return "trial (1 day left)"
         return f"trial ({days_left} days left)"
 
-    def _refresh_api_key_labels(self, cfg: dict) -> None:
+    def _refresh_api_key_labels(self, cfg: dict, status: dict) -> None:
+        # Active-path row — rendered from the daemon's reported backend
+        # so we show what's actually running, not just what's configured.
+        # This matters when a cloud trial expires: the daemon flips to
+        # ElevenLabs / Kokoro automatically, and the user wants to see
+        # that without having to read the daemon log.
+        self.active_path_item.title = self._active_path_label(cfg, status)
+
         anthropic = (cfg.get("anthropic_api_key") or "").strip()
         openai = (cfg.get("openai_api_key") or "").strip()
         # Either provider populates the LLM slot — show whichever's set.
@@ -687,6 +744,25 @@ class HeardApp(rumps.App):
         self.el_key_item.title = (
             f"ElevenLabs: {self._mask_key(cfg.get('elevenlabs_api_key', ''))}"
         )
+
+    def _active_path_label(self, cfg: dict, status: dict) -> str:
+        """Render "Voice path: <human label>" from the daemon's reported
+        backend class. Falls back to "starting…" when the daemon isn't
+        up yet (cold-launch window). For the cloud path, append the
+        plan suffix so the trial countdown shows here too."""
+        backend = (status.get("backend") or "").strip() if status else ""
+        if not backend:
+            return "Voice path: starting…"
+        if backend == "ManagedTTS":
+            plan = (cfg.get("heard_plan") or "trial").strip() or "trial"
+            return f"Voice path: cloud · {self._plan_suffix(plan, cfg)}"
+        if backend == "ElevenLabsTTS":
+            return "Voice path: ElevenLabs (BYOK)"
+        if backend == "KokoroTTS":
+            return "Voice path: offline (Kokoro)"
+        # Defensive: a backend the menu doesn't know about. Show the
+        # raw class name rather than lying about the path.
+        return f"Voice path: {backend}"
 
     def _prompt_api_key(self, start_step: int = 1) -> None:
         """Four-step onboarding window. Saves whichever keys the user
