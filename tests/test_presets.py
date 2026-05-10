@@ -51,15 +51,19 @@ def test_save_drops_unknown_keys(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(cfg_mod, "CONFIG_PATH", tmp_path / "config.yaml")
 
+    # "raw" is non-default (default is "jarvis" since the persona-pin
+    # change). Pick a value that survives the DEFAULTS[k] != v filter
+    # so we're actually testing the strict-allowlist pass, not the
+    # default-elision pass.
     cfg_mod.save({
-        "persona": "jarvis",  # known, non-default
+        "persona": "raw",     # known, non-default
         "name": "atlas",      # leaked from prior preset call
         "address": "Sir",     # leaked from prior preset call
         "voice": "rachel",    # known, non-default
     })
 
     written = (tmp_path / "config.yaml").read_text()
-    assert "persona: jarvis" in written
+    assert "persona: raw" in written
     assert "voice: rachel" in written
     assert "name:" not in written
     assert "address:" not in written
