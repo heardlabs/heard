@@ -906,18 +906,20 @@ class HeardApp(rumps.App):
             return
 
         # Voice-path nudges — three branches:
-        #   - Heard token minted in the trial flow → cloud voices
-        #     are the default. Self-test will run on first synth via
-        #     the proxy; no notification needed (they just signed
-        #     up, the success screen already confirmed it).
-        #   - Legacy: ElevenLabs key pasted directly → run the
-        #     synth self-test so a typo'd key surfaces NOW instead
-        #     of on the user's first CC tool call (silent fail).
+        #   - Heard token minted in the trial / install-code flow →
+        #     cloud voices are the default. Run a managed-proxy
+        #     self-test so a broken token, expired trial, or proxy
+        #     outage surfaces NOW (notification) rather than on the
+        #     user's first CC tool call (silent fail). The success
+        #     screen claimed "Cloud voices are ready" — this is what
+        #     actually verifies it.
+        #   - Legacy: ElevenLabs key pasted directly → BYOK self-test
+        #     so a typo'd key surfaces NOW.
         #   - Neither → user opted into local voices. Surface a
         #     one-time notification pointing at the Options menu so
         #     they can grab the Kokoro model on their schedule.
         if heard_token:
-            pass
+            self._self_test_managed_async()
         elif eleven:
             self._self_test_async()
         else:
@@ -1043,6 +1045,99 @@ class HeardApp(rumps.App):
                         "Heard — voice service couldn't be reached",
                         f"{msg[:120]}",
                         kind="onboarding_test_network",
+                    )
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _self_test_managed_async(self) -> None:
+        """Background pipeline check after a heard_token is claimed
+        (trial signup or install-code paste). Mirrors
+        ``_self_test_async`` for the managed-proxy path: one tiny
+        synth through ``api.heard.dev`` to verify the bearer is
+        accepted, the proxy is reachable, and TLS / network / certs
+        are healthy.
+
+        Routes notifications by ``ManagedError.status`` so the user
+        sees a meaningful next step:
+          401 → re-onboard (token rejected)
+          402 → trial expired / not on a paying plan yet
+          429 → already at daily cap (unusual right after signup —
+                surfaces as proof of life)
+          5xx / 0 → proxy or network issue; defer to ``heard doctor``
+
+        Silent on success — they just signed up, no need to nag."""
+        import threading
+
+        from heard.notify import notify
+
+        def _run() -> None:
+            import time
+
+            time.sleep(1.0)  # let the menu finish settling
+            try:
+                cfg = config.load()
+                from heard.tts.managed import ManagedError, ManagedTTS
+
+                tts = ManagedTTS(
+                    token=cfg.get("heard_token", ""),
+                    base_url=cfg.get("heard_api_base") or "https://api.heard.dev",
+                )
+                import tempfile
+                from pathlib import Path
+
+                fd, path_str = tempfile.mkstemp(suffix=".mp3", prefix="heard-selftest-")
+                __import__("os").close(fd)
+                path = Path(path_str)
+                try:
+                    tts.synth_to_file(
+                        "ok", cfg.get("voice", "george"), 1.0, cfg.get("lang", "en-us"), path
+                    )
+                finally:
+                    path.unlink(missing_ok=True)
+                # Success — silent ✓.
+            except ManagedError as e:
+                if e.status == 401:
+                    notify(
+                        "Heard — sign-in not recognised",
+                        "Your token was rejected. Click 'Sign in to Heard…' "
+                        "in the menu to re-enter your install code.",
+                        kind="onboarding_managed_test_auth",
+                    )
+                elif e.status == 402:
+                    notify(
+                        "Heard — trial expired",
+                        "Cloud voices need an active plan. Upgrade at "
+                        "heard.dev/pro, or use local voices via "
+                        "Options → Download voice model.",
+                        kind="onboarding_managed_test_402",
+                    )
+                elif e.status == 429:
+                    notify(
+                        "Heard — daily cap already hit",
+                        "You're at today's character cap. Cloud voices "
+                        "come back at the next UTC midnight reset.",
+                        kind="onboarding_managed_test_429",
+                    )
+                else:
+                    notify(
+                        "Heard — voice service couldn't be reached",
+                        f"{e.reason}: {e.detail[:100]}".rstrip(": "),
+                        kind="onboarding_managed_test_proxy",
+                    )
+            except Exception as e:
+                # Non-ManagedError: TLS handshake, DNS, urllib oddities.
+                msg = str(e)
+                if "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
+                    notify(
+                        "Heard — TLS handshake failed",
+                        "Run `heard doctor` from a terminal to see what's wrong.",
+                        kind="onboarding_managed_test_ssl",
+                    )
+                else:
+                    notify(
+                        "Heard — voice service couldn't be reached",
+                        f"{msg[:120]}",
+                        kind="onboarding_managed_test_network",
                     )
 
         threading.Thread(target=_run, daemon=True).start()
