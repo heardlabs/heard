@@ -9,6 +9,8 @@ Replaces rumps.Window for the four-screen onboarding flow.
 from __future__ import annotations
 
 import subprocess
+import sys
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -327,6 +329,19 @@ def prompt(start_step: int = 1) -> dict[str, Any]:
         # they completed (sign-in token, API keys).
         if action == "commit_partial":
             _save_partial_to_config(payload)
+            return
+
+        # Open a URL in the user's default browser. Used for the
+        # Continue-with-Google button (OAuth blocks WebView contexts,
+        # so we bounce to heard.dev/signup in a real browser; the
+        # user comes back with an install code to paste).
+        if action == "open_browser":
+            url = (payload.get("url") or "").strip()
+            if url.startswith("https://"):
+                try:
+                    webbrowser.open(url)
+                except Exception as e:
+                    print(f"open_browser failed: {e}", file=sys.stderr)
             return
 
         result["action"] = action

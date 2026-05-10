@@ -402,7 +402,6 @@
                 <svg viewBox="0 0 16 16"><path fill="#4285F4" d="M15.68 8.18c0-.57-.05-1.12-.15-1.64H8v3.1h4.31a3.69 3.69 0 0 1-1.6 2.42v2.01h2.59c1.51-1.4 2.38-3.46 2.38-5.89z"/><path fill="#34A853" d="M8 16c2.16 0 3.97-.72 5.3-1.94l-2.59-2.01c-.72.48-1.64.77-2.71.77-2.08 0-3.85-1.41-4.48-3.3H.85v2.07A8 8 0 0 0 8 16z"/><path fill="#FBBC05" d="M3.52 9.52a4.81 4.81 0 0 1 0-3.04V4.41H.85a8 8 0 0 0 0 7.18l2.67-2.07z"/><path fill="#EA4335" d="M8 3.18c1.17 0 2.23.4 3.06 1.2l2.3-2.3A8 8 0 0 0 .85 4.41l2.67 2.07C4.15 4.59 5.92 3.18 8 3.18z"/></svg>
               </span>
               <span class="signin-label">Continue with Google</span>
-              <span class="signin-soon">Soon</span>
             </button>
           </div>
 
@@ -744,13 +743,21 @@
       showSubstate('claim');
       return;
     }
-    // GitHub / Google — UI is shipped, OAuth flow lands in v0.5.1.
-    // Show a friendly placeholder rather than no-op'ing the click.
-    var title = document.getElementById('signin-soon-title');
-    if (title) {
-      title.textContent =
-        provider === 'github' ? 'GitHub sign-in, very soon.' : 'Google sign-in, very soon.';
+    if (provider === 'google') {
+      // OAuth has to run in a real browser — Google blocks WebView
+      // contexts (which our WKWebView modal effectively is) for OAuth
+      // since 2021. Bounce the user out to heard.dev/signup, where the
+      // browser-side Supabase Auth flow runs cleanly. They'll come
+      // back with an install code to paste via the "Already signed
+      // up?" path.
+      post('open_browser', { url: 'https://heard.dev/signup' });
+      claimClearLegalError();
+      showSubstate('claim');
+      return;
     }
+    // GitHub — placeholder until we wire it through Supabase Auth too.
+    var title = document.getElementById('signin-soon-title');
+    if (title) title.textContent = 'GitHub sign-in, very soon.';
     showSubstate('soon');
   }
   function signinBackToChoose() {
