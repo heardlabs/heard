@@ -629,8 +629,19 @@ class HeardApp(rumps.App):
         self.refresh(None)
 
     def _first_launch_prompt(self) -> None:
-        """Right-on-launch ask for an API key. Cancel = skip."""
-        self._prompt_api_key()
+        """Right-on-launch ask for an API key. Cancel = skip.
+
+        If `heard_token` is already populated (modal closed mid-flow
+        after a successful install-code claim, or future URL-scheme
+        deep link that pre-stamps the token before the modal opens),
+        skip screen 1 (signin) and start on screen 2 (BYOK keys). The
+        user can still re-signin via "Sign in to Heard…" in the menu
+        if they want to switch accounts.
+        """
+        cfg = config.load()
+        has_token = bool((cfg.get("heard_token") or "").strip())
+        start_step = 2 if has_token else 1
+        self._prompt_api_key(start_step=start_step)
         try:
             client.send({"cmd": "reload"})
         except Exception:
@@ -771,7 +782,12 @@ class HeardApp(rumps.App):
         this on subsequent launches.
 
         ``start_step`` selects which screen the modal opens on (1 = trial
-        signup, 2 = keys). Defaults to 1 for first-launch onboarding.
+        signup, 2 = keys). Defaults to 1. Callers pass 2 when the user
+        explicitly invoked "Set API key…" from the menu (they're not
+        signing in, they're entering a key) or when first-launch
+        onboarding finds a token already in config (no need to re-do
+        signin — install-code claim from a prior partial run, or a
+        future URL-scheme deep link).
         """
         try:
             from heard import key_window
