@@ -424,7 +424,7 @@ class Daemon:
         try:
             notify.notify(
                 "Heard trial ended",
-                "Switched to local voices. Upgrade for cloud voices: heard.dev/pro",
+                "Switched to local voices. Upgrade for cloud voices: buy.stripe.com/bJecMYdBFfEW2oe5DG77O00",
                 kind="trial_expired",
             )
         except Exception:
@@ -632,11 +632,25 @@ class Daemon:
                         kind="cloud_expired",
                     )
                 elif e.status == 429:
-                    notify.notify(
-                        "Heard daily limit reached",
-                        "Cloud voices come back tomorrow.",
-                        kind="cloud_daily_cap",
-                    )
+                    # Branch by plan so the trial path leads with the
+                    # upgrade CTA (the actionable next step) and the pro
+                    # path doesn't try to upsell someone who's already
+                    # paying. Cap copy mirrors the server-side ceilings.
+                    plan = (self.cfg.get("heard_plan") or "").strip().lower()
+                    if plan == "trial":
+                        notify.notify(
+                            "Heard daily limit reached",
+                            "Trial cap (100K chars/day). Upgrade to Pro for "
+                            "200K/day: buy.stripe.com/bJecMYdBFfEW2oe5DG77O00",
+                            kind="cloud_daily_cap_trial",
+                        )
+                    else:
+                        notify.notify(
+                            "Heard daily limit reached",
+                            "Pro cap (200K chars/day). Cloud voices come back "
+                            "tomorrow.",
+                            kind="cloud_daily_cap_pro",
+                        )
                 elif e.status == 401:
                     notify.notify(
                         "Heard sign-in expired",
@@ -649,7 +663,16 @@ class Daemon:
                         "Open Heard from the menu and paste your own ElevenLabs key, or use local voices.",
                         kind="cloud_unreachable",
                     )
-                self._record_error("managed", str(e))
+                # 402 (trial expired) is a *graceful* state transition,
+                # not a persistent error: the daemon already flipped the
+                # plan + re-picked TTS to local above, and the user got
+                # a one-time notification. Recording it would also park
+                # a ⚠ in the menu bar status row that lingers until the
+                # next successful synth — confusing for someone who
+                # never wanted cloud in the first place. 429/401/5xx
+                # remain real ongoing conditions and DO get badged.
+                if e.status != 402:
+                    self._record_error("managed", str(e))
                 _log("synth_failed", backend=type(self.tts).__name__, err=str(e))
                 path.unlink(missing_ok=True)
                 continue
