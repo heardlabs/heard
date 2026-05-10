@@ -19,6 +19,7 @@ HTTP error parsing logic for every endpoint.
 from __future__ import annotations
 
 import json
+import re
 import ssl
 import urllib.error
 import urllib.request
@@ -121,4 +122,44 @@ def verify_code(
         email=str(payload.get("email") or email),
         trial_expires_at=int(payload.get("trial_expires_at") or 0),
         returning=bool(payload.get("returning", False)),
+    )
+
+
+# 32-letter ambiguity-free alphabet (no 0/1/I/O). Mirror of
+# INSTALL_CODE_ALPHABET in heard-api/src/db.ts. We accept the dashed or
+# undashed form, lowercased or uppercased, and canonicalize before
+# sending so the server's hash matches.
+_INSTALL_CODE_RE = re.compile(r"[^A-HJ-NP-Z2-9]")
+
+
+def claim_install_code(
+    code: str, base_url: str = DEFAULT_BASE_URL
+) -> TokenInfo:
+    """Exchange a single-use install code (minted by heard.dev's
+    /signup web flow) for a fresh Heard bearer + plan info. The
+    server rotates the bound account's token_hash on success, so any
+    other device still on the old bearer gets logged out — same
+    behaviour as a returning email-verify.
+
+    Raises ``HeardApiError(400, 'invalid_request')`` on shape failures,
+    ``HeardApiError(410, 'code_expired'|'code_expired_or_unknown')`` on
+    expiry / unknown codes, ``HeardApiError(410, 'account_missing')``
+    when the bound account was deleted between mint and claim."""
+    canonical = _INSTALL_CODE_RE.sub("", (code or "").upper())
+    if len(canonical) != 8:
+        raise HeardApiError(
+            400, "invalid_request", "code must canonicalize to 8 chars"
+        )
+    payload = _post_json(
+        f"{base_url.rstrip('/')}/v1/auth/claim", {"code": canonical}
+    )
+    token = (payload.get("token") or "").strip()
+    if not token:
+        raise HeardApiError(500, "missing_token", json.dumps(payload)[:200])
+    return TokenInfo(
+        token=token,
+        plan=str(payload.get("plan") or "trial"),
+        email=str(payload.get("email") or ""),
+        trial_expires_at=int(payload.get("trial_expires_at") or 0),
+        returning=False,
     )
