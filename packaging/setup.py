@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 from setuptools import setup  # noqa: E402
 
 APP_NAME = "Heard"
-APP_VERSION = "0.5.21"
+APP_VERSION = "0.6.0"
 APP_BUNDLE_ID = "dev.heard.menubar"
 
 APP = [os.path.join(HERE, "app_entry.py")]
@@ -55,7 +55,6 @@ DATA_FILES = [
         [
             os.path.join(ROOT, "heard/assets/menubar.png"),
             os.path.join(ROOT, "heard/assets/menubar@2x.png"),
-            os.path.join(ROOT, "heard/assets/key_prompt.html"),
         ],
     ),
 ]
@@ -106,7 +105,7 @@ OPTIONS = {
         "idna",
         "urllib3",
     ],
-    "includes": ["pkg_resources", "WebKit"],
+    "includes": ["pkg_resources"],
     "excludes": [
         "tkinter",
         "matplotlib",

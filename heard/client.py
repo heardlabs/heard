@@ -225,13 +225,26 @@ def ensure_daemon() -> bool:
         # Open logf in a context — Popen dups the fd into the child
         # process, so closing on our side after spawn is safe and
         # avoids leaking one parent-side FD per ensure_daemon call.
+        #
+        # Inside a py2app .app bundle, sys.executable is a launcher stub
+        # that needs PYTHONHOME to find its stdlib (otherwise it raises
+        # `ModuleNotFoundError: No module named 'encodings'` and surfaces
+        # py2app's "Launch error" dialog). Mirror the wrapping that
+        # heard/adapters/__init__.py:build_hook_command does.
+        env = os.environ.copy()
+        exe = sys.executable
+        if "/Contents/MacOS/" in exe and ".app/" in exe:
+            bundle_root = exe.split("/Contents/MacOS/")[0]
+            env["PYTHONHOME"] = f"{bundle_root}/Contents/Resources"
+
         with open(config.LOG_PATH, "a", encoding="utf-8") as logf:
             subprocess.Popen(
-                [sys.executable, "-m", "heard.daemon"],
+                [exe, "-m", "heard.daemon"],
                 stdin=subprocess.DEVNULL,
                 stdout=logf,
                 stderr=logf,
                 start_new_session=True,
+                env=env,
             )
         return _wait_for_daemon(20.0)
     finally:

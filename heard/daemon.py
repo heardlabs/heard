@@ -166,10 +166,9 @@ class Daemon:
         # mid-lifetime grant crashes on macOS 14.6+ — pynput's worker
         # thread calls Carbon TSMGetInputSourceProperty, which now
         # asserts on the main dispatch queue and SIGTRAPs us when called
-        # from a non-main thread. The onboarding modal owns the in-flow
-        # grant signal (heard.key_window) and triggers an auto-relaunch
-        # via heard.ui after onboarding completes; macOS itself prompts
-        # the user to relaunch for grants that happen outside the modal.
+        # from a non-main thread. The Settings / onboarding windows
+        # (heard.settings_window) watch for the grant and auto-relaunch
+        # the app so pynput re-initialises cleanly in a fresh process.
         self._start_digest_timer()
         # Latest pending update info so the menu bar can surface a
         # "Update to vX.Y.Z →" item without polling itself. None until

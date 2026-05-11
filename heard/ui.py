@@ -30,17 +30,6 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 ICON_PATH = ASSETS_DIR / "menubar.png"
 
 
-def _find_bundle_path() -> Path | None:
-    """Return the path to the enclosing Heard.app bundle, or None when
-    running from a venv / source checkout (where there's no bundle to
-    relaunch). Used by the AX-grant auto-relaunch flow."""
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if parent.suffix == ".app":
-            return parent
-    return None
-
-
 class HeardApp(rumps.App):
     def __init__(self) -> None:
         # template=True asks macOS to auto-tint the icon to match the menu
@@ -70,7 +59,11 @@ class HeardApp(rumps.App):
         # and callback are rebuilt every refresh from config state.
         self.account_item = rumps.MenuItem("Sign in to Heard…", callback=self.on_signin)
 
-        self.status_item = rumps.MenuItem("…")
+        # rumps keys menu items by the title at insertion time, so we
+        # mustn't use the live (mutated) title for ``insert_after``
+        # lookups. Track the stable initial key here.
+        self._status_item_key = "…"
+        self.status_item = rumps.MenuItem(self._status_item_key)
         self.status_item.set_callback(None)
 
         # Silence + Replay labels are filled in live from config in
@@ -93,16 +86,6 @@ class HeardApp(rumps.App):
         self._update_item_mounted = False
         self._update_url: str | None = None
 
-        # Upgrade to Pro callout. Visible to trial / expired / unsigned
-        # users, hidden once they're on pro (no point upselling someone
-        # who already pays). Permanent menu surface for the conversion
-        # CTA — complements the daemon's notification on cap/expiry,
-        # which only fires at specific moments.
-        self.upgrade_item = rumps.MenuItem(
-            "Upgrade to Pro →", callback=self.on_upgrade_clicked
-        )
-        self._upgrade_item_key = "Upgrade to Pro →"
-        self._upgrade_item_mounted = False
 
         # Active Sessions submenu. Populated dynamically each refresh
         # from the daemon's router status. Shows up empty (with a
@@ -203,6 +186,14 @@ class HeardApp(rumps.App):
         )
         self._delete_voice_mounted = False
 
+        # Settings… opens the native tabbed window — Account, Voice,
+        # Keys, Shortcuts, Advanced. This is the primary surface now;
+        # the rumps submenus below stay as quick toggles for users who
+        # don't want to open a window.
+        self.settings_item = rumps.MenuItem(
+            "Settings…", callback=self.on_open_settings, key=","
+        )
+
         options_menu = rumps.MenuItem("Options")
         options_menu["Auto-silence on call"] = self.auto_silence_item
         options_menu["API keys"] = self.api_keys_menu
@@ -219,6 +210,11 @@ class HeardApp(rumps.App):
         # greyed-out item that can't be clicked.
         self.signout_item = rumps.MenuItem("Sign out", callback=self.on_signout)
 
+        # NOTE: the "Options" submenu (built above as `options_menu`)
+        # is intentionally NOT added to the menu — everything in it now
+        # lives in the Settings window. The object is still constructed
+        # so the various refresh()/_refresh_offline_voice_items() calls
+        # that target its sub-items keep working harmlessly on an orphan.
         self.menu = [
             self.account_item,
             None,
@@ -232,7 +228,7 @@ class HeardApp(rumps.App):
             self.verbosity_menu,
             self.active_sessions_menu,
             None,
-            options_menu,
+            self.settings_item,
             None,
             rumps.MenuItem("Quit menu bar", callback=self.on_quit),
             self.signout_item,
@@ -250,9 +246,11 @@ class HeardApp(rumps.App):
         self._refresh_account_row(cfg)
         self._refresh_api_key_labels(cfg, status or {})
 
-        # First-launch onboarding: only if the user hasn't been through it
-        # yet. The flag is set inside _prompt_api_key once the flow
-        # finishes (or the user skips), so we never re-prompt.
+        # First-launch onboarding: open the Settings window (it shows the
+        # welcome checklist) the first time, once the daemon's up. The
+        # `onboarded` flag is flipped by the Settings window itself —
+        # automatically once sign-in + Accessibility are done, or when
+        # the user clicks "Skip setup".
         if not self._first_launch_checked and alive:
             self._first_launch_checked = True
             if not cfg.get("onboarded"):
@@ -334,7 +332,7 @@ class HeardApp(rumps.App):
                 # Insert directly after the status row (which is the
                 # very first menu entry) so the callout is the first
                 # thing the user sees on opening the menu.
-                self.menu.insert_after(self.status_item.title, self.update_item)
+                self.menu.insert_after(self._status_item_key, self.update_item)
                 self._update_item_mounted = True
         elif self._update_item_mounted:
             try:
@@ -344,21 +342,8 @@ class HeardApp(rumps.App):
             self._update_item_mounted = False
             self._update_url = None
 
-        # Upgrade to Pro callout. Mount when the user is on trial /
-        # expired / unsigned; unmount once they're on pro. Sits below
-        # the status row, above silence/replay — visible enough to
-        # convert without being the first click target.
-        plan = (cfg.get("heard_plan") or "").strip().lower()
-        should_show_upgrade = plan != "pro"
-        if should_show_upgrade and not self._upgrade_item_mounted:
-            self.menu.insert_after(self.status_item.title, self.upgrade_item)
-            self._upgrade_item_mounted = True
-        elif not should_show_upgrade and self._upgrade_item_mounted:
-            try:
-                del self.menu[self._upgrade_item_key]
-            except KeyError:
-                pass
-            self._upgrade_item_mounted = False
+        # (The "Upgrade to Pro" conversion CTA used to live in the menu
+        # here; it now lives in Settings → Account, so the menu stays lean.)
 
         # Active Sessions submenu — populated from daemon router state.
         self._refresh_active_sessions(status or {})
@@ -656,48 +641,47 @@ class HeardApp(rumps.App):
         self.refresh(None)
 
     def _first_launch_prompt(self) -> None:
-        """Right-on-launch ask for an API key. Cancel = skip.
-
-        If `heard_token` is already populated (modal closed mid-flow
-        after a successful install-code claim, or future URL-scheme
-        deep link that pre-stamps the token before the modal opens),
-        skip screen 1 (signin) and start on screen 2 (BYOK keys). The
-        user can still re-signin via "Sign in to Heard…" in the menu
-        if they want to switch accounts.
-        """
-        cfg = config.load()
-        has_token = bool((cfg.get("heard_token") or "").strip())
-        start_step = 2 if has_token else 1
-        self._prompt_api_key(start_step=start_step)
+        """Right-on-launch: open the onboarding wizard (Welcome → Sign in
+        → Connect an agent → Grant Accessibility). It flips
+        ``onboarded=true`` when the user finishes or skips."""
+        try:
+            from heard import settings_window
+            settings_window.show_onboarding()
+        except Exception as e:
+            print(f"onboarding unavailable: {e}", file=sys.stderr)
         try:
             client.send({"cmd": "reload"})
         except Exception:
             pass
-        # Force a status refresh — the rumps timer that normally drives
-        # this is paused while the modal is up (NSDefaultRunLoopMode
-        # doesn't tick during NSApp.runModalForWindow_), so without this
-        # the menu bar can stay stuck on "starting…" until the next tick.
         self.refresh(None)
+
+    def on_open_settings(self, _sender) -> None:
+        """Open the Settings panel from the menu bar. Same window the
+        first-launch flow uses; just bypasses the welcome banner once
+        ``onboarded`` is true."""
+        try:
+            from heard import settings_window
+            settings_window.show(tab="account")
+        except Exception as e:
+            print(f"settings_window unavailable: {e}", file=sys.stderr)
 
     def on_set_api_keys(self, _sender) -> None:
-        # Land on Screen 2 (keys) so menu users skip the trial-signup
-        # landing — they're explicitly here to enter a key, not sign in.
-        self._prompt_api_key(start_step=2)
+        # API keys live in the Settings → Keys tab now.
         try:
-            client.send({"cmd": "reload"})
-        except Exception:
-            pass
-        self.refresh(None)
+            from heard import settings_window
+            settings_window.show(tab="keys")
+        except Exception as e:
+            print(f"settings_window unavailable: {e}", file=sys.stderr)
 
     def on_signin(self, _sender) -> None:
-        """Open the cloud-voices sign-in flow from the menu — same modal
-        as first-launch onboarding, just routed by the same plumbing."""
-        self._prompt_api_key(start_step=1)
+        """Settings → Account is the new sign-in surface (the panel has
+        a button that opens heard.dev/signup and a field for the
+        returned install code)."""
         try:
-            client.send({"cmd": "reload"})
-        except Exception:
-            pass
-        self.refresh(None)
+            from heard import settings_window
+            settings_window.show(tab="account")
+        except Exception as e:
+            print(f"settings_window unavailable: {e}", file=sys.stderr)
 
     def on_signout(self, _sender) -> None:
         """Clear the cloud-voices token + plan + email and reload the
@@ -802,346 +786,6 @@ class HeardApp(rumps.App):
         # raw class name rather than lying about the path.
         return f"Voice path: {backend}"
 
-    def _prompt_api_key(self, start_step: int = 1) -> None:
-        """Four-step onboarding window. Saves whichever keys the user
-        provides into config, installs hooks for the agents they
-        selected, and marks the user as onboarded so we never re-show
-        this on subsequent launches.
-
-        ``start_step`` selects which screen the modal opens on (1 = trial
-        signup, 2 = keys). Defaults to 1. Callers pass 2 when the user
-        explicitly invoked "Set API key…" from the menu (they're not
-        signing in, they're entering a key) or when first-launch
-        onboarding finds a token already in config (no need to re-do
-        signin — install-code claim from a prior partial run, or a
-        future URL-scheme deep link).
-        """
-        try:
-            from heard import key_window
-        except Exception as e:
-            print(f"key_window unavailable: {e}", file=sys.stderr)
-            return
-
-        result = key_window.prompt(start_step=start_step)
-        # Always mark onboarded once they've seen the flow — even if they
-        # clicked Skip — so we don't re-prompt on every launch.
-        config.set_value("onboarded", True)
-
-        action = result.get("action")
-        ax_granted = bool(result.get("accessibility_granted"))
-
-        # Credential and hook persistence is gated on a clean Finish so
-        # half-typed keys / unchecked agent boxes don't leak into config.
-        # Accessibility relaunch, however, is independent: a runtime AX
-        # grant means pynput is permanently dead in this process whether
-        # or not the user clicked Finish, so we must relaunch.
-        if action != "finish":
-            if ax_granted:
-                self._schedule_relaunch()
-            return
-
-        # LLM key — auto-route by prefix
-        llm = (result.get("llm") or "").strip()
-        if llm:
-            if llm.startswith("sk-ant-"):
-                config.set_value("anthropic_api_key", llm)
-            elif llm.startswith("sk-"):
-                config.set_value("openai_api_key", llm)
-            else:
-                # Ambiguous — assume Anthropic since that's the primary path
-                config.set_value("anthropic_api_key", llm)
-
-        # ElevenLabs key — stored verbatim; activates when ElevenLabs ships.
-        # Onboarding no longer asks for this directly (Set API key… in
-        # Options does), but keep the read in case the field reappears.
-        eleven = (result.get("elevenlabs") or "").strip()
-        if eleven:
-            config.set_value("elevenlabs_api_key", eleven)
-
-        # Trial-signup payload from screen 2's state machine. Empty
-        # means user opted into local voices; leave existing config
-        # untouched so a returning user who skipped this time keeps
-        # whatever they had.
-        heard_token = (result.get("heard_token") or "").strip()
-        if heard_token:
-            config.set_value("heard_token", heard_token)
-            config.set_value("heard_plan", (result.get("heard_plan") or "trial").strip())
-            # Persist the email so the menu bar can show "<email> · <plan>"
-            # without having to round-trip through the API.
-            config.set_value("heard_email", (result.get("heard_email") or "").strip())
-            try:
-                config.set_value(
-                    "heard_trial_expires_at",
-                    int(result.get("heard_trial_expires_at") or 0),
-                )
-            except (TypeError, ValueError):
-                config.set_value("heard_trial_expires_at", 0)
-
-        # Agent hooks — install for each agent the user checked in step 4.
-        # We catch per-agent so a single failure doesn't abort the rest.
-        agents = result.get("agents") or []
-        if agents:
-            from heard.adapters import ADAPTERS
-            for agent_name in agents:
-                adapter = ADAPTERS.get(agent_name)
-                if adapter is None:
-                    print(f"unknown agent in onboarding: {agent_name!r}", file=sys.stderr)
-                    continue
-                try:
-                    adapter.install()
-                except Exception as e:
-                    print(
-                        f"failed to install hook for {agent_name}: {e}",
-                        file=sys.stderr,
-                    )
-
-        # If the user granted Accessibility mid-flow, schedule an
-        # auto-relaunch. Restarting pynput in-process crashes on macOS
-        # 14.6+ (Carbon TSM dispatch_assert_queue from a worker thread),
-        # so a fresh process is the safe path. _schedule_relaunch waits
-        # for our pid to exit before re-opening the bundle, so the new
-        # instance starts with a clean AX cache and a clean pynput init.
-        if ax_granted:
-            self._schedule_relaunch()
-            return
-
-        # Voice-path nudges — three branches:
-        #   - Heard token minted in the trial / install-code flow →
-        #     cloud voices are the default. Run a managed-proxy
-        #     self-test so a broken token, expired trial, or proxy
-        #     outage surfaces NOW (notification) rather than on the
-        #     user's first CC tool call (silent fail). The success
-        #     screen claimed "Cloud voices are ready" — this is what
-        #     actually verifies it.
-        #   - Legacy: ElevenLabs key pasted directly → BYOK self-test
-        #     so a typo'd key surfaces NOW.
-        #   - Neither → user opted into local voices. Surface a
-        #     one-time notification pointing at the Options menu so
-        #     they can grab the Kokoro model on their schedule.
-        if heard_token:
-            self._self_test_managed_async()
-        elif eleven:
-            self._self_test_async()
-        else:
-            from heard.notify import notify
-
-            notify(
-                "Heard — pick a voice path",
-                "Use local voices via Options → Download voice model (~350 MB), "
-                "or paste an ElevenLabs key in Options → Set API key.",
-                kind="onboarding_voice_choice",
-            )
-
-    def _schedule_relaunch(self) -> None:
-        """Relaunch Heard.app once the current process exits.
-
-        Used after an in-flow Accessibility grant: pynput can't be
-        re-initialised in the same process (TSM dispatch_assert_queue
-        crash on macOS 14.6+), so a fresh launch is the only safe path.
-
-        Spawns a detached shell that polls our pid and reopens the
-        bundle once we're gone, then quits via NSApp.terminate_. The
-        sub-second `open` is safe because /Applications/Heard.app
-        single-instances itself via LSUIElement + bundle id.
-
-        No-op outside the .app bundle (dev runs from the venv don't
-        have a .app to relaunch — print a notice instead)."""
-        import os as _os
-        import subprocess as _sp
-
-        bundle_path = _find_bundle_path()
-        if bundle_path is None:
-            from heard.notify import notify
-            notify(
-                "Heard — restart to activate hotkey",
-                "Accessibility granted. Quit and relaunch Heard so the "
-                "global hotkey listener picks up the new permissions.",
-                kind="ax_grant_relaunch_dev",
-            )
-            return
-
-        pid = _os.getpid()
-        # Detached so the parent's exit doesn't kill the waiter. The
-        # `open` reuses the existing bundle path; LSUIElement keeps the
-        # new instance in the menu bar without bouncing the Dock.
-        _sp.Popen(
-            [
-                "/bin/sh",
-                "-c",
-                f"while kill -0 {pid} 2>/dev/null; do sleep 0.1; done; "
-                f"sleep 0.3; open {bundle_path!s}",
-            ],
-            start_new_session=True,
-            stdout=_sp.DEVNULL,
-            stderr=_sp.DEVNULL,
-        )
-        # Give the modal a moment to render the green badge before we
-        # tear down the process — the user just toggled the checkbox
-        # and we want the visual confirmation to land.
-        from AppKit import NSApp as _NSApp
-        from Foundation import NSTimer as _NSTimer
-
-        def _quit(_timer):
-            try:
-                _NSApp.terminate_(None)
-            except Exception:
-                _os._exit(0)
-
-        _NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.6, False, _quit)
-
-    def _self_test_async(self) -> None:
-        """Background pipeline check after onboarding. We do a single
-        ElevenLabs synth call against the user's just-pasted key —
-        no playback, just confirm the key works and TLS / network /
-        certs are healthy. On failure we surface a notification so
-        the user knows they need to fix something BEFORE they start
-        using CC.
-
-        Runs after a short delay so the menu bar finishes its
-        post-onboarding refresh first."""
-        import threading
-
-        from heard.notify import notify
-
-        def _run() -> None:
-            import time
-
-            time.sleep(1.0)  # let the menu finish settling
-            try:
-                cfg = config.load()
-                from heard.tts.elevenlabs import ElevenLabsTTS
-
-                tts = ElevenLabsTTS(api_key=cfg.get("elevenlabs_api_key", ""))
-                import tempfile
-                from pathlib import Path
-
-                fd, path_str = tempfile.mkstemp(suffix=".mp3", prefix="heard-selftest-")
-                __import__("os").close(fd)
-                path = Path(path_str)
-                try:
-                    tts.synth_to_file(
-                        "ok", cfg.get("voice", "george"), 1.0, cfg.get("lang", "en-us"), path
-                    )
-                finally:
-                    path.unlink(missing_ok=True)
-                # Success — no notification needed. Silent ✓ feels
-                # right; we don't want to nag the user post-onboarding.
-            except Exception as e:
-                msg = str(e)
-                if "401" in msg or "invalid_api_key" in msg.lower():
-                    notify(
-                        "Heard — ElevenLabs key didn't work",
-                        "The key was rejected. Click 'Set API key…' in the menu to try again.",
-                        kind="onboarding_test_auth",
-                    )
-                elif "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
-                    notify(
-                        "Heard — TLS handshake failed",
-                        "Run `heard doctor` from a terminal to see what's wrong.",
-                        kind="onboarding_test_ssl",
-                    )
-                else:
-                    notify(
-                        "Heard — voice service couldn't be reached",
-                        f"{msg[:120]}",
-                        kind="onboarding_test_network",
-                    )
-
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _self_test_managed_async(self) -> None:
-        """Background pipeline check after a heard_token is claimed
-        (trial signup or install-code paste). Mirrors
-        ``_self_test_async`` for the managed-proxy path: one tiny
-        synth through ``api.heard.dev`` to verify the bearer is
-        accepted, the proxy is reachable, and TLS / network / certs
-        are healthy.
-
-        Routes notifications by ``ManagedError.status`` so the user
-        sees a meaningful next step:
-          401 → re-onboard (token rejected)
-          402 → trial expired / not on a paying plan yet
-          429 → already at daily cap (unusual right after signup —
-                surfaces as proof of life)
-          5xx / 0 → proxy or network issue; defer to ``heard doctor``
-
-        Silent on success — they just signed up, no need to nag."""
-        import threading
-
-        from heard.notify import notify
-
-        def _run() -> None:
-            import time
-
-            time.sleep(1.0)  # let the menu finish settling
-            try:
-                cfg = config.load()
-                from heard.tts.managed import ManagedError, ManagedTTS
-
-                tts = ManagedTTS(
-                    token=cfg.get("heard_token", ""),
-                    base_url=cfg.get("heard_api_base") or "https://api.heard.dev",
-                )
-                import tempfile
-                from pathlib import Path
-
-                fd, path_str = tempfile.mkstemp(suffix=".mp3", prefix="heard-selftest-")
-                __import__("os").close(fd)
-                path = Path(path_str)
-                try:
-                    tts.synth_to_file(
-                        "ok", cfg.get("voice", "george"), 1.0, cfg.get("lang", "en-us"), path
-                    )
-                finally:
-                    path.unlink(missing_ok=True)
-                # Success — silent ✓.
-            except ManagedError as e:
-                if e.status == 401:
-                    notify(
-                        "Heard — sign-in not recognised",
-                        "Your token was rejected. Click 'Sign in to Heard…' "
-                        "in the menu to re-enter your install code.",
-                        kind="onboarding_managed_test_auth",
-                    )
-                elif e.status == 402:
-                    notify(
-                        "Heard — trial expired",
-                        "Cloud voices need an active plan. Upgrade at "
-                        "heard.dev/pro, or use local voices via "
-                        "Options → Download voice model.",
-                        kind="onboarding_managed_test_402",
-                    )
-                elif e.status == 429:
-                    notify(
-                        "Heard — daily cap already hit",
-                        "You're at today's character cap. Cloud voices "
-                        "come back at the next UTC midnight reset.",
-                        kind="onboarding_managed_test_429",
-                    )
-                else:
-                    notify(
-                        "Heard — voice service couldn't be reached",
-                        f"{e.reason}: {e.detail[:100]}".rstrip(": "),
-                        kind="onboarding_managed_test_proxy",
-                    )
-            except Exception as e:
-                # Non-ManagedError: TLS handshake, DNS, urllib oddities.
-                msg = str(e)
-                if "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
-                    notify(
-                        "Heard — TLS handshake failed",
-                        "Run `heard doctor` from a terminal to see what's wrong.",
-                        kind="onboarding_managed_test_ssl",
-                    )
-                else:
-                    notify(
-                        "Heard — voice service couldn't be reached",
-                        f"{msg[:120]}",
-                        kind="onboarding_managed_test_network",
-                    )
-
-        threading.Thread(target=_run, daemon=True).start()
-
     def on_download_kokoro(self, _sender) -> None:
         """Explicit user opt-in. Idempotent: shows a notification and
         bails if the model's already on disk OR if a download is
@@ -1239,13 +883,6 @@ class HeardApp(rumps.App):
         # url, but defensive defaults keep the click from being a
         # silent no-op).
         webbrowser.open(self._update_url or "https://github.com/heardlabs/heard/releases/latest")
-
-    def on_upgrade_clicked(self, _sender) -> None:
-        """Open the Pro buy link in the user's browser. The URL is
-        the canonical surface — no upgrade flow inside the app, no
-        embedded Stripe checkout (would require py2app + WebKit
-        plumbing for a flow we'd rather Stripe own end-to-end)."""
-        webbrowser.open("https://buy.stripe.com/bJecMYdBFfEW2oe5DG77O00")
 
     def on_quit(self, _sender) -> None:
         rumps.quit_application()
