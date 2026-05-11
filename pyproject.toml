@@ -53,6 +53,18 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 
+# Heard is macOS-only. Force `uv sync` to resolve to package versions
+# that ship a macOS wheel — without this, uv on the CI runner will
+# pick e.g. onnxruntime 1.26.0 (Linux/Windows wheels only, no macOS)
+# and refuse to install. pip is more forgiving and skips silently to
+# an older version, which is why release.yml (pip-based) is green
+# even when ci.yml (uv-based) is red on the same commit.
+[tool.uv]
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
 [project.scripts]
 heard = "heard.cli:app"
 
