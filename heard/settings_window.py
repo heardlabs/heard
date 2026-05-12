@@ -1532,7 +1532,17 @@ class SettingsController(NSObject):
             "Stop narrating when another app starts using the microphone.",
             auto_silence,
         )
-        self._add_card(body, _card([auto_silence_row]))
+        agent_voices_pop = _popup(
+            ["Distinct voices", "One voice"],
+            target=self, action="onAgentVoicesModeChanged:",
+        )
+        agent_voices_row = _setting_row(
+            "Parallel agents",
+            "Distinct voices: each agent gets its own voice. One voice: "
+            "the persona for all, with the agent's name spoken before each line.",
+            agent_voices_pop,
+        )
+        self._add_card(body, _card([auto_silence_row, agent_voices_row]))
 
         self._refs["voice"].update({
             "persona": persona_pop,
@@ -1540,6 +1550,7 @@ class SettingsController(NSObject):
             "verbosity": verbosity_pop,
             "swarm": swarm_pop,
             "auto_silence": auto_silence,
+            "agent_voices_mode": agent_voices_pop,
         })
         return outer
 
@@ -1809,6 +1820,10 @@ class SettingsController(NSObject):
         if swarm in r["swarm"].itemTitles():
             r["swarm"].selectItemWithTitle_(swarm)
         r["auto_silence"].setState_(1 if cfg.get("auto_silence_on_mic", True) else 0)
+        if r.get("agent_voices_mode") is not None:
+            r["agent_voices_mode"].selectItemWithTitle_(
+                "Distinct voices" if cfg.get("multi_agent_auto_voices", True) else "One voice"
+            )
 
     def _refresh_keys(self, cfg: dict) -> None:
         r = self._refs["keys"]
@@ -2055,6 +2070,11 @@ class SettingsController(NSObject):
 
     def onAutoSilenceToggled_(self, sender) -> None:
         config.set_value("auto_silence_on_mic", bool(sender.state()))
+        _reload_daemon()
+
+    def onAgentVoicesModeChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        config.set_value("multi_agent_auto_voices", title == "distinct voices")
         _reload_daemon()
 
     # Keys.

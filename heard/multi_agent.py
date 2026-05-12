@@ -236,7 +236,13 @@ class MultiAgentRouter:
                     voice = self._voice_for_locked(
                         session_id, agent_voices, auto_voices, is_focus=True
                     )
-                    return RoutingDecision(action="speak", voice_override=voice)
+                    return RoutingDecision(
+                        action="speak",
+                        voice_override=voice,
+                        label_prefix=self._focus_label_prefix_locked(
+                            session_id, agent_voices, auto_voices, now
+                        ),
+                    )
                 if tag in _PIERCE_TAGS:
                     voice = self._voice_for_locked(
                         session_id, agent_voices, auto_voices, is_focus=False
@@ -260,13 +266,44 @@ class MultiAgentRouter:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=True
                 )
-                return RoutingDecision(action="speak", voice_override=voice)
+                return RoutingDecision(
+                    action="speak",
+                    voice_override=voice,
+                    label_prefix=self._focus_label_prefix_locked(
+                        session_id, agent_voices, auto_voices, now
+                    ),
+                )
             if tag in _PIERCE_TAGS:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=False
                 )
                 return self._pierced(session_id, voice)
             return RoutingDecision(action="defer_to_digest")
+
+    def _focus_label_prefix_locked(
+        self,
+        session_id: str,
+        agent_voices: dict[str, str],
+        auto_voices: bool,
+        now: float,
+    ) -> str:
+        """"Agent <name>: " prefix for the focused agent's narration when
+        there's no other way to tell agents apart by sound — i.e. the
+        single-voice multi-agent mode (auto_voices off, no manual voice
+        for this repo). Empty when there's only one active agent (no
+        ambiguity), or when this agent has a distinct voice. Must be
+        called with ``self._lock`` held."""
+        if len(self._active_locked(now)) < 2:
+            return ""
+        info = self._sessions.get(session_id)
+        # If this agent already has a distinguishing voice (auto-pool or
+        # a manual mapping), the voice carries the identity — no prefix.
+        if auto_voices:
+            return ""
+        if info is not None and agent_voices.get(info.repo_name):
+            return ""
+        label = _label_for(info) if info is not None else (session_id[:8] or "agent")
+        return f"Agent {label}: "
 
     def _pierced(self, session_id: str, voice: str | None) -> RoutingDecision:
         info = self._sessions.get(session_id)

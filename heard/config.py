@@ -127,9 +127,10 @@ DEFAULTS: dict[str, Any] = {
     # no YAML editing required. Same repo_name always maps to the
     # same voice across CC restarts. Only kicks in for non-focus
     # sessions in swarm mode, so solo-mode users keep their persona
-    # voice unchanged. Set to false if you'd rather every agent
-    # speak in the persona's voice and tell them apart by the
-    # "Agent <name>:" prefix alone.
+    # voice unchanged. Set to false ("one voice" mode) if you'd rather
+    # every agent speak in the persona's voice — then, in multi-agent
+    # situations, every spoken line is prefixed with "Agent <name>: "
+    # so you still know which agent it's reporting on.
     "multi_agent_auto_voices": True,
     # Manual repo_name → ElevenLabs voice_id overrides. Always wins
     # over the auto-pick. Edit YAML directly:

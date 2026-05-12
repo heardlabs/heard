@@ -329,3 +329,41 @@ def test_list_active_for_menu():
     assert "api" in names and "web" in names
     assert names["api"]["pinned"] is True
     assert names["web"]["pinned"] is False
+
+
+def test_swarm_single_voice_mode_prefixes_focus_agent():
+    """auto_voices off (the "One voice" mode): the focused agent's own
+    narration gets an "Agent <name>: " prefix, since the listener can't
+    tell agents apart by sound. With auto_voices on, no focus prefix."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")  # most recent → focus
+    d = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
+    assert d.action == "speak"
+    assert d.label_prefix.startswith("Agent web")
+    d2 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=True)
+    assert d2.action == "speak"
+    assert d2.label_prefix == ""
+
+
+def test_solo_never_prefixes_even_in_single_voice_mode():
+    """One active agent → no ambiguity → no prefix, regardless of mode."""
+    r = _new_router()
+    r.note_event("only", cwd="/x/api")
+    d = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="only", auto_voices=False)
+    assert d.label_prefix == ""
+
+
+def test_single_voice_mode_skips_prefix_when_manual_voice_set():
+    """A manually-mapped voice carries the agent's identity — no prefix
+    needed even in single-voice mode."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")  # focus
+    d = r.classify(
+        kind="tool_pre", tag="tool_bash_grep", session_id="b",
+        agent_voices={"web": "voice_xyz"}, auto_voices=False,
+    )
+    assert d.action == "speak"
+    assert d.voice_override == "voice_xyz"
+    assert d.label_prefix == ""
