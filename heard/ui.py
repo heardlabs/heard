@@ -222,10 +222,11 @@ class HeardApp(rumps.App):
         # lives in the Settings window. The object is still constructed
         # so the various refresh()/_refresh_offline_voice_items() calls
         # that target its sub-items keep working harmlessly on an orphan.
+        # Header block: live status first, then the account row, then
+        # the version line — then a separator and the actions.
         self.menu = [
-            self.account_item,
-            None,
             self.status_item,
+            self.account_item,
             self.version_item,
             None,
             self.silence_item,
