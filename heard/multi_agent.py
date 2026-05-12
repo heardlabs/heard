@@ -96,6 +96,10 @@ class SessionInfo:
     cwd: str = ""
     repo_name: str = ""
     last_event: float = 0.0
+    # Monotonic counter, bumped on every note_event. Used to break
+    # ties when two sessions share a last_event timestamp (back-to-back
+    # events on a fast machine) so "most recent" is deterministic.
+    event_seq: int = 0
     pending_digest: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -182,6 +186,7 @@ class MultiAgentRouter:
         self._lock = threading.Lock()
         self._sessions: dict[str, SessionInfo] = {}
         self._pinned: str | None = None
+        self._event_counter = 0  # monotonic; assigned to SessionInfo.event_seq
         # Last session whose narration we let through. Used so the
         # "Agent <name>: " prefix (one-voice mode) is spoken only when
         # the speaker *changes* — narrating ten lines in a row from the
@@ -208,7 +213,9 @@ class MultiAgentRouter:
                     session_id=session_id, cwd=cwd or "", repo_name=repo_name
                 )
                 self._sessions[session_id] = info
+            self._event_counter += 1
             info.last_event = time.time()
+            info.event_seq = self._event_counter
 
     def _active_locked(self, now: float) -> list[SessionInfo]:
         cutoff = now - SESSION_ACTIVE_S
@@ -270,7 +277,7 @@ class MultiAgentRouter:
 
             # Swarm: >=2 active. Most-recently-active wins; others
             # pierce only on critical tags, otherwise digest-defer.
-            most_recent = max(active, key=lambda s: s.last_event)
+            most_recent = max(active, key=lambda s: (s.last_event, s.event_seq))
             is_focus = session_id == most_recent.session_id
             if is_focus:
                 voice = self._voice_for_locked(
