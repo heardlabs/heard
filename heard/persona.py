@@ -37,6 +37,22 @@ HAIKU_MODEL = "claude-haiku-4-5-20251001"
 HAIKU_TIMEOUT_S = 2.5
 HAIKU_MAX_TOKENS = 160
 
+# Epoch ms of the last managed-rewrite 429 (shared daily-char cap hit
+# via /v1/persona-rewrite), or None. While this is from the current UTC
+# day we skip the cloud rewrite entirely — fall straight to template
+# narration — instead of burning a round-trip per event on a request
+# we know will 429. Clears itself at the next UTC midnight (the cap
+# resets then). Module-level: the daemon process is long-lived and one
+# rewrite path serves all sessions.
+_managed_haiku_capped_at: float | None = None
+
+
+def _managed_haiku_capped_today() -> bool:
+    if not _managed_haiku_capped_at:
+        return False
+    import time
+    return time.gmtime(_managed_haiku_capped_at / 1000.0)[:3] == time.gmtime()[:3]
+
 # Discipline rules prepended to every persona's system prompt before the
 # Haiku call. Keeping these out of the persona MD files means tweaking
 # the global narration policy is a one-line code change, and forking a
@@ -330,13 +346,14 @@ def _haiku_rewrite(
     session: dict[str, Any],
 ) -> str | None:
     """Dispatch a Haiku rewrite. Prefers the user's BYOK Anthropic key
-    (they pay their own bill); falls back to Heard's cloud /v1/persona-
-    rewrite proxy when the user is on a trial/pro plan; returns None
-    when neither path is available, so callers fall through to
-    template-only narration."""
+    (they pay their own bill, no Heard cap) — so "I capped out, here's
+    my key" just works: set anthropic_api_key and the next event uses
+    it. Falls back to Heard's cloud /v1/persona-rewrite proxy when on a
+    trial/pro plan and not capped for the day; returns None when neither
+    is available, so callers fall through to template-only narration."""
     if _anthropic_key():
         return _byok_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
-    if _managed_rewrite_available():
+    if _managed_rewrite_available() and not _managed_haiku_capped_today():
         return _managed_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
     return None
 
@@ -511,6 +528,14 @@ def _managed_haiku_rewrite(
         out = " ".join(p.strip() for p in parts if p).strip()
         return out or None
     except _urlerr.HTTPError as e:
+        # Daily shared-char cap hit → remember it so we don't keep
+        # round-tripping the cloud rewrite for the rest of the UTC day;
+        # subsequent events go straight to template narration (and the
+        # TTS side falls back to a BYOK ElevenLabs key if one's set).
+        if getattr(e, "code", None) == 429:
+            global _managed_haiku_capped_at
+            import time
+            _managed_haiku_capped_at = time.time() * 1000.0
         # Surface the cases the user can act on. Kinds match the TTS
         # path's cloud_* kinds so the notify module dedupes a single
         # banner even when both rewrite and synth fail at the same time.
