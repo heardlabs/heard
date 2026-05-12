@@ -24,7 +24,6 @@ import threading
 import time
 from pathlib import Path
 
-import heard as _heard_pkg
 from heard import (
     accessibility,
     audio_monitor,
@@ -200,7 +199,7 @@ class Daemon:
             )
 
         updater.start_periodic_check(
-            current_version=_heard_pkg.__version__,
+            current_version=updater.resolved_current_version(),
             on_update=_on_update,
             enabled=lambda: bool(self.cfg.get("update_check_enabled", True)),
         )

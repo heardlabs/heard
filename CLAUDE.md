@@ -75,7 +75,7 @@ Daemon is back in ~3 s. Run `heard doctor` from the venv to verify.
 
 GitHub Actions builds + publishes on `v*` tag push. Process:
 
-1. Bump version in `packaging/setup.py` + `pyproject.toml`
+1. Bump version in `packaging/setup.py` (`APP_VERSION`) + `pyproject.toml` + `heard/__init__.py` (`__version__`) — all three, or the in-app updater shows a phantom "update available". (The .app reads `Info.plist` via `updater.resolved_current_version()` as a backstop, but keep the string in lockstep anyway.)
 2. Commit + `git push origin main`
 3. `git tag vX.Y.Z -m "..."` + `git push origin vX.Y.Z`
 4. CI builds `Heard.zip` + `Heard-vX.Y.Z.zip`, attaches to release

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import os
 
-__version__ = "0.5.8"
+# Keep in lockstep with packaging/setup.py (APP_VERSION) and
+# pyproject.toml on every release — the in-app update checker compares
+# this against GitHub Releases. (Belt-and-suspenders: inside the .app
+# bundle the updater reads CFBundleShortVersionString from Info.plist
+# instead, so a missed bump here won't trigger a phantom "update"
+# banner — see heard.updater.resolved_current_version.)
+__version__ = "0.7.5"
 
 # The frozen Python inside Heard.app has no system CA path, so any
 # HTTPS call (urllib voice download, anthropic SDK, elevenlabs SDK)

@@ -69,6 +69,37 @@ def is_newer(latest: tuple[int, int, int], current: tuple[int, int, int]) -> boo
     return latest > current
 
 
+def resolved_current_version() -> str:
+    """The version to compare against GitHub Releases.
+
+    Inside the Heard.app bundle, read ``CFBundleShortVersionString`` from
+    ``Contents/Info.plist`` — the build stamps that from
+    ``packaging/setup.py``, so it can't drift. Outside the bundle (CLI,
+    source/dev runs) fall back to ``heard.__version__``. Stdlib only
+    (``plistlib``) — no PyObjC import, cheap to call anywhere.
+    """
+    try:
+        import sys
+        exe = sys.executable or ""
+        if ".app" in exe and "/Contents/MacOS/" in exe:
+            import plistlib
+            from pathlib import Path
+            plist = Path(exe).resolve().parents[1] / "Info.plist"
+            if plist.is_file():
+                with plist.open("rb") as fh:
+                    data = plistlib.load(fh)
+                v = (data.get("CFBundleShortVersionString") or "").strip()
+                if v:
+                    return v
+    except Exception:
+        pass
+    try:
+        import heard
+        return heard.__version__
+    except Exception:
+        return "0.0.0"
+
+
 def _state_path() -> Path:
     return config.DATA_DIR / "update_check.json"
 

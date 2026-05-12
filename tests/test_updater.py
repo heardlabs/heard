@@ -245,3 +245,23 @@ def test_check_for_update_handles_dev_version_string():
     payload = {"tag_name": "v0.4.4", "html_url": "x", "draft": False, "prerelease": False}
     with _ok(payload):
         assert updater.check_for_update("dev") is None
+
+
+def test_resolved_version_reads_app_bundle_plist(tmp_path, monkeypatch):
+    """Inside Heard.app, the version comes from Contents/Info.plist —
+    immune to a stale heard.__version__."""
+    import plistlib
+
+    contents = tmp_path / "Heard.app" / "Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    with (contents / "Info.plist").open("wb") as fh:
+        plistlib.dump({"CFBundleShortVersionString": "9.9.9"}, fh)
+    monkeypatch.setattr("sys.executable", str(contents / "MacOS" / "python"))
+    assert updater.resolved_current_version() == "9.9.9"
+
+
+def test_resolved_version_falls_back_to_pkg_version_outside_bundle(monkeypatch):
+    """CLI / source runs (no .app in sys.executable) → heard.__version__."""
+    monkeypatch.setattr("sys.executable", "/usr/bin/python3")
+    import heard
+    assert updater.resolved_current_version() == heard.__version__
