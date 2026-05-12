@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 from setuptools import setup  # noqa: E402
 
 APP_NAME = "Heard"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 APP_BUNDLE_ID = "dev.heard.menubar"
 
 APP = [os.path.join(HERE, "app_entry.py")]
@@ -71,6 +71,15 @@ OPTIONS = {
         "NSHumanReadableCopyright": "Copyright © heardhq",
         "NSAppleEventsUsageDescription": "Heard needs to detect your global silence hotkey.",
         "LSMinimumSystemVersion": "13.0",
+        # heard:// custom URL scheme — used by the web sign-in handoff
+        # (heard.dev/app-auth bounces the browser to heard://auth?code=…
+        # so the running app finishes Google sign-in without a copy-paste).
+        "CFBundleURLTypes": [
+            {
+                "CFBundleURLName": APP_BUNDLE_ID,
+                "CFBundleURLSchemes": ["heard"],
+            }
+        ],
     },
     "packages": [
         "heard",
