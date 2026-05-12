@@ -40,6 +40,15 @@ class HeardApp(rumps.App):
             super().__init__("Heard", icon=str(ICON_PATH), template=True, quit_button=None)
         else:
             super().__init__("Heard", title="Heard", quit_button=None)
+        # Register the heard:// URL handler here (not in ui.run) — the
+        # launched .app enters via packaging/app_entry.py → HeardApp().run(),
+        # which never touches ui.run(). Best-effort; the install-code paste
+        # field is the fallback if this can't register.
+        try:
+            from heard import url_scheme
+            url_scheme.register()
+        except Exception as e:
+            print(f"url scheme handler not registered: {e}", file=sys.stderr)
         self._first_launch_checked = False
         # Tracks whether the daemon has ever answered status. Until it
         # does, we show "starting…" instead of "daemon stopped" — the
@@ -922,12 +931,4 @@ def run() -> None:
     except Exception as e:
         print(f"could not start daemon: {e}", file=sys.stderr)
     _refresh_existing_hooks()
-    # heard:// scheme — receives the Google sign-in handoff from
-    # heard.dev/app-auth. Best-effort; the install-code paste field is
-    # the fallback if this doesn't register.
-    try:
-        from heard import url_scheme
-        url_scheme.register()
-    except Exception as e:
-        print(f"url scheme handler not registered: {e}", file=sys.stderr)
     HeardApp().run()

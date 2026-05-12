@@ -2931,14 +2931,18 @@ class _OnboardingController(NSObject):
         verify_btn = _button("Sign in", target=self, action="onWizVerifyCode:", primary=True)
         code_row = _hstack([code_field, verify_btn], spacing=8)
         status = _label("", size=12, dim=True)
+        _low_priority_text(status, wrap=True)
         status.setHidden_(True)  # collapses until there's something to say
 
-        # --- Tucked away: install code from heard.dev's web flow. Most
-        #     users never need this (the Google handoff carries the code
-        #     automatically); reveal it on demand. ----------------------
+        # --- Install code. Normally the Google handoff carries it back
+        #     automatically (heard://), so this stays tucked behind a
+        #     link — but onWizSignInWeb_ auto-reveals it the moment the
+        #     user kicks off Google, so there's always a place to paste
+        #     the code shown in the browser if the auto-bounce is
+        #     blocked. ------------------------------------------------
         ic_disclosure = _link_button(
             "Have an install code from heard.dev?", target=self,
-            action="onWizRevealInstallCode:", dim=True,
+            action="onWizRevealInstallCode:", dim=False,
         )
         ic_field = _text_field(placeholder="ABCD-EFGH")
         ic_field.setTarget_(self)
@@ -3232,8 +3236,16 @@ class _OnboardingController(NSObject):
         # Hand off to the browser: heard.dev/app-auth runs the Google
         # OAuth dance, then bounces back via heard://auth?code=… which
         # heard/url_scheme.py picks up and finishes sign-in here.
+        # Also reveal the install-code field now — if the browser
+        # doesn't auto-bounce (Safari blocks the custom-scheme nav
+        # without a click), the user pastes the code shown on that page.
         webbrowser.open("https://heard.dev/app-auth")
-        self._signin_status("Opened your browser — finish with Google there; you'll come right back.")
+        self._signin_ic_revealed = True
+        self._enter_signin()
+        self._signin_status(
+            "Finishing in your browser… if it doesn't pop back here, "
+            "click “Open Heard” on that page — or paste the code from it below ↓"
+        )
 
     def onWizRevealInstallCode_(self, _s) -> None:
         self._signin_ic_revealed = True
