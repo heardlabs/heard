@@ -239,7 +239,7 @@ class HeardApp(rumps.App):
             None,
             self.settings_item,
             None,
-            rumps.MenuItem("Quit menu bar", callback=self.on_quit),
+            rumps.MenuItem("Quit Heard", callback=self.on_quit),
             self.signout_item,
         ]
 
