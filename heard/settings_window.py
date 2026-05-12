@@ -1551,10 +1551,11 @@ class SettingsController(NSObject):
         llm_field.setAction_("onLLMKeyChanged:")
         llm_field.setDelegate_(self)
         llm_status = _label("", size=12, dim=True)
+        llm_save = _button("Save", target=self, action="onSaveLLMKey:")
         llm_row = _field_row(
             "LLM key (optional)",
             "Anthropic (sk-ant-…) or OpenAI (sk-…). Heard auto-detects from the prefix.",
-            llm_field, status=llm_status,
+            llm_field, trailing=llm_save, status=llm_status,
         )
         self._add_card(body, _card([llm_row]))
 
@@ -1563,12 +1564,14 @@ class SettingsController(NSObject):
         el_field.setAction_("onElevenKeyChanged:")
         el_field.setDelegate_(self)
         el_status = _label("", size=12, dim=True)
+        el_save = _button("Save", target=self, action="onSaveElKey:")
         el_row = _field_row(
             "ElevenLabs key (optional)",
             "Used when you're not signed in to Heard's cloud voices.",
-            el_field, status=el_status,
+            el_field, trailing=el_save, status=el_status,
         )
         self._add_card(body, _card([el_row]))
+        _equal_widths([llm_save, el_save])
 
         # Help text below cards.
         help_label = _label(
@@ -2052,6 +2055,16 @@ class SettingsController(NSObject):
 
     def onElevenKeyChanged_(self, sender) -> None:
         self._save_el_key(sender.stringValue())
+
+    def onSaveLLMKey_(self, _sender) -> None:
+        f = self._refs.get("keys", {}).get("llm_field")
+        if f is not None:
+            self._save_llm_key(f.stringValue())
+
+    def onSaveElKey_(self, _sender) -> None:
+        f = self._refs.get("keys", {}).get("el_field")
+        if f is not None:
+            self._save_el_key(f.stringValue())
 
     # Shortcuts.
     def onHotkeyModeChanged_(self, sender) -> None:
@@ -2669,6 +2682,8 @@ class _OnboardingController(NSObject):
         self._window_delegate = None
         self._signin_email = ""
         self._signin_code_sent = False
+        self._signin_ic_revealed = False
+        self._signin_show_form = False
         # (key, build_fn, enter_fn_or_None)
         self._screens = [
             ("welcome", self._screen_welcome, None),
@@ -2890,17 +2905,25 @@ class _OnboardingController(NSObject):
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Sign in for cloud voices")
         body = _wizard_body(
-            "Heard's managed voices, no API key needed — we'll email you a 6-digit code. "
+            "Unlocks Heard's managed voices for 30 days — no API key needed. "
             "(Or skip and use a local voice, or your own ElevenLabs key.)"
         )
-        # Step 1: email + "Send code" on one row.
+
+        # --- Primary: Continue with Google. Opens heard.dev/app-auth in
+        #     the browser; the heard:// handoff brings the user straight
+        #     back here signed in (see heard/url_scheme.py). ------------
+        google_btn = _GoogleButton.alloc().initWithTarget_action_(self, "onWizSignInWeb:")
+        google_hint = _label("Opens your browser — you'll come right back.", size=11, dim=True)
+
+        or_div = _or_divider()
+
+        # --- Secondary: email → 6-digit code, all in-app. -------------
         email_field = _text_field(placeholder="you@example.com")
         email_field.setTarget_(self)
         email_field.setAction_("onWizSendCode:")
         email_field.setContentHuggingPriority_forOrientation_(1.0, 0)
-        send_btn = _button("Send code", target=self, action="onWizSendCode:", primary=True)
+        send_btn = _button("Email me a code", target=self, action="onWizSendCode:")
         email_row = _hstack([email_field, send_btn], spacing=8)
-        # Step 2: code + "Sign in" — hidden until a code is sent.
         code_field = _text_field(placeholder="6-digit code")
         code_field.setTarget_(self)
         code_field.setAction_("onWizVerifyCode:")
@@ -2908,65 +2931,134 @@ class _OnboardingController(NSObject):
         verify_btn = _button("Sign in", target=self, action="onWizVerifyCode:", primary=True)
         code_row = _hstack([code_field, verify_btn], spacing=8)
         status = _label("", size=12, dim=True)
+        status.setHidden_(True)  # collapses until there's something to say
 
-        google_btn = _GoogleButton.alloc().initWithTarget_action_(self, "onWizSignInWeb:")
-        or_div = _or_divider()
-
-        ic_lbl = _label("Have an install code?", size=12, dim=True)
+        # --- Tucked away: install code from heard.dev's web flow. Most
+        #     users never need this (the Google handoff carries the code
+        #     automatically); reveal it on demand. ----------------------
+        ic_disclosure = _link_button(
+            "Have an install code from heard.dev?", target=self,
+            action="onWizRevealInstallCode:", dim=True,
+        )
         ic_field = _text_field(placeholder="ABCD-EFGH")
         ic_field.setTarget_(self)
         ic_field.setAction_("onWizClaim:")
         ic_field.setContentHuggingPriority_forOrientation_(1.0, 0)
         ic_btn = _button("Redeem", target=self, action="onWizClaim:")
         ic_row = _hstack([ic_field, ic_btn], spacing=8)
+        ic_row.setHidden_(True)
 
-        stack = _vstack(
-            [title, body, _spacer(6),
+        form_stack = _vstack(
+            [google_btn, google_hint,
+             _spacer(8), or_div, _spacer(8),
              email_row, code_row, status,
-             _spacer(10),
-             google_btn,
-             _spacer(12), or_div, _spacer(12),
-             ic_lbl, ic_row],
+             _spacer(6), ic_disclosure, ic_row],
             spacing=8,
         )
-        v.addSubview_(stack)
+
+        # --- Signed-in card (shown instead of the form once we have a
+        #     bearer). ------------------------------------------------
+        signedin_title = _label("✓ Signed in", size=14, bold=True)
+        plan_lbl = _label("", size=12, dim=True)
+        switch_link = _link_button(
+            "Use a different account", target=self,
+            action="onWizSwitchAccount:", dim=True,
+        )
+        signedin_stack = _vstack(
+            [signedin_title, plan_lbl, _spacer(4), switch_link], spacing=6
+        )
+        signedin_stack.setHidden_(True)
+
+        outer = _vstack([title, body, _spacer(8), signedin_stack, form_stack], spacing=8)
+        v.addSubview_(outer)
         NSLayoutConstraint.activateConstraints_([
-            stack.topAnchor().constraintEqualToAnchor_constant_(v.topAnchor(), 12),
-            stack.leadingAnchor().constraintEqualToAnchor_(v.leadingAnchor()),
-            stack.trailingAnchor().constraintEqualToAnchor_(v.trailingAnchor()),
-            stack.bottomAnchor().constraintLessThanOrEqualToAnchor_(v.bottomAnchor()),
+            outer.topAnchor().constraintEqualToAnchor_constant_(v.topAnchor(), 12),
+            outer.leadingAnchor().constraintEqualToAnchor_(v.leadingAnchor()),
+            outer.trailingAnchor().constraintEqualToAnchor_(v.trailingAnchor()),
+            outer.bottomAnchor().constraintLessThanOrEqualToAnchor_(v.bottomAnchor()),
             body.widthAnchor().constraintLessThanOrEqualToAnchor_(v.widthAnchor()),
         ])
-        _pin_widths(stack, [email_row, code_row, status, google_btn, or_div, ic_row])
-        # Same width for the three action buttons.
+        _pin_widths(outer, [signedin_stack, form_stack])
+        _pin_widths(form_stack, [google_btn, or_div, email_row, code_row, status, ic_row])
         _equal_widths([send_btn, verify_btn, ic_btn])
         self._refs = {
             "email_field": email_field, "send_btn": send_btn,
             "code_field": code_field, "code_row": code_row, "verify_btn": verify_btn,
-            "code_status": status, "ic_field": ic_field,
+            "code_status": status, "ic_field": ic_field, "ic_row": ic_row,
+            "ic_disclosure": ic_disclosure,
+            "form_stack": form_stack, "signedin_stack": signedin_stack,
+            "signedin_title": signedin_title, "plan_lbl": plan_lbl,
         }
         return v
+
+    def _signin_status(self, text: str, warn: bool = False) -> None:
+        st = self._refs.get("code_status")
+        if st is None:
+            return
+        st.setStringValue_(text)
+        st.setTextColor_(_nscolor(_WARN) if warn else _text_color_dim())
+        st.setHidden_(not bool(text))
+
+    @staticmethod
+    def _plan_caption(cfg: dict) -> str:
+        plan = (cfg.get("heard_plan") or "trial").strip().lower()
+        if plan == "pro":
+            return "Pro — managed voices unlocked."
+        if plan in ("expired", "trial_expired"):
+            return "Trial expired — upgrade for managed voices."
+        exp_ms = 0
+        try:
+            exp_ms = int(cfg.get("heard_trial_expires_at") or 0)
+        except (TypeError, ValueError):
+            exp_ms = 0
+        if exp_ms > 0:
+            import time
+            days = int((exp_ms / 1000.0 - time.time()) // 86400)
+            if days > 1:
+                return f"Trial — {days} days of managed voices left."
+            if days == 1:
+                return "Trial — 1 day of managed voices left."
+            if days == 0:
+                return "Trial — managed voices, expiring today."
+            return "Trial expired — upgrade for managed voices."
+        return "Trial — managed voices unlocked."
 
     def _enter_signin(self) -> None:
         cfg = config.load()
         r = self._refs
-        st = r.get("code_status")
-        code_row = r.get("code_row")
-        email_field = r.get("email_field")
+        fs, ss = r.get("form_stack"), r.get("signedin_stack")
         token = (cfg.get("heard_token") or "").strip()
-        if token:
+        if token and not self._signin_show_form:
+            if fs is not None:
+                fs.setHidden_(True)
+            if ss is not None:
+                ss.setHidden_(False)
             email = (cfg.get("heard_email") or "").strip() or "your account"
+            st = r.get("signedin_title")
             if st is not None:
-                st.setStringValue_(f"✓ Signed in as {email}.")
-                st.setTextColor_(_text_color_dim())
-            if code_row is not None:
-                code_row.setHidden_(True)
-            # Pre-fill the email field so "Send code" can switch accounts
-            # without retyping.
-            if email_field is not None and not (email_field.stringValue() or "").strip():
-                email_field.setStringValue_((cfg.get("heard_email") or "").strip())
-        elif code_row is not None:
+                st.setStringValue_(f"✓ Signed in as {email}")
+            pl = r.get("plan_lbl")
+            if pl is not None:
+                pl.setStringValue_(self._plan_caption(cfg))
+            return
+        if fs is not None:
+            fs.setHidden_(False)
+        if ss is not None:
+            ss.setHidden_(True)
+        code_row = r.get("code_row")
+        if code_row is not None:
             code_row.setHidden_(not self._signin_code_sent)
+        ic_row = r.get("ic_row")
+        if ic_row is not None:
+            ic_row.setHidden_(not self._signin_ic_revealed)
+        ic_disclosure = r.get("ic_disclosure")
+        if ic_disclosure is not None:
+            ic_disclosure.setHidden_(self._signin_ic_revealed)
+        # Pre-fill the email field if we know it (switching accounts).
+        email_field = r.get("email_field")
+        known = (cfg.get("heard_email") or "").strip()
+        if email_field is not None and known and not (email_field.stringValue() or "").strip():
+            email_field.setStringValue_(known)
 
     def _screen_agents(self) -> NSView:
         v = NSView.alloc().init()
@@ -3054,11 +3146,9 @@ class _OnboardingController(NSObject):
             return
         email = (ef.stringValue() or "").strip()
         if "@" not in email or "." not in email.split("@")[-1]:
-            st.setStringValue_("Enter a valid email address.")
-            st.setTextColor_(_nscolor(_WARN))
+            self._signin_status("Enter a valid email address.", warn=True)
             return
-        st.setStringValue_("Sending code…")
-        st.setTextColor_(_text_color_dim())
+        self._signin_status("Sending code…")
         self._signin_email = email
 
         def worker() -> None:
@@ -3066,13 +3156,11 @@ class _OnboardingController(NSObject):
                 heard_api.request_code(email)
             except heard_api.HeardApiError as e:
                 detail = getattr(e, "detail", "") or getattr(e, "reason", "") or str(e)
-                _on_main(lambda: (st.setStringValue_(f"Couldn't send code: {str(detail)[:80]}"),
-                                  st.setTextColor_(_nscolor(_WARN))))
+                _on_main(lambda: self._signin_status(f"Couldn't send code: {str(detail)[:80]}", warn=True))
                 return
             except Exception as e:
                 err = str(e)
-                _on_main(lambda: (st.setStringValue_(f"Network error: {err}"),
-                                  st.setTextColor_(_nscolor(_WARN))))
+                _on_main(lambda: self._signin_status(f"Network error: {err}", warn=True))
                 return
 
             def done() -> None:
@@ -3080,8 +3168,7 @@ class _OnboardingController(NSObject):
                 cr = r.get("code_row")
                 if cr is not None:
                     cr.setHidden_(False)
-                st.setStringValue_(f"Code sent to {email} — check your inbox.")
-                st.setTextColor_(_text_color_dim())
+                self._signin_status(f"Code sent to {email} — check your inbox.")
                 cf = r.get("code_field")
                 if cf is not None:
                     try:
@@ -3102,15 +3189,12 @@ class _OnboardingController(NSObject):
         code = (cf.stringValue() or "").strip()
         email = self._signin_email or (config.load().get("heard_email") or "").strip()
         if not code:
-            st.setStringValue_("Enter the 6-digit code.")
-            st.setTextColor_(_nscolor(_WARN))
+            self._signin_status("Enter the 6-digit code.", warn=True)
             return
         if not email:
-            st.setStringValue_("Send yourself a code first.")
-            st.setTextColor_(_nscolor(_WARN))
+            self._signin_status("Send yourself a code first.", warn=True)
             return
-        st.setStringValue_("Signing in…")
-        st.setTextColor_(_text_color_dim())
+        self._signin_status("Signing in…")
 
         def worker() -> None:
             try:
@@ -3120,12 +3204,11 @@ class _OnboardingController(NSObject):
                     "wrong_code": "That code is wrong — check it and try again.",
                     "code_expired": "That code expired — tap Send code for a new one.",
                 }.get(getattr(e, "reason", ""), f"Couldn't sign in ({e}).")
-                _on_main(lambda: (st.setStringValue_(msg), st.setTextColor_(_nscolor(_WARN))))
+                _on_main(lambda: self._signin_status(msg, warn=True))
                 return
             except Exception as e:
                 err = str(e)
-                _on_main(lambda: (st.setStringValue_(f"Network error: {err}"),
-                                  st.setTextColor_(_nscolor(_WARN))))
+                _on_main(lambda: self._signin_status(f"Network error: {err}", warn=True))
                 return
 
             def done() -> None:
@@ -3134,12 +3217,10 @@ class _OnboardingController(NSObject):
                 config.set_value("heard_email", info.email)
                 config.set_value("heard_trial_expires_at", int(info.trial_expires_at or 0))
                 cf.setStringValue_("")
-                cr = r.get("code_row")
-                if cr is not None:
-                    cr.setHidden_(True)
                 self._signin_code_sent = False
-                st.setStringValue_(f"✓ Signed in as {info.email}.")
-                st.setTextColor_(_text_color_dim())
+                self._signin_show_form = False
+                self._signin_status("")
+                self._enter_signin()
                 _reload_daemon()
                 _self_test_managed_async()
 
@@ -3148,7 +3229,26 @@ class _OnboardingController(NSObject):
         threading.Thread(target=worker, daemon=True).start()
 
     def onWizSignInWeb_(self, _s) -> None:
-        webbrowser.open("https://heard.dev/signup")
+        # Hand off to the browser: heard.dev/app-auth runs the Google
+        # OAuth dance, then bounces back via heard://auth?code=… which
+        # heard/url_scheme.py picks up and finishes sign-in here.
+        webbrowser.open("https://heard.dev/app-auth")
+        self._signin_status("Opened your browser — finish with Google there; you'll come right back.")
+
+    def onWizRevealInstallCode_(self, _s) -> None:
+        self._signin_ic_revealed = True
+        self._enter_signin()
+        f = self._refs.get("ic_field")
+        if f is not None:
+            try:
+                f.window().makeFirstResponder_(f)
+            except Exception:
+                pass
+
+    def onWizSwitchAccount_(self, _s) -> None:
+        self._signin_show_form = True
+        self._signin_status("")
+        self._enter_signin()
 
     def onWizClaim_(self, _s) -> None:
         r = self._refs
@@ -3158,11 +3258,9 @@ class _OnboardingController(NSObject):
             return
         code = (field.stringValue() or "").strip()
         if not code:
-            st.setStringValue_("Paste an install code first.")
-            st.setTextColor_(_nscolor(_WARN))
+            self._signin_status("Paste an install code first.", warn=True)
             return
-        st.setStringValue_("Redeeming…")
-        st.setTextColor_(_text_color_dim())
+        self._signin_status("Redeeming…")
 
         def worker() -> None:
             try:
@@ -3174,12 +3272,11 @@ class _OnboardingController(NSObject):
                     "invalid_request": "Code format looks wrong — try copy-paste again.",
                     "account_missing": "Account no longer exists. Sign up again.",
                 }.get(getattr(e, "reason", ""), f"Couldn't redeem ({e}).")
-                _on_main(lambda: (st.setStringValue_(msg), st.setTextColor_(_nscolor(_WARN))))
+                _on_main(lambda: self._signin_status(msg, warn=True))
                 return
             except Exception as e:
                 err = str(e)
-                _on_main(lambda: (st.setStringValue_(f"Network error: {err}"),
-                                  st.setTextColor_(_nscolor(_WARN))))
+                _on_main(lambda: self._signin_status(f"Network error: {err}", warn=True))
                 return
 
             def done() -> None:
@@ -3188,13 +3285,10 @@ class _OnboardingController(NSObject):
                 config.set_value("heard_email", info.email)
                 config.set_value("heard_trial_expires_at", int(info.trial_expires_at or 0))
                 field.setStringValue_("")
-                cr = r.get("code_row")
-                if cr is not None:
-                    cr.setHidden_(True)
                 self._signin_code_sent = False
-                email = info.email or "your account"
-                st.setStringValue_(f"✓ Signed in as {email}.")
-                st.setTextColor_(_text_color_dim())
+                self._signin_show_form = False
+                self._signin_status("")
+                self._enter_signin()
                 _reload_daemon()
                 _self_test_managed_async()
 
