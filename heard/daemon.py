@@ -40,6 +40,7 @@ from heard import persona as persona_mod
 from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
 from heard.tts.managed import ManagedError
+from heard.tts.null import NullTTS
 
 DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # Rotate the daemon log when it crosses this size. Heard runs for
@@ -177,69 +178,7 @@ class Daemon:
         # version comparison naturally stops returning anything).
         self.pending_update: updater.UpdateInfo | None = None
         self._start_update_check()
-        # Pre-fetch the Kokoro model in the last week of trial so the
-        # day-31 silent downgrade doesn't *also* hit users with a
-        # 325 MB download at exactly the wrong moment. Fire-and-forget;
-        # failure is logged but never blocks anything.
-        self._maybe_prefetch_kokoro()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
-
-    # Pre-fetch starts when ≤ this many days remain in the trial. Set
-    # below 30 (full trial length) so users who ditch in week 1 don't
-    # eat a 325 MB download for nothing — but well above 0 so the
-    # download has time to complete before the trial actually ends.
-    _KOKORO_PREFETCH_DAYS_REMAINING_THRESHOLD = 23
-
-    def _should_prefetch_kokoro(self, now_ms: int | None = None) -> bool:
-        """Pure decision so tests can pin the gate without spinning a
-        thread. Conditions ALL must hold:
-          - active plan is "trial" (not pro, not expired)
-          - trial_expires_at is set + within the prefetch window
-          - we're not already on KokoroTTS (then there's no point)
-          - the model isn't already downloaded
-        """
-        plan = (self.cfg.get("heard_plan") or "").strip().lower()
-        if plan != "trial":
-            return False
-        expires_at = int(self.cfg.get("heard_trial_expires_at") or 0)
-        if expires_at <= 0:
-            return False
-        now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
-        days_remaining = (expires_at - now_ms) / (1000 * 60 * 60 * 24)
-        if days_remaining > self._KOKORO_PREFETCH_DAYS_REMAINING_THRESHOLD:
-            return False
-        # Already on Kokoro? Then the model is either downloaded or
-        # we're about to fail-on-first-synth anyway. Either way, no
-        # work for us.
-        if type(self.tts).__name__ == "KokoroTTS":
-            return False
-        # Lazy import — same pattern as _make_tts. Keeps kokoro_onnx
-        # off the import path for users who never need it.
-        from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415
-
-        kokoro = KokoroTTS(config.MODELS_DIR)
-        if kokoro.is_downloaded():
-            return False
-        return True
-
-    def _maybe_prefetch_kokoro(self) -> None:
-        if not self._should_prefetch_kokoro():
-            return
-
-        def _do_download() -> None:
-            try:
-                from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415
-
-                kokoro = KokoroTTS(config.MODELS_DIR)
-                _log("kokoro_prefetch_start")
-                kokoro.ensure_downloaded()
-                _log("kokoro_prefetch_done")
-            except Exception as e:
-                _log("kokoro_prefetch_failed", err=str(e))
-
-        threading.Thread(
-            target=_do_download, daemon=True, name="heard-kokoro-prefetch"
-        ).start()
 
     def _start_update_check(self) -> None:
         """Spawn the GitHub-Releases poller. Notification + menu-bar
@@ -459,9 +398,16 @@ class Daemon:
         if api_key:
             return ElevenLabsTTS(api_key=api_key)
 
+        # No cloud token, no BYOK key. Use the local Kokoro voice only
+        # if the user has explicitly downloaded it — we never auto-pull
+        # the ~325 MB model anymore. Otherwise NullTTS: no audio, plus a
+        # one-time "here's how to get a voice" nudge from _speak().
         from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415 — lazy on purpose
 
-        return KokoroTTS(config.MODELS_DIR)
+        kokoro = KokoroTTS(config.MODELS_DIR)
+        if kokoro.is_downloaded():
+            return kokoro
+        return NullTTS()
 
     def _hotkey_signature(self, cfg: dict) -> tuple:
         """Snapshot of every config value that affects hotkey wiring.
@@ -491,11 +437,27 @@ class Daemon:
         # Re-pick TTS when ANY of the inputs the selector cares about
         # change: BYOK key, Heard token, or plan (trial → expired
         # auto-flip is the canonical trigger here).
-        if (
+        repick = (
             self.cfg.get("elevenlabs_api_key", "") != old_key
             or self.cfg.get("heard_token", "") != old_token
             or self.cfg.get("heard_plan", "") != old_plan
+        )
+        # Also re-pick when the local model state could have flipped
+        # the no-key choice. A NullTTS becomes KokoroTTS once the user
+        # downloads the model (Options → Download voice sends a reload),
+        # and a KokoroTTS falls to NullTTS if the model was deleted.
+        # We avoid touching a *working* KokoroTTS (it caches the loaded
+        # ONNX model on the instance — re-creating it would force a slow
+        # reload on the next synth).
+        if not repick and isinstance(self.tts, NullTTS):
+            repick = True
+        elif (
+            not repick
+            and type(self.tts).__name__ == "KokoroTTS"
+            and not self.tts.is_downloaded()
         ):
+            repick = True
+        if repick:
             self.tts = self._make_tts()
         new_sig = self._hotkey_signature(self.cfg)
         if new_sig != old_sig:
@@ -539,6 +501,18 @@ class Daemon:
         voice: str | None = None,
     ) -> None:
         cfg = cfg or self.cfg
+        # No voice backend configured (not signed in, no BYOK key, local
+        # model not downloaded). Don't synth — nudge the user once and
+        # bail. notify() dedups per kind (60s) so this can't spam.
+        if isinstance(self.tts, NullTTS):
+            notify.notify(
+                "Heard — add a voice to hear narration",
+                "Sign in to Heard for cloud voices, paste your ElevenLabs key "
+                "in Settings → Keys, or download the local voice in Options.",
+                kind="no_voice_configured",
+            )
+            _log("synth_skipped", reason="no_voice_configured")
+            return
         # voice_override wins over both cfg["voice"] and persona.voice
         # — used by per-agent voice mappings so e.g. agent api speaks
         # in Rachel even when the persona is jarvis.
@@ -615,8 +589,8 @@ class Daemon:
                 # expiry AND Pro cancellation (subscription.deleted)
                 # — same code path either way: flip local plan to
                 # "expired", re-pick TTS so the next utterance goes
-                # through whatever backend the selector picks (BYOK
-                # or Kokoro), notify the user once.
+                # through whatever backend the selector picks (BYOK,
+                # downloaded-Kokoro, or none), notify the user once.
                 if e.status == 402:
                     self.cfg["heard_plan"] = "expired"
                     try:
@@ -625,11 +599,19 @@ class Daemon:
                         pass
                     self.tts = self._make_tts()
                     _log("plan_expired_by_server", backend=type(self.tts).__name__)
-                    notify.notify(
-                        "Heard cloud voices ended",
-                        "Your plan ended. Switched to local voices. Open Heard to upgrade.",
-                        kind="cloud_expired",
-                    )
+                    if isinstance(self.tts, NullTTS):
+                        notify.notify(
+                            "Heard cloud voices ended",
+                            "Your plan ended. Add an ElevenLabs key (Settings → Keys), "
+                            "download the local voice (Options), or upgrade to Pro.",
+                            kind="cloud_expired",
+                        )
+                    else:
+                        notify.notify(
+                            "Heard cloud voices ended",
+                            "Your plan ended. Switched to local voices. Open Heard to upgrade.",
+                            kind="cloud_expired",
+                        )
                 elif e.status == 429:
                     # Branch by plan so the trial path leads with the
                     # upgrade CTA (the actionable next step) and the pro

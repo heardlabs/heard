@@ -820,6 +820,13 @@ class HeardApp(rumps.App):
                     kind="kokoro_download_start",
                 )
                 tts.ensure_downloaded()
+                # Tell the daemon to re-pick its backend — if it was on
+                # NullTTS (no key, no token, no model), it can switch to
+                # the local voice now.
+                try:
+                    client.send({"cmd": "reload"})
+                except Exception:
+                    pass
                 notify(
                     "Heard — voice model ready",
                     "Local TTS is set up. Your next narration will play instantly.",
@@ -861,6 +868,12 @@ class HeardApp(rumps.App):
                 except Exception:
                     pass
         if removed:
+            # Daemon may have been on KokoroTTS — nudge it to re-pick
+            # (it'll fall to NullTTS, or BYOK if a key is set).
+            try:
+                client.send({"cmd": "reload"})
+            except Exception:
+                pass
             notify(
                 "Heard — voice model deleted",
                 f"Freed disk space ({', '.join(removed)}).",
@@ -909,4 +922,12 @@ def run() -> None:
     except Exception as e:
         print(f"could not start daemon: {e}", file=sys.stderr)
     _refresh_existing_hooks()
+    # heard:// scheme — receives the Google sign-in handoff from
+    # heard.dev/app-auth. Best-effort; the install-code paste field is
+    # the fallback if this doesn't register.
+    try:
+        from heard import url_scheme
+        url_scheme.register()
+    except Exception as e:
+        print(f"url scheme handler not registered: {e}", file=sys.stderr)
     HeardApp().run()

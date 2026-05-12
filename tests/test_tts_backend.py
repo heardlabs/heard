@@ -72,8 +72,20 @@ def test_selector_does_not_import_kokoro_when_elevenlabs_chosen(tmp_path, monkey
     assert "heard.tts.kokoro" not in sys.modules
 
 
-def test_selector_falls_back_to_kokoro_when_no_key(tmp_path, monkeypatch):
-    """Empty / missing ElevenLabs key → Kokoro local backend."""
+def test_selector_no_voice_when_no_key_and_no_local_model(tmp_path, monkeypatch):
+    """No cloud token, no BYOK key, Kokoro model not downloaded → NullTTS.
+    We don't auto-pull the ~325 MB model anymore; the local voice is
+    opt-in (Options → Download voice)."""
+    daemon = _make_daemon(tmp_path, monkeypatch, {"elevenlabs_api_key": ""})
+    from heard.tts.null import NullTTS
+
+    assert isinstance(daemon.tts, NullTTS)
+
+
+def test_selector_uses_kokoro_when_model_already_downloaded(tmp_path, monkeypatch):
+    """If the user has explicitly downloaded the Kokoro model, the no-key
+    path picks it up instead of NullTTS."""
+    monkeypatch.setattr("heard.tts.kokoro.KokoroTTS.is_downloaded", lambda self: True)
     daemon = _make_daemon(tmp_path, monkeypatch, {"elevenlabs_api_key": ""})
     from heard.tts.kokoro import KokoroTTS
 
@@ -82,10 +94,14 @@ def test_selector_falls_back_to_kokoro_when_no_key(tmp_path, monkeypatch):
 
 def test_audio_extension_matches_backend(tmp_path, monkeypatch):
     """Each backend exposes the temp-file extension the daemon should
-    mint. ElevenLabs hands back MP3, Kokoro writes WAV."""
+    mint. ElevenLabs hands back MP3, Kokoro writes WAV, NullTTS is MP3."""
     el_daemon = _make_daemon(tmp_path, monkeypatch, {"elevenlabs_api_key": "sk_x"})
     assert el_daemon.tts.AUDIO_EXT == ".mp3"
 
+    null_daemon = _make_daemon(tmp_path, monkeypatch, {"elevenlabs_api_key": ""})
+    assert null_daemon.tts.AUDIO_EXT == ".mp3"
+
+    monkeypatch.setattr("heard.tts.kokoro.KokoroTTS.is_downloaded", lambda self: True)
     ko_daemon = _make_daemon(tmp_path, monkeypatch, {"elevenlabs_api_key": ""})
     assert ko_daemon.tts.AUDIO_EXT == ".wav"
 
@@ -126,9 +142,10 @@ def test_selector_managed_beats_byok_when_both_present(tmp_path, monkeypatch):
 
 def test_selector_skips_managed_when_plan_expired(tmp_path, monkeypatch):
     """Day-31 silent downgrade: trial expired, fall through to BYOK
-    (if present) or Kokoro. The token is kept around so the user can
-    upgrade later without re-onboarding, but the daemon doesn't try
-    to use it for synth — every request would 402."""
+    (if present) or — with no key and no local model — NullTTS. The
+    token is kept around so the user can upgrade later without
+    re-onboarding, but the daemon doesn't try to use it for synth —
+    every request would 402."""
     daemon = _make_daemon(
         tmp_path,
         monkeypatch,
@@ -138,23 +155,23 @@ def test_selector_skips_managed_when_plan_expired(tmp_path, monkeypatch):
             "elevenlabs_api_key": "",
         },
     )
-    from heard.tts.kokoro import KokoroTTS
+    from heard.tts.null import NullTTS
 
-    assert isinstance(daemon.tts, KokoroTTS)
+    assert isinstance(daemon.tts, NullTTS)
 
 
 def test_selector_skips_managed_when_token_blank(tmp_path, monkeypatch):
     """Plan field set but no token (shouldn't happen in normal use,
     but defend against config tampering or partial migration). With
-    no BYOK key either, fall through to Kokoro."""
+    no BYOK key and no local model, fall through to NullTTS."""
     daemon = _make_daemon(
         tmp_path,
         monkeypatch,
         {"heard_token": "", "heard_plan": "trial", "elevenlabs_api_key": ""},
     )
-    from heard.tts.kokoro import KokoroTTS
+    from heard.tts.null import NullTTS
 
-    assert isinstance(daemon.tts, KokoroTTS)
+    assert isinstance(daemon.tts, NullTTS)
 
 
 def test_selector_falls_back_to_byok_when_managed_token_expired(
@@ -202,10 +219,10 @@ def test_selector_re_picks_on_config_reload(tmp_path, monkeypatch):
 
     from heard.daemon import Daemon
     from heard.tts.elevenlabs import ElevenLabsTTS
-    from heard.tts.kokoro import KokoroTTS
+    from heard.tts.null import NullTTS
 
     daemon = Daemon()
-    assert isinstance(daemon.tts, KokoroTTS)
+    assert isinstance(daemon.tts, NullTTS)
 
     # User pastes a key.
     state["key"] = "sk_just_pasted"

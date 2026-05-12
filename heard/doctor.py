@@ -224,7 +224,17 @@ def _step_synth() -> bool:
         else:
             from heard.tts.kokoro import KokoroTTS
 
-            backend = KokoroTTS(config.MODELS_DIR)
+            kokoro = KokoroTTS(config.MODELS_DIR)
+            if not kokoro.is_downloaded():
+                # No key, no Heard token, and the local model isn't
+                # downloaded — the daemon uses NullTTS here (silent +
+                # a nudge). Don't trigger the ~325 MB download just to
+                # run a self-test; report the state and bail.
+                _line("backend", DASH, "none — sign in, add an ElevenLabs key, "
+                      "or download the local voice (Options)")
+                _line("synth", DASH, "skipped (no voice configured)")
+                return True
+            backend = kokoro
             voice = cfg.get("kokoro_voice", "bm_george")
             out = out.with_suffix(".wav")
             _line("backend", DASH, "Kokoro (local — no key, no Heard token)")
