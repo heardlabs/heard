@@ -367,3 +367,21 @@ def test_single_voice_mode_skips_prefix_when_manual_voice_set():
     assert d.action == "speak"
     assert d.voice_override == "voice_xyz"
     assert d.label_prefix == ""
+
+
+def test_single_voice_prefix_only_on_speaker_change():
+    """One-voice mode: the agent name is spoken only when the speaker
+    changes — not on every consecutive line from the agent you're
+    actively driving."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")  # b is focus (most recent)
+    d1 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
+    assert d1.label_prefix.startswith("Agent web")  # first line → announce
+    d2 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
+    assert d2.label_prefix == ""  # same speaker → silent
+    r.note_event("a")  # focus shifts
+    d3 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a", auto_voices=False)
+    assert d3.label_prefix.startswith("Agent api")  # speaker changed → announce
+    d4 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a", auto_voices=False)
+    assert d4.label_prefix == ""  # same speaker again → silent

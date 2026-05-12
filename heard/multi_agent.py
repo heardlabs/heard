@@ -182,6 +182,11 @@ class MultiAgentRouter:
         self._lock = threading.Lock()
         self._sessions: dict[str, SessionInfo] = {}
         self._pinned: str | None = None
+        # Last session whose narration we let through. Used so the
+        # "Agent <name>: " prefix (one-voice mode) is spoken only when
+        # the speaker *changes* — narrating ten lines in a row from the
+        # agent you're driving shouldn't read its name ten times.
+        self._last_narrated_session: str | None = None
 
     # --- session tracking --------------------------------------------------
 
@@ -236,18 +241,21 @@ class MultiAgentRouter:
                     voice = self._voice_for_locked(
                         session_id, agent_voices, auto_voices, is_focus=True
                     )
-                    return RoutingDecision(
-                        action="speak",
-                        voice_override=voice,
-                        label_prefix=self._focus_label_prefix_locked(
-                            session_id, agent_voices, auto_voices, now
+                    return self._speaking_locked(
+                        session_id,
+                        RoutingDecision(
+                            action="speak",
+                            voice_override=voice,
+                            label_prefix=self._focus_label_prefix_locked(
+                                session_id, agent_voices, auto_voices, now
+                            ),
                         ),
                     )
                 if tag in _PIERCE_TAGS:
                     voice = self._voice_for_locked(
                         session_id, agent_voices, auto_voices, is_focus=False
                     )
-                    return self._pierced(session_id, voice)
+                    return self._speaking_locked(session_id, self._pierced(session_id, voice))
                 return RoutingDecision(action="drop")
 
             active = self._active_locked(now)
@@ -256,7 +264,9 @@ class MultiAgentRouter:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=True
                 )
-                return RoutingDecision(action="speak", voice_override=voice)
+                return self._speaking_locked(
+                    session_id, RoutingDecision(action="speak", voice_override=voice)
+                )
 
             # Swarm: >=2 active. Most-recently-active wins; others
             # pierce only on critical tags, otherwise digest-defer.
@@ -266,19 +276,30 @@ class MultiAgentRouter:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=True
                 )
-                return RoutingDecision(
-                    action="speak",
-                    voice_override=voice,
-                    label_prefix=self._focus_label_prefix_locked(
-                        session_id, agent_voices, auto_voices, now
+                return self._speaking_locked(
+                    session_id,
+                    RoutingDecision(
+                        action="speak",
+                        voice_override=voice,
+                        label_prefix=self._focus_label_prefix_locked(
+                            session_id, agent_voices, auto_voices, now
+                        ),
                     ),
                 )
             if tag in _PIERCE_TAGS:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=False
                 )
-                return self._pierced(session_id, voice)
+                return self._speaking_locked(session_id, self._pierced(session_id, voice))
             return RoutingDecision(action="defer_to_digest")
+
+    def _speaking_locked(self, session_id: str, decision: RoutingDecision) -> RoutingDecision:
+        """Record that ``session_id`` is the one being narrated, then
+        return ``decision`` unchanged. Called for every ``speak`` so the
+        speaker-change check in ``_focus_label_prefix_locked`` (which ran
+        before this, against the *previous* speaker) works. Lock held."""
+        self._last_narrated_session = session_id
+        return decision
 
     def _focus_label_prefix_locked(
         self,
@@ -290,17 +311,21 @@ class MultiAgentRouter:
         """"Agent <name>: " prefix for the focused agent's narration when
         there's no other way to tell agents apart by sound — i.e. the
         single-voice multi-agent mode (auto_voices off, no manual voice
-        for this repo). Empty when there's only one active agent (no
-        ambiguity), or when this agent has a distinct voice. Must be
-        called with ``self._lock`` held."""
+        for this repo). Empty when:
+          - only one active agent (no ambiguity),
+          - this agent has a distinct voice (auto-pool or manual map),
+          - this agent already spoke last (don't re-announce its name on
+            every consecutive line — only on a speaker change).
+        Must be called with ``self._lock`` held, *before* the speaker is
+        recorded via ``_speaking_locked``."""
         if len(self._active_locked(now)) < 2:
             return ""
-        info = self._sessions.get(session_id)
-        # If this agent already has a distinguishing voice (auto-pool or
-        # a manual mapping), the voice carries the identity — no prefix.
         if auto_voices:
             return ""
+        info = self._sessions.get(session_id)
         if info is not None and agent_voices.get(info.repo_name):
+            return ""
+        if session_id == self._last_narrated_session:
             return ""
         label = _label_for(info) if info is not None else (session_id[:8] or "agent")
         return f"Agent {label}: "
