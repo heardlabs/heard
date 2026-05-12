@@ -2684,6 +2684,10 @@ class _OnboardingController(NSObject):
         self._signin_code_sent = False
         self._signin_ic_revealed = False
         self._signin_show_form = False
+        # First visit to the "Connect your agents" step defaults
+        # Claude Code on (installs the hook). Once set, we never
+        # re-install behind a user who toggled it off.
+        self._agents_defaulted = False
         # (key, build_fn, enter_fn_or_None)
         self._screens = [
             ("welcome", self._screen_welcome, None),
@@ -3091,6 +3095,19 @@ class _OnboardingController(NSObject):
         return v
 
     def _enter_agents(self) -> None:
+        # Default Claude Code on the first time the user reaches this
+        # step — leaving onboarding with zero agents connected means
+        # total silence, which reads as "Heard is broken". They can
+        # still toggle it off right here.
+        if not self._agents_defaulted:
+            self._agents_defaulted = True
+            cc = ADAPTERS.get("claude-code")
+            if cc is not None:
+                try:
+                    if not cc.is_installed():
+                        cc.install()
+                except Exception as e:
+                    print(f"default claude-code install failed: {e}", file=sys.stderr)
         for key, name in (("cc", "claude-code"), ("codex", "codex")):
             adapter = ADAPTERS.get(name)
             sw = self._refs.get(key)
