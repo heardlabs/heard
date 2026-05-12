@@ -202,14 +202,13 @@ def _step_synth() -> bool:
     out.unlink(missing_ok=True)
 
     try:
-        if api_key:
-            from heard.tts.elevenlabs import ElevenLabsTTS
-
-            backend = ElevenLabsTTS(api_key=api_key)
-            voice = cfg.get("voice", "george")
-            out = out.with_suffix(".mp3")
-            _line("backend", DASH, "ElevenLabs (BYOK)")
-        elif heard_token and heard_plan != "expired":
+        # Mirror _make_tts's priority: signed-in managed cloud first,
+        # then BYOK ElevenLabs, then local Kokoro. (The running daemon
+        # may have fallen back from cloud→BYOK after a daily-cap 429 —
+        # in that case the "Daemon → backend" line above is the truth;
+        # this self-test still pings cloud, which is useful: a 429 here
+        # tells you the cap's hit.)
+        if heard_token and heard_plan != "expired":
             # Heard cloud / managed voices. Catches UA/auth/cap issues
             # against api.heard.dev that the daemon would also hit.
             from heard.tts.managed import ManagedTTS
@@ -221,6 +220,13 @@ def _step_synth() -> bool:
             voice = cfg.get("voice", "george")
             out = out.with_suffix(".mp3")
             _line("backend", DASH, f"Heard cloud (plan: {heard_plan or 'trial'})")
+        elif api_key:
+            from heard.tts.elevenlabs import ElevenLabsTTS
+
+            backend = ElevenLabsTTS(api_key=api_key)
+            voice = cfg.get("voice", "george")
+            out = out.with_suffix(".mp3")
+            _line("backend", DASH, "ElevenLabs (BYOK)")
         else:
             from heard.tts.kokoro import KokoroTTS
 

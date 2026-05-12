@@ -130,6 +130,10 @@ class Daemon:
         # right backend on the very first synth instead of after a
         # round-trip + 402.
         self._maybe_expire_trial()
+        # Epoch ms of the last managed daily-cap 429 (or None). Drives
+        # the "out of credits → fall back to BYOK / local" path; clears
+        # itself at the next UTC midnight via _managed_capped_today().
+        self._managed_capped_at: float | None = None
         self.tts = self._make_tts()
         self.sessions = SessionStore()
         # Multi-agent router. Decides per-event whether to speak,
@@ -368,17 +372,28 @@ class Daemon:
         except Exception:
             pass
 
+    def _managed_capped_today(self) -> bool:
+        """True if we hit the managed daily-char cap (429) during the
+        current UTC day. While that's the case we skip the managed path
+        in ``_make_tts`` and fall back to the BYOK key / local voice —
+        the cap resets at the next UTC midnight, at which point this
+        goes False again and the next ``_make_tts`` returns to cloud."""
+        at = getattr(self, "_managed_capped_at", None)
+        if not at:
+            return False
+        return time.gmtime(at / 1000.0)[:3] == time.gmtime()[:3]
+
     def _make_tts(self):
         """Pick a TTS backend based on config, in priority order:
 
-        1. ``heard_token`` set + plan != ``"expired"`` → ManagedTTS
-           (proxies through api.heard.dev; the EL key lives on our
-           edge so OSS users don't see it).
-        2. ``elevenlabs_api_key`` set → ElevenLabsTTS (legacy BYOK
-           path, never broken; "I want my own EL account" power
-           users).
-        3. Otherwise → Kokoro (local ONNX, downloads model on first
-           synth).
+        1. ``heard_token`` set + plan != ``"expired"`` + not capped today
+           → ManagedTTS (proxies through api.heard.dev; the EL key lives
+           on our edge so OSS users don't see it).
+        2. ``elevenlabs_api_key`` set → ElevenLabsTTS (BYOK — the user's
+           own EL account; also the fallback when the managed daily cap
+           is hit, so "out of credits but I pasted my key" just works).
+        3. Local Kokoro, only if already downloaded.
+        4. Otherwise → NullTTS (no audio + a one-time "add a voice" nudge).
 
         Kokoro stays a lazy import so paying / BYOK users never load
         ``kokoro_onnx`` / ``onnxruntime`` — keeps the daemon tiny on
@@ -386,7 +401,7 @@ class Daemon:
         """
         heard_token = (self.cfg.get("heard_token") or "").strip()
         heard_plan = (self.cfg.get("heard_plan") or "").strip().lower()
-        if heard_token and heard_plan != "expired":
+        if heard_token and heard_plan != "expired" and not self._managed_capped_today():
             from heard.tts.managed import ManagedTTS  # noqa: PLC0415
 
             return ManagedTTS(
@@ -501,6 +516,21 @@ class Daemon:
         voice: str | None = None,
     ) -> None:
         cfg = cfg or self.cfg
+        # If we fell back to a BYOK ElevenLabs key after a daily-cap 429
+        # and the cap has since reset (new UTC day), return to the
+        # managed cloud path. (A signed-in user is only ever on
+        # ElevenLabsTTS via that fallback — _make_tts puts the token
+        # first — so this can't hijack a deliberate BYOK setup.)
+        if (
+            self._managed_capped_at is not None
+            and isinstance(self.tts, ElevenLabsTTS)
+            and (cfg.get("heard_token") or "").strip()
+            and (cfg.get("heard_plan") or "").strip().lower() != "expired"
+            and not self._managed_capped_today()
+        ):
+            self._managed_capped_at = None
+            self.tts = self._make_tts()
+            _log("managed_cap_reset", new_backend=type(self.tts).__name__)
         # No voice backend configured (not signed in, no BYOK key, local
         # model not downloaded). Don't synth — nudge the user once and
         # bail. notify() dedups per kind (60s) so this can't spam.
@@ -613,25 +643,49 @@ class Daemon:
                             kind="cloud_expired",
                         )
                 elif e.status == 429:
-                    # Branch by plan so the trial path leads with the
-                    # upgrade CTA (the actionable next step) and the pro
-                    # path doesn't try to upsell someone who's already
-                    # paying. Cap copy mirrors the server-side ceilings.
-                    plan = (self.cfg.get("heard_plan") or "").strip().lower()
-                    if plan == "trial":
+                    # Daily managed-char cap hit. Mark it so _make_tts
+                    # skips the cloud path for the rest of the UTC day,
+                    # then re-pick: if the user has a BYOK ElevenLabs key
+                    # we keep narrating through that; if they downloaded
+                    # the local voice we use that; otherwise NullTTS and
+                    # we tell them how to keep going. Cap resets at the
+                    # next UTC midnight (_managed_capped_today goes False).
+                    self._managed_capped_at = time.time() * 1000.0
+                    self.tts = self._make_tts()
+                    new_backend = type(self.tts).__name__
+                    _log("managed_cap_hit", new_backend=new_backend)
+                    if new_backend == "ElevenLabsTTS":
                         notify.notify(
                             "Heard daily limit reached",
-                            "Trial cap (100K chars/day). Upgrade to Pro for "
-                            "200K/day: buy.stripe.com/bJecMYdBFfEW2oe5DG77O00",
-                            kind="cloud_daily_cap_trial",
+                            "Hit your Heard cloud cap for today — switched to "
+                            "your ElevenLabs key. Cloud voices return at UTC midnight.",
+                            kind="cloud_cap_fallback_byok",
+                        )
+                    elif new_backend == "KokoroTTS":
+                        notify.notify(
+                            "Heard daily limit reached",
+                            "Hit your Heard cloud cap for today — switched to "
+                            "the local voice. Cloud voices return at UTC midnight.",
+                            kind="cloud_cap_fallback_local",
                         )
                     else:
-                        notify.notify(
-                            "Heard daily limit reached",
-                            "Pro cap (200K chars/day). Cloud voices come back "
-                            "tomorrow.",
-                            kind="cloud_daily_cap_pro",
-                        )
+                        plan = (self.cfg.get("heard_plan") or "").strip().lower()
+                        if plan == "trial":
+                            notify.notify(
+                                "Heard daily limit reached",
+                                "Trial cap (100K chars/day). Paste an ElevenLabs "
+                                "key in Settings → Keys to keep going, or upgrade "
+                                "to Pro for 200K/day: buy.stripe.com/bJecMYdBFfEW2oe5DG77O00",
+                                kind="cloud_daily_cap_trial",
+                            )
+                        else:
+                            notify.notify(
+                                "Heard daily limit reached",
+                                "Pro cap (200K chars/day). Paste an ElevenLabs key "
+                                "in Settings → Keys to keep going; cloud voices "
+                                "return at UTC midnight.",
+                                kind="cloud_daily_cap_pro",
+                            )
                 elif e.status == 401:
                     notify.notify(
                         "Heard sign-in expired",
