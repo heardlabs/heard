@@ -22,7 +22,7 @@ from pathlib import Path
 
 import rumps
 
-from heard import client, config
+from heard import client, config, updater
 from heard import verbosity as verbosity_mod
 from heard.presets import list_bundled as list_presets
 
@@ -83,16 +83,14 @@ class HeardApp(rumps.App):
         self.silence_item = rumps.MenuItem("Stop narrating", callback=self.on_silence)
         self.replay_item = rumps.MenuItem("Replay last", callback=self.on_replay)
 
-        # Update-available callout. Pre-created but not added to the
-        # menu unless the daemon reports a pending update — refresh()
-        # inserts/removes it based on status.pending_update so users
-        # only see the item when it's actionable. We stamp the live
-        # version into the title each refresh, so menu membership has
-        # to be tracked separately from the title (which is the key
-        # rumps uses internally).
-        self.update_item = rumps.MenuItem("Update available", callback=self.on_update_clicked)
-        self._update_item_key = "Update available"
-        self._update_item_mounted = False
+        # Version line — always present. refresh() flips it between
+        # "↑ Update to vX.Y.Z →" (clickable, when the daemon reports a
+        # pending update) and "✓ Up to date (vX.Y.Z)" (inert) so the
+        # user always knows where they stand. Keyed by a stable
+        # placeholder title (rumps keys menu items by insertion title;
+        # the live title is mutated each refresh).
+        self._version_item_key = "checking for updates…"
+        self.version_item = rumps.MenuItem(self._version_item_key, callback=None)
         self._update_url: str | None = None
 
 
@@ -228,6 +226,7 @@ class HeardApp(rumps.App):
             self.account_item,
             None,
             self.status_item,
+            self.version_item,
             None,
             self.silence_item,
             self.replay_item,
@@ -334,22 +333,18 @@ class HeardApp(rumps.App):
         # set live so the version the user sees matches whatever the
         # poller has cached, even if that changes mid-session.
         pending = (status or {}).get("pending_update")
-        if pending:
+        if pending and pending.get("tag"):
             self._update_url = pending.get("url")
-            self.update_item.title = f"↑ Update to {pending.get('tag', '')} →".rstrip()
-            if not self._update_item_mounted:
-                # Insert directly after the status row (which is the
-                # very first menu entry) so the callout is the first
-                # thing the user sees on opening the menu.
-                self.menu.insert_after(self._status_item_key, self.update_item)
-                self._update_item_mounted = True
-        elif self._update_item_mounted:
-            try:
-                del self.menu[self._update_item_key]
-            except KeyError:
-                pass
-            self._update_item_mounted = False
+            self.version_item.title = f"↑ Update to {pending.get('tag', '')} →".rstrip()
+            self.version_item.set_callback(self.on_update_clicked)
+        else:
             self._update_url = None
+            try:
+                cur = updater.resolved_current_version()
+            except Exception:
+                cur = ""
+            self.version_item.title = f"✓ Up to date (v{cur})" if cur else "✓ Up to date"
+            self.version_item.set_callback(None)
 
         # (The "Upgrade to Pro" conversion CTA used to live in the menu
         # here; it now lives in Settings → Account, so the menu stays lean.)
