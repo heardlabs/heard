@@ -1432,7 +1432,10 @@ class SettingsController(NSObject):
         self._refs["account"]["signout_row"] = signout_row
         self._refs["account"]["manage_row"] = manage_row
 
-        # Install code card.
+        # Install code card — only relevant when NOT signed in. A
+        # signed-in user already has a bearer; redeeming a code would
+        # just rotate it for no reason. _refresh_account hides this
+        # whole group when heard_token is set.
         self._add_section(body, "INSTALL CODE")
         code_field = _text_field(placeholder="ABCD-EFGH")
         code_field.setTarget_(self)
@@ -1446,7 +1449,7 @@ class SettingsController(NSObject):
             trailing=code_btn,
             status=code_status,
         )
-        self._add_card(body, _card([code_row]))
+        ic_group = self._add_card(body, _card([code_row]))
 
         # What's playing card.
         self._add_section(body, "WHAT'S PLAYING")
@@ -1463,6 +1466,7 @@ class SettingsController(NSObject):
             "manage": manage_btn,
             "code_field": code_field,
             "code_status": code_status,
+            "ic_group": ic_group,
             "path": path_label,
             "upgrade": upgrade_btn,
         })
@@ -1777,6 +1781,10 @@ class SettingsController(NSObject):
             r["signout_row"].setHidden_(True)
             r["manage_row"].setHidden_(True)
             r["upgrade"].setHidden_(False)
+        # Install-code redemption only makes sense when not signed in —
+        # hide the whole "INSTALL CODE" group otherwise.
+        if r.get("ic_group") is not None:
+            r["ic_group"].setHidden_(bool(token))
         r["path"].setStringValue_(_voice_path_line(cfg, status))
 
     def _refresh_voice(self, cfg: dict) -> None:
