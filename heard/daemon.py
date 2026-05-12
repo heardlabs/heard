@@ -385,12 +385,14 @@ class Daemon:
     def _make_tts(self):
         """Pick a TTS backend based on config, in priority order:
 
-        1. ``heard_token`` set + plan != ``"expired"`` + not capped today
+        1. ``elevenlabs_api_key`` set → ElevenLabsTTS (BYOK — the user's
+           own EL account). Preferred over the cloud trial: if the user
+           bothered to paste a key, use it — it's their bill, not ours.
+           Mirrors the Haiku ladder, which already prefers a BYOK
+           Anthropic key over the managed proxy.
+        2. ``heard_token`` set + plan != ``"expired"`` + not capped today
            → ManagedTTS (proxies through api.heard.dev; the EL key lives
-           on our edge so OSS users don't see it).
-        2. ``elevenlabs_api_key`` set → ElevenLabsTTS (BYOK — the user's
-           own EL account; also the fallback when the managed daily cap
-           is hit, so "out of credits but I pasted my key" just works).
+           on our edge so OSS / no-key users still get a voice).
         3. Local Kokoro, only if already downloaded.
         4. Otherwise → NullTTS (no audio + a one-time "add a voice" nudge).
 
@@ -398,6 +400,10 @@ class Daemon:
         ``kokoro_onnx`` / ``onnxruntime`` — keeps the daemon tiny on
         the cloud path.
         """
+        api_key = (self.cfg.get("elevenlabs_api_key") or "").strip()
+        if api_key:
+            return ElevenLabsTTS(api_key=api_key)
+
         heard_token = (self.cfg.get("heard_token") or "").strip()
         heard_plan = (self.cfg.get("heard_plan") or "").strip().lower()
         if heard_token and heard_plan != "expired" and not self._managed_capped_today():
@@ -408,11 +414,7 @@ class Daemon:
                 base_url=self.cfg.get("heard_api_base") or "https://api.heard.dev",
             )
 
-        api_key = (self.cfg.get("elevenlabs_api_key") or "").strip()
-        if api_key:
-            return ElevenLabsTTS(api_key=api_key)
-
-        # No cloud token, no BYOK key. Use the local Kokoro voice only
+        # No BYOK key, no usable cloud token. Use the local Kokoro voice only
         # if the user has explicitly downloaded it — we never auto-pull
         # the ~325 MB model anymore. Otherwise NullTTS: no audio, plus a
         # one-time "here's how to get a voice" nudge from _speak().

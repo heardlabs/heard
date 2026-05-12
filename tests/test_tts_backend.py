@@ -122,10 +122,10 @@ def test_selector_picks_managed_when_heard_token_present(tmp_path, monkeypatch):
     assert daemon.tts.token == "tok_abc"
 
 
-def test_selector_managed_beats_byok_when_both_present(tmp_path, monkeypatch):
-    """Edge case: user used to be BYOK then signed up for Pro. Heard
-    token takes precedence — they paid for the cloud path, give them
-    the cloud path."""
+def test_selector_byok_beats_managed_when_both_present(tmp_path, monkeypatch):
+    """If the user pasted their own ElevenLabs key, use it — even
+    signed in. It's their bill, not ours, and it mirrors the Haiku
+    ladder (which already prefers a BYOK Anthropic key)."""
     daemon = _make_daemon(
         tmp_path,
         monkeypatch,
@@ -135,9 +135,10 @@ def test_selector_managed_beats_byok_when_both_present(tmp_path, monkeypatch):
             "elevenlabs_api_key": "sk_legacy",
         },
     )
-    from heard.tts.managed import ManagedTTS
+    from heard.tts.elevenlabs import ElevenLabsTTS
 
-    assert isinstance(daemon.tts, ManagedTTS)
+    assert isinstance(daemon.tts, ElevenLabsTTS)
+    assert daemon.tts.api_key == "sk_legacy"
 
 
 def test_selector_skips_managed_when_plan_expired(tmp_path, monkeypatch):
@@ -174,41 +175,36 @@ def test_selector_skips_managed_when_token_blank(tmp_path, monkeypatch):
     assert isinstance(daemon.tts, NullTTS)
 
 
-def test_selector_falls_back_to_byok_when_managed_capped(tmp_path, monkeypatch):
-    """Daily managed-char cap hit (429) → skip the cloud path and use
-    the user's BYOK ElevenLabs key for the rest of the UTC day. "Out of
-    credits but I pasted my key" must just work."""
+def test_selector_managed_cap_with_no_key_falls_to_null(tmp_path, monkeypatch):
+    """No BYOK key. Daily managed-char cap hit (429) → skip the cloud
+    path for the rest of the UTC day; with no local model that's NullTTS
+    (a one-time "add a voice" nudge). Pasting an EL key afterwards is
+    picked up on the next reload (BYOK-first)."""
     import time as _time
 
     daemon = _make_daemon(
         tmp_path,
         monkeypatch,
-        {
-            "heard_token": "tok_trial",
-            "heard_plan": "trial",
-            "elevenlabs_api_key": "sk_byok",
-        },
+        {"heard_token": "tok_trial", "heard_plan": "trial", "elevenlabs_api_key": ""},
     )
-    from heard.tts.elevenlabs import ElevenLabsTTS
     from heard.tts.managed import ManagedTTS
+    from heard.tts.null import NullTTS
 
-    # Fresh daemon: not capped → cloud.
-    assert isinstance(daemon.tts, ManagedTTS)
-    # Simulate a cap 429 having just happened.
+    assert isinstance(daemon.tts, ManagedTTS)  # fresh: not capped
     daemon._managed_capped_at = _time.time() * 1000.0
     assert daemon._managed_capped_today() is True
-    assert isinstance(daemon._make_tts(), ElevenLabsTTS)
+    assert isinstance(daemon._make_tts(), NullTTS)
 
 
 def test_selector_returns_to_managed_after_utc_day_rolls(tmp_path, monkeypatch):
     """A cap 429 from a previous UTC day no longer suppresses the cloud
-    path — the cap has reset."""
+    path — the cap has reset. (No BYOK key here, so cloud is the choice.)"""
     import time as _time
 
     daemon = _make_daemon(
         tmp_path,
         monkeypatch,
-        {"heard_token": "tok_trial", "heard_plan": "trial", "elevenlabs_api_key": "sk_byok"},
+        {"heard_token": "tok_trial", "heard_plan": "trial", "elevenlabs_api_key": ""},
     )
     from heard.tts.managed import ManagedTTS
 
