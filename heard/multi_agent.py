@@ -81,6 +81,27 @@ SESSION_ACTIVE_S = 180.0
 # user pin a session that just went idle for a moment.
 SESSION_VISIBLE_S = 600.0
 
+# Recent Agent-tool invocations are remembered for this long when
+# counting parallel subagents within one CC session. The hook fires
+# on PreToolUse(Agent) but the matching PostToolUse for a successful
+# Agent call is silent (templates.post_tool_event returns None on
+# success), so we can't decrement on completion — we just expire
+# entries after this window. 300 s is long enough to span a typical
+# multi-minute subagent run but short enough that "did three quick
+# Agents an hour ago" doesn't keep us in batch mode forever.
+SUBAGENT_TRACK_WINDOW_S = 300.0
+
+# Per-session event-rate detection. A single sequential agent rarely
+# fires more than ~1 event per second during active tool use;
+# sustained bursts well above that point at parallel agents under one
+# CC session_id (e.g. a fan-out we can't see from the Agent-tool
+# signal alone). When the window is busy, we treat that session as
+# swarm-equivalent. The threshold is intentionally a bit forgiving
+# — false positives just mean a brief burst gets batched, which is
+# fine; false negatives leave the listener hearing N agents at once.
+EVENT_RATE_WINDOW_S = 3.0
+EVENT_RATE_THRESHOLD = 6
+
 # Tags that always pierce regardless of mode/focus — the "name across
 # the room" signal. Failures and wait-state questions are events the
 # user must hear even from background agents.
@@ -108,6 +129,16 @@ class SessionInfo:
     # events on a fast machine) so "most recent" is deterministic.
     event_seq: int = 0
     pending_digest: list[dict[str, Any]] = field(default_factory=list)
+    # Timestamps of recent Agent-tool invocations for this session.
+    # Used to detect parallel subagent fan-out within one CC session
+    # (the hook payloads from subagents all carry the parent's
+    # session_id, so we'd otherwise see only one busy agent).
+    subagent_starts: list[float] = field(default_factory=list)
+    # Rolling-window timestamps of every event from this session.
+    # Lets us catch fan-out we couldn't see from the Agent-tool
+    # signal alone — when a single session_id fires events faster
+    # than a sequential agent ever would, it's parallel narration.
+    recent_event_times: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -221,8 +252,14 @@ class MultiAgentRouter:
                 )
                 self._sessions[session_id] = info
             self._event_counter += 1
-            info.last_event = time.time()
+            now = time.time()
+            info.last_event = now
             info.event_seq = self._event_counter
+            rate_cutoff = now - EVENT_RATE_WINDOW_S
+            info.recent_event_times = [
+                t for t in info.recent_event_times if t >= rate_cutoff
+            ]
+            info.recent_event_times.append(now)
 
     def _active_locked(self, now: float) -> list[SessionInfo]:
         cutoff = now - SESSION_ACTIVE_S
@@ -241,6 +278,66 @@ class MultiAgentRouter:
         when things go quiet."""
         with self._lock:
             return len(self._active_locked(time.time()))
+
+    def note_subagent_start(self, session_id: str) -> None:
+        """Record that this session just kicked off an Agent-tool call.
+        Called by the daemon when a ``tool_agent`` pre-event arrives.
+        The session must already exist (note_event runs first)."""
+        with self._lock:
+            info = self._sessions.get(session_id)
+            if info is None:
+                return
+            cutoff = time.time() - SUBAGENT_TRACK_WINDOW_S
+            info.subagent_starts = [t for t in info.subagent_starts if t >= cutoff]
+            info.subagent_starts.append(time.time())
+
+    def _subagent_count_locked(self, session_id: str) -> int:
+        info = self._sessions.get(session_id)
+        if info is None:
+            return 0
+        cutoff = time.time() - SUBAGENT_TRACK_WINDOW_S
+        info.subagent_starts = [t for t in info.subagent_starts if t >= cutoff]
+        return len(info.subagent_starts)
+
+    def subagent_count(self, session_id: str) -> int:
+        with self._lock:
+            return self._subagent_count_locked(session_id)
+
+    def peak_subagent_count(self) -> int:
+        """Max parallel subagents across all active sessions. The
+        daemon uses this alongside active_count() to decide whether
+        the digest timer should run on its fast cadence."""
+        with self._lock:
+            cutoff = time.time() - SUBAGENT_TRACK_WINDOW_S
+            peak = 0
+            for info in self._sessions.values():
+                info.subagent_starts = [t for t in info.subagent_starts if t >= cutoff]
+                if len(info.subagent_starts) > peak:
+                    peak = len(info.subagent_starts)
+            return peak
+
+    def _high_event_rate_locked(self, session_id: str) -> bool:
+        """True when this session has fired more than
+        ``EVENT_RATE_THRESHOLD`` events in the last
+        ``EVENT_RATE_WINDOW_S``. A sequential agent rarely sustains
+        that rate; bursts past it are almost always parallel agents
+        under one session_id."""
+        info = self._sessions.get(session_id)
+        if info is None:
+            return False
+        cutoff = time.time() - EVENT_RATE_WINDOW_S
+        info.recent_event_times = [t for t in info.recent_event_times if t >= cutoff]
+        return len(info.recent_event_times) >= EVENT_RATE_THRESHOLD
+
+    def any_high_event_rate(self) -> bool:
+        """True when ANY active session is firing fast enough to look
+        like parallel agents. The daemon checks this to flip the
+        digest cadence to its fast tick."""
+        with self._lock:
+            for sid in list(self._sessions.keys()):
+                if self._high_event_rate_locked(sid):
+                    return True
+            return False
 
     # --- routing -----------------------------------------------------------
 
@@ -281,8 +378,22 @@ class MultiAgentRouter:
                 return RoutingDecision(action="drop")
 
             active = self._active_locked(now)
-            # Solo: <2 active sessions, today's behaviour, everything plays.
-            if len(active) < 2:
+            # "In a swarm-like environment" — any of:
+            #   - multiple top-level sessions active (two CC instances
+            #     in two terminals)
+            #   - this session has parallel subagents in flight (one
+            #     CC session fanning out via the Agent tool — shares
+            #     one session_id at the hook layer)
+            #   - this session is firing events faster than a
+            #     sequential agent ever would (catches parallel
+            #     fan-out we couldn't see from the Agent signal alone)
+            in_swarm = (
+                len(active) >= 2
+                or self._subagent_count_locked(session_id) >= 2
+                or self._high_event_rate_locked(session_id)
+            )
+            # Solo: not in a swarm-like state, today's behaviour, everything plays.
+            if not in_swarm:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=True
                 )

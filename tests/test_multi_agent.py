@@ -395,6 +395,75 @@ def test_single_voice_prefix_only_on_speaker_change():
     assert d4.label_prefix == ""  # same speaker again → silent
 
 
+def test_parallel_subagents_in_one_session_trigger_swarm():
+    """One CC session that fans out via the Agent tool sees all
+    subagents share its session_id, so naive session counting would
+    miss the concurrency. Tracking note_subagent_start brings them
+    into the swarm path even though only one top-level session is
+    active."""
+    r = _new_router()
+    r.note_event("solo", cwd="/x/api")
+    # Single session, no subagents → solo, speak.
+    d = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="solo")
+    assert d.action == "speak"
+
+    # Same session fans out two Agent invocations → swarm-equivalent.
+    r.note_subagent_start("solo")
+    r.note_subagent_start("solo")
+    assert r.subagent_count("solo") == 2
+
+    d2 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="solo")
+    assert d2.action == "defer_to_digest"
+
+    # Finals from a session in subagent-swarm still speak with label.
+    d3 = r.classify(kind="final", tag="final_short", session_id="solo")
+    assert d3.action == "speak"
+
+
+def test_subagent_starts_age_out():
+    """Subagents that started a long time ago shouldn't keep a session
+    in swarm mode forever — entries expire from the rolling window."""
+    r = _new_router()
+    r.note_event("a")
+    r.note_subagent_start("a")
+    r.note_subagent_start("a")
+    # Backdate both starts past the tracking window.
+    expired = time.time() - multi_agent.SUBAGENT_TRACK_WINDOW_S - 10
+    r._sessions["a"].subagent_starts = [expired, expired]
+    assert r.subagent_count("a") == 0
+
+
+def test_high_event_rate_triggers_swarm_in_one_session():
+    """A single session that's firing faster than a sequential agent
+    plausibly could — the rate-based fallback signal for parallel
+    fan-out we can't see from explicit Agent-tool events."""
+    r = _new_router()
+    # Below threshold → solo.
+    for _ in range(multi_agent.EVENT_RATE_THRESHOLD - 1):
+        r.note_event("solo", cwd="/x/api")
+    d = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="solo")
+    assert d.action == "speak"
+
+    # Push the rolling window past threshold.
+    for _ in range(3):
+        r.note_event("solo", cwd="/x/api")
+    assert r.any_high_event_rate() is True
+    d2 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="solo")
+    assert d2.action == "defer_to_digest"
+
+
+def test_peak_subagent_count_across_sessions():
+    """peak_subagent_count returns the max parallel subagents on any
+    single session. Daemon uses it to flip digest cadence."""
+    r = _new_router()
+    r.note_event("a")
+    r.note_event("b")
+    r.note_subagent_start("a")
+    r.note_subagent_start("b")
+    r.note_subagent_start("b")
+    assert r.peak_subagent_count() == 2
+
+
 def test_active_count_tracks_recent_sessions():
     """The daemon uses this to flip its digest cadence between fast
     (swarm) and slow (solo)."""
