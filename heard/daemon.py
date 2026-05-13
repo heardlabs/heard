@@ -553,6 +553,21 @@ class Daemon:
         for chunk in _split(text):
             if cancel.is_set():
                 return
+            # Mid-utterance switch to NullTTS (e.g. a 429 in an earlier
+            # chunk just fell us back from managed and there's no BYOK
+            # key / local model) — bail before trying synth_to_file,
+            # otherwise NullTTSError gets caught by the generic handler
+            # below and leaves a stale "couldn't synthesise" badge in
+            # the menu bar.
+            if isinstance(self.tts, NullTTS):
+                notify.notify(
+                    "Heard — add a voice to hear narration",
+                    "Sign in to Heard for cloud voices, paste your ElevenLabs "
+                    "key in Settings → Keys, or download the local voice in Options.",
+                    kind="no_voice_configured",
+                )
+                _log("synth_skipped", reason="no_voice_configured_mid_utterance")
+                return
             fd, path_str = tempfile.mkstemp(
                 suffix=getattr(self.tts, "AUDIO_EXT", ".mp3"), prefix="heard-"
             )
