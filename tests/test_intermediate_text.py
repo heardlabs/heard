@@ -230,6 +230,60 @@ def test_no_duplicate_speech_across_sequential_pre_tool_calls(tmp_path, monkeypa
     assert len(intermediate) == 1
 
 
+def test_ask_user_question_suppresses_prose_and_marks_it_spoken(
+    tmp_path, monkeypatch
+):
+    """AskUserQuestion: the popup races our async hook, so any prose we
+    queue lands after the user has answered. Suppress the prose at
+    PreToolUse AND mark it spoken so the trailing Stop doesn't re-narrate
+    it. The popup itself carries the question."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        [
+            ("user", [{"type": "text", "text": "go"}]),
+            (
+                "assistant",
+                [{"type": "text", "text": "Quick clarifying question first."}],
+            ),
+            ("assistant", [{"type": "tool_use", "name": "AskUserQuestion"}]),
+        ],
+    )
+    sent: list[dict] = []
+    monkeypatch.setattr(client, "send_event", lambda **kw: sent.append(kw))
+    monkeypatch.setattr("heard.client.time.sleep", lambda _: None)
+
+    client.handle_cc_pre_tool(
+        {
+            "session_id": "session-Q",
+            "transcript_path": str(transcript),
+            "tool_name": "AskUserQuestion",
+            "tool_input": {
+                "questions": [
+                    {"question": "Which file?", "header": "f", "options": []}
+                ]
+            },
+        }
+    )
+
+    # Long preface suppressed; the question itself rides through with
+    # recent_intent set so persona Haiku will summarise it down to one
+    # short sentence rather than synthing the whole thing verbatim.
+    assert len(sent) == 1
+    assert sent[0]["kind"] == "tool_pre"
+    assert sent[0]["tag"] == "tool_question"
+    assert sent[0]["neutral"] == "Which file?"
+    assert sent[0]["ctx"].get("recent_intent") == "Which file?"
+
+    # Stop runs after the user answers. The long preface should already
+    # be marked spoken so it doesn't fire here either.
+    sent.clear()
+    client.handle_cc_stop(
+        {"session_id": "session-Q", "transcript_path": str(transcript)}
+    )
+    assert sent == []
+
+
 def test_stop_falls_back_to_last_text_when_no_unspoken(tmp_path, monkeypatch):
     """Empty transcript edge case: still produce SOMETHING via the
     legacy fallback so we never go silent."""

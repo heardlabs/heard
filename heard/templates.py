@@ -246,7 +246,15 @@ def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narrati
         if questions:
             q = (questions[0].get("question") or "").strip()
             if q:
-                return Narration(tag="tool_question", text=q, ctx={"question": q})
+                # recent_intent flips Haiku eligibility on so the question
+                # gets summarised to one short sentence rather than synthed
+                # verbatim — keeps audio short enough to land while the
+                # popup is still on screen.
+                return Narration(
+                    tag="tool_question",
+                    text=q,
+                    ctx={"question": q, "recent_intent": q},
+                )
         return None
     if tn == "Skill":
         skill = (tool_input.get("skill") or "").strip()
