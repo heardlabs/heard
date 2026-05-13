@@ -205,24 +205,49 @@ class Daemon:
         )
 
     def _start_digest_timer(self) -> None:
-        """Periodic background-agent digest. Drains the router's
-        deferred events on every tick, formats a one-line summary,
-        and enqueues it as a synthetic intermediate event. No-op when
-        nothing's accumulated (solo-mode, idle, or feature off)."""
+        """Adaptive background-agent digest. The cadence flips based
+        on how many sessions are active:
+
+          - swarm (>=2 active): short interval (default 5s). The
+            digest IS the primary narration channel here — focus
+            speaking is suppressed in classify() so two agents can't
+            step on each other.
+          - solo (<2 active): long interval (default 60s). Anything
+            stashed from a recent swarm gets drained on a slow
+            heartbeat so nothing is left to rot.
+
+        No-op when nothing's accumulated."""
 
         def _tick() -> None:
             while True:
-                interval = float(self.cfg.get("multi_agent_digest_interval_s") or 60)
-                time.sleep(max(15.0, interval))
+                in_swarm = self.router.active_count() >= 2
+                if in_swarm:
+                    interval = float(
+                        self.cfg.get("multi_agent_swarm_digest_interval_s") or 5
+                    )
+                    interval = max(3.0, interval)
+                else:
+                    interval = float(
+                        self.cfg.get("multi_agent_digest_interval_s") or 60
+                    )
+                    interval = max(15.0, interval)
+                time.sleep(interval)
                 if not self.cfg.get("multi_agent_digest_enabled", True):
                     # Drop accumulated events silently — feature off.
                     self.router.collect_digest()
                     continue
                 drained = self.router.collect_digest()
-                summary = self.router.format_digest(drained)
+                summary = self.router.format_digest(
+                    drained, swarm_active=self.router.active_count() >= 2
+                )
                 if not summary:
                     continue
-                _log("digest_emit", chars=len(summary), sessions=len(drained))
+                _log(
+                    "digest_emit",
+                    chars=len(summary),
+                    sessions=len(drained),
+                    swarm=int(in_swarm),
+                )
                 # Use a "digest" session id so the router's own
                 # classify() doesn't try to suppress this. Voice falls
                 # through to the active persona/cfg.

@@ -9,18 +9,20 @@ This module classifies each event into one of three actions:
 
   speak           — go through the queue normally
   drop            — silent (routine narration from a non-focus agent)
-  defer_to_digest — accumulate for a periodic summary (commit B wires
-                    the timer; commit A leaves these accumulating for
-                    a no-op consumer)
+  defer_to_digest — batch for the digest timer, which combines events
+                    from all active agents into a single spoken line
+                    per window
 
 Three modes, picked automatically:
 
   SOLO    — only one session active in the last SESSION_ACTIVE_S.
             Everything plays. Today's behaviour.
-  SWARM   — 2+ active sessions. Most-recently-active gets full
-            narration; others' routine events drop, but failures and
-            wait-state questions pierce with an "Agent <name>:"
-            prefix so the user can hear who.
+  SWARM   — 2+ active sessions. Every non-pierce event batches into
+            the digest pile; the daemon drains it on a fast cadence
+            (a few seconds) and produces one combined line per window
+            so two agents can't speak over each other. Failures and
+            wait-state questions still pierce immediately with an
+            "Agent <name>:" prefix so urgent events cut through.
   PINNED  — user explicitly picked one session to follow. Only that
             session's events narrate; others drop, except again
             failures/questions pierce with prefix.
@@ -63,11 +65,16 @@ def _auto_voice_for(repo_name: str) -> str:
     digest = hashlib.sha1(repo_name.encode("utf-8")).hexdigest()
     return _AUTO_VOICE_POOL[int(digest, 16) % len(_AUTO_VOICE_POOL)]
 
-# How long after the last event a session counts as "active". Used
-# both for the SOLO/SWARM mode decision and for the menu's active-
-# sessions list. 30 s is roughly "I just ran a thing, the agent's
-# still cooking".
-SESSION_ACTIVE_S = 30.0
+# How long after the last event a session counts as "active" for the
+# SOLO/SWARM decision. Was 30 s — that's "currently cooking" and
+# undercounted multi-agent setups where the user is rotating between
+# terminals (agent A runs for 20 s, goes quiet while the user reads,
+# user prompts agent B; from the router's view only one is "active"
+# at any moment and it stays in SOLO so events speak live and step on
+# each other). 180 s captures bursty rotation patterns — if you've
+# touched an agent in the last few minutes, it counts as running and
+# the batching kicks in implicitly.
+SESSION_ACTIVE_S = 180.0
 
 # Show a session in active_sessions() for this long after its last
 # event, even if it's no longer "active" for mode purposes. Lets the
@@ -227,6 +234,14 @@ class MultiAgentRouter:
                 return Mode.PINNED
             return Mode.SWARM if len(self._active_locked(time.time())) >= 2 else Mode.SOLO
 
+    def active_count(self) -> int:
+        """How many sessions have fired an event within
+        ``SESSION_ACTIVE_S``. Used by the daemon to pick a fast
+        digest cadence while a swarm is in flight and a slow one
+        when things go quiet."""
+        with self._lock:
+            return len(self._active_locked(time.time()))
+
     # --- routing -----------------------------------------------------------
 
     def classify(
@@ -275,11 +290,30 @@ class MultiAgentRouter:
                     session_id, RoutingDecision(action="speak", voice_override=voice)
                 )
 
-            # Swarm: >=2 active. Most-recently-active wins; others
-            # pierce only on critical tags, otherwise digest-defer.
-            most_recent = max(active, key=lambda s: (s.last_event, s.event_seq))
-            is_focus = session_id == most_recent.session_id
-            if is_focus:
+            # Swarm: >=2 active. The old "most recently active speaks"
+            # heuristic flipped focus on every event from two busy
+            # agents, so the listener heard them stepping on each
+            # other. Split by kind instead:
+            #
+            #   - Pierces (failures, questions) cut through with an
+            #     explicit "Agent <name>:" label — urgent events
+            #     should always announce who, even if the same agent
+            #     was the last speaker.
+            #   - Finals + intermediates SPEAK with the speaker-change
+            #     label (silent prefix when consecutive lines come
+            #     from the same agent in one-voice mode). The agent's
+            #     actual prose isn't reduced to a tag count, but the
+            #     listener doesn't hear the name on every line either.
+            #   - Routine tool events batch into the digest pile; the
+            #     daemon's fast digest timer (cadence chosen by
+            #     active_count) drains them as one combined count line
+            #     per window. This is where the noise lives.
+            if tag in _PIERCE_TAGS:
+                voice = self._voice_for_locked(
+                    session_id, agent_voices, auto_voices, is_focus=False
+                )
+                return self._speaking_locked(session_id, self._pierced(session_id, voice))
+            if kind in ("final", "intermediate"):
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=True
                 )
@@ -293,11 +327,6 @@ class MultiAgentRouter:
                         ),
                     ),
                 )
-            if tag in _PIERCE_TAGS:
-                voice = self._voice_for_locked(
-                    session_id, agent_voices, auto_voices, is_focus=False
-                )
-                return self._speaking_locked(session_id, self._pierced(session_id, voice))
             return RoutingDecision(action="defer_to_digest")
 
     def _speaking_locked(self, session_id: str, decision: RoutingDecision) -> RoutingDecision:
@@ -455,13 +484,21 @@ class MultiAgentRouter:
     def format_digest(
         self,
         drained: list[tuple[SessionInfo, list[dict[str, Any]]]] | None = None,
+        swarm_active: bool = False,
     ) -> str | None:
         """Roll the per-session pending events into a single spoken
         line. Returns None when there's nothing to say (no events
         accumulated since last drain).
 
         ``drained`` is the output of ``collect_digest()``; passed in
-        explicitly so the daemon controls when accumulation resets."""
+        explicitly so the daemon controls when accumulation resets.
+
+        ``swarm_active`` toggles the "Background update." preface.
+        When swarm is on, the digest is firing every few seconds as
+        the *primary* narration channel, and prepending "Background
+        update." each cycle sounds like a stuck record. When swarm
+        is off it's a true ambient catch-up and keeping the preface
+        makes the role of the line clearer to the listener."""
         if drained is None:
             drained = self.collect_digest()
         parts = []
@@ -471,7 +508,8 @@ class MultiAgentRouter:
                 parts.append(piece)
         if not parts:
             return None
-        return "Background update. " + " ".join(parts)
+        body = " ".join(parts)
+        return body if swarm_active else "Background update. " + body
 
     def list_active(self) -> list[dict[str, Any]]:
         """Snapshot for the menu's Active Sessions submenu. Includes
