@@ -1,31 +1,7 @@
 """Narration LLM providers.
 
-Heard rewrites event lines through a small LLM (Haiku) before TTS. The
-default path is the Anthropic API with ``ANTHROPIC_API_KEY``. When that
-key isn't available, we fall back to the ``claude`` CLI in print mode
-(``claude -p``) — the user almost certainly has Claude Code installed
-because that's how Heard hooks in to begin with, and Claude Code carries
-its own OAuth auth from the keychain.
-
-Why a provider abstraction at all: the call site in ``persona.py`` only
-needs ``rewrite(system, user) -> str | None``. Whether that's an HTTPS
-request or a subprocess is irrelevant to it.
-
-Safety knobs on the CLI fallback:
-  - ``--tools ""``       no tool calls → no PreToolUse / PostToolUse
-                         hooks fire → no recursion into Heard's own
-                         hook.
-  - ``--setting-sources project``  skip ``~/.claude/settings.json``
-                         where Heard's Stop hook lives. Belt-and-
-                         suspenders with the env var below.
-  - ``HEARD_HOOK_DISABLED=1`` in child env. If the Stop hook somehow
-                         still fires, ``heard.hook.main`` short-circuits.
-  - ``--no-session-persistence``  don't litter the user's session list
-                         with narration rewrites.
-  - ``--disable-slash-commands``  no skills resolving from our prompt.
-  - hard subprocess timeout. The narration pipeline already tolerates
-    ``None`` (falls back to templates) so a slow CLI just means the
-    user hears the template line, not a hang.
+Picks the Anthropic API when a key is set, falls back to `claude -p`
+otherwise. The persona layer treats `None` as "use templates".
 """
 
 from __future__ import annotations
@@ -33,18 +9,13 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from typing import Protocol
 
-# Same dated model id as persona.py uses for the direct-API path —
-# keep them in lockstep so narration tone stays identical across the
-# two routes.
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
-# Locations to look for the `claude` binary when the daemon's PATH is
-# sanitized (which happens when Heard.app launches from LaunchServices /
-# the menu bar — PATH is roughly /usr/bin:/bin:/usr/sbin:/sbin). Order
-# matters: prefer the npm-global install most users have, then the
-# common Homebrew prefixes.
+# Heard.app launches with a sanitized PATH; cover the npm-global and
+# Homebrew prefixes where `claude` usually lives.
 _CLAUDE_PATH_FALLBACKS = (
     os.path.expanduser("~/.npm-global/bin/claude"),
     "/opt/homebrew/bin/claude",
@@ -64,9 +35,6 @@ class NarrationProvider(Protocol):
 
 
 class AnthropicAPIProvider:
-    """Direct Anthropic Messages API. Fast and cheap; only available
-    when an API key is configured."""
-
     name = "anthropic-api"
 
     def __init__(self, api_key: str) -> None:
@@ -105,12 +73,9 @@ class AnthropicAPIProvider:
 
 
 class ClaudeCLIProvider:
-    """Shells out to `claude -p`. Used as a fallback when no API key is
-    set — the user is presumed to have Claude Code installed and
-    OAuth-logged-in via the keychain, since that's how Heard hooks
-    into Claude Code in the first place."""
-
     name = "claude-cli"
+    # Node startup + auth verification overruns the 2.5s HTTPS budget.
+    MIN_TIMEOUT_S = 8.0
 
     def __init__(self, binary: str) -> None:
         self._binary = binary
@@ -119,64 +84,48 @@ class ClaudeCLIProvider:
         return [
             self._binary,
             "-p",
-            "--model",
-            HAIKU_MODEL,
-            "--tools",
-            "",
+            "--model", HAIKU_MODEL,
+            # No tool calls → no Pre/PostToolUse hooks → no recursion.
+            "--tools", "",
             "--disable-slash-commands",
             "--no-session-persistence",
-            "--setting-sources",
-            "project",
-            "--output-format",
-            "text",
-            "--system-prompt",
-            system,
+            # Skip ~/.claude/settings.json (where Heard's Stop hook is).
+            "--setting-sources", "project",
+            "--output-format", "text",
+            "--system-prompt", system,
             user,
         ]
 
     def _build_env(self) -> dict[str, str]:
         env = dict(os.environ)
-        # Belt-and-suspenders: even if --setting-sources project doesn't
-        # fully suppress Heard's Stop hook for some claude version, the
-        # hook itself short-circuits on this flag.
+        # Latch in case Stop hook still fires; heard.hook.main checks this.
         env["HEARD_HOOK_DISABLED"] = "1"
-        # If ANTHROPIC_API_KEY is empty-string in env (set but blank),
-        # claude treats it as present and may error. Drop it so the
-        # OAuth/keychain path is used cleanly.
+        # Blank-string key makes claude pick the wrong auth path.
         if not env.get("ANTHROPIC_API_KEY", "").strip():
             env.pop("ANTHROPIC_API_KEY", None)
         return env
 
-    # Floor for subprocess timeout. The HTTPS path tolerates ~2.5s
-    # comfortably; `claude -p` adds Node startup + auth verification,
-    # so anything under ~8s times out every call. The persona layer
-    # treats a `None` return as "use the template" — this is purely
-    # an upper bound on how long we wait before giving up.
-    MIN_TIMEOUT_S = 8.0
-
     def rewrite(
         self, system: str, user: str, max_tokens: int, timeout: float
     ) -> str | None:
-        # max_tokens isn't directly exposed by `claude -p` — the model
-        # decides. We accept it for API-shape symmetry; the system prompt
-        # already constrains length to a sentence or two for narration.
-        del max_tokens
-        effective_timeout = max(timeout, self.MIN_TIMEOUT_S)
+        del max_tokens  # claude -p doesn't expose it; system prompt caps length.
         try:
             res = subprocess.run(
                 self._build_argv(system, user),
                 env=self._build_env(),
+                # Run from tempdir so claude can't pick up CLAUDE.md or
+                # project-local .claude/ from whatever cwd the daemon is in.
+                cwd=tempfile.gettempdir(),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
-                timeout=effective_timeout,
+                timeout=max(timeout, self.MIN_TIMEOUT_S),
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return None
         if res.returncode != 0:
             return None
-        out = (res.stdout or "").strip()
-        return out or None
+        return (res.stdout or "").strip() or None
 
 
 def _find_claude_binary() -> str | None:
@@ -190,13 +139,8 @@ def _find_claude_binary() -> str | None:
 
 
 def get_provider(api_key: str = "") -> NarrationProvider | None:
-    """Pick a provider. API key wins if present; otherwise try the
-    `claude` CLI. Returns ``None`` if neither is available — the
-    persona layer interprets that as "use templates"."""
-    key = (api_key or "").strip()
-    if key:
-        return AnthropicAPIProvider(api_key=key)
+    """API if a key is set, else CLI if `claude` is on disk, else None."""
+    if (api_key or "").strip():
+        return AnthropicAPIProvider(api_key=api_key.strip())
     binary = _find_claude_binary()
-    if binary:
-        return ClaudeCLIProvider(binary=binary)
-    return None
+    return ClaudeCLIProvider(binary=binary) if binary else None
