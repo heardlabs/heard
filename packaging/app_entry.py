@@ -28,8 +28,19 @@ try:
 except Exception:
     pass
 
+from heard import config as config_mod  # noqa: E402
 from heard import daemon as daemon_mod  # noqa: E402
 from heard.ui import HeardApp  # noqa: E402
+
+
+def _redirect_stdio_to_log() -> None:
+    # Bundle stdout/stderr default to /dev/null when the .app is
+    # launched by Finder/launchctl, which sinks the daemon thread's
+    # _log() lines. Point them at daemon.log so events stay greppable
+    # — matches what ensure_daemon's subprocess path already does.
+    log = open(config_mod.LOG_PATH, "a", encoding="utf-8", buffering=1)
+    sys.stdout = log
+    sys.stderr = log
 
 
 def _run_daemon() -> None:
@@ -46,5 +57,6 @@ def _run_daemon() -> None:
 
 
 if __name__ == "__main__":
+    _redirect_stdio_to_log()
     threading.Timer(1.0, _run_daemon).start()
     HeardApp().run()
