@@ -644,6 +644,12 @@ def _build_user_message(
             "Write ONE sentence describing what just happened. PAST tense — "
             "the tool has run. Stay in character. No markdown."
         )
+    elif event_kind == "tool_pre" and tag == "tool_question":
+        lines.append(
+            "Summarise the question in ONE short sentence I will speak "
+            "aloud. Lead with 'Quick question:'. Stay in character. No "
+            "markdown. No options. Under 12 words."
+        )
     elif event_kind == "tool_pre" and recent_intent:
         # Status while a specific tool runs. Phrase, not a sentence —
         # these fire dozens of times per turn and every word costs

@@ -440,6 +440,18 @@ def _session_from_data(data: dict) -> dict:
 # --- Claude Code event handlers ---------------------------------------------
 
 
+def _mark_transcript_prose_spoken(transcript_path: str, sid: str) -> None:
+    """Advance the offset and mark all pending assistant prose as spoken
+    without sending it. Used to suppress narration we know would land
+    too late to be useful."""
+    start = spoken.get_offset(sid)
+    fresh, end = extract_assistant_texts_from(transcript_path, start)
+    if end != start:
+        spoken.set_offset(sid, end)
+    for t in fresh:
+        spoken.mark_spoken(sid, t)
+
+
 def _speak_unspoken_texts(
     transcript_path: str,
     session: dict,
@@ -518,6 +530,21 @@ def handle_cc_stop(data: dict) -> None:
 def handle_cc_pre_tool(data: dict) -> None:
     cfg = config.load()
     session = _session_from_data(data)
+    transcript = data.get("transcript_path")
+    tool_name = data.get("tool_name") or ""
+
+    # AskUserQuestion's popup races our async hook — preface prose
+    # would land after the user answered. Mark it spoken (Stop won't
+    # replay) and narrate the question itself instead.
+    if tool_name == "AskUserQuestion":
+        if transcript:
+            time.sleep(cfg["flush_delay_ms"] / 1000.0)
+            _mark_transcript_prose_spoken(transcript, session["id"])
+        if cfg.get("narrate_tools", True):
+            ev = templates.pre_tool_event(tool_name, data.get("tool_input") or {})
+            if ev is not None:
+                send_event(kind="tool_pre", neutral=ev.text, tag=ev.tag, ctx=ev.ctx, session=session)
+        return
 
     # First, surface any prose Claude wrote leading up to this tool call.
     # If we said something, the tool announcement would just be noise on
@@ -525,9 +552,12 @@ def handle_cc_pre_tool(data: dict) -> None:
     # fresh prose to suppress), we still enrich its ctx with the latest
     # transcript prose + the actual change content so persona Haiku can
     # produce a purposeful status line instead of a bare template verb.
-    transcript = data.get("transcript_path")
     spoke_text = 0
     if transcript:
+        # Match Stop's flush wait — Claude Code may not have flushed the
+        # assistant-prose line to the transcript yet when this hook fires,
+        # so reading immediately misses prose written right before the tool.
+        time.sleep(cfg["flush_delay_ms"] / 1000.0)
         spoke_text = _speak_unspoken_texts(transcript, session, cfg, finalize=False)
 
     if spoke_text > 0:
@@ -611,6 +641,10 @@ def handle_codex_pre_tool(data: dict) -> None:
     transcript = data.get("transcript_path")
     spoke_text = 0
     if transcript:
+        # Match Stop's flush wait — Claude Code may not have flushed the
+        # assistant-prose line to the transcript yet when this hook fires,
+        # so reading immediately misses prose written right before the tool.
+        time.sleep(cfg["flush_delay_ms"] / 1000.0)
         spoke_text = _speak_unspoken_texts(transcript, session, cfg, finalize=False)
 
     if spoke_text > 0:
