@@ -309,10 +309,23 @@ def _managed_rewrite_available() -> bool:
     return True
 
 
+def _cli_rewrite_available() -> bool:
+    """True if `claude` is on disk — the last-ditch fallback before
+    templates. The user almost certainly has it installed, because
+    Heard hooks ride on Claude Code's hook system."""
+    from heard import providers
+
+    return providers._find_claude_binary() is not None
+
+
 def _haiku_enabled() -> bool:
-    """True if either signal is available: BYOK Anthropic key, or
-    Heard cloud LLM via an active plan."""
-    return bool(_anthropic_key()) or _managed_rewrite_available()
+    """True if any of the three rewrite signals is available: BYOK
+    Anthropic key, Heard cloud LLM via an active plan, or `claude -p`."""
+    return (
+        bool(_anthropic_key())
+        or _managed_rewrite_available()
+        or _cli_rewrite_available()
+    )
 
 
 _client = None
@@ -345,16 +358,17 @@ def _haiku_rewrite(
     ctx: dict[str, Any],
     session: dict[str, Any],
 ) -> str | None:
-    """Dispatch a Haiku rewrite. Prefers the user's BYOK Anthropic key
-    (they pay their own bill, no Heard cap) — so "I capped out, here's
-    my key" just works: set anthropic_api_key and the next event uses
-    it. Falls back to Heard's cloud /v1/persona-rewrite proxy when on a
-    trial/pro plan and not capped for the day; returns None when neither
-    is available, so callers fall through to template-only narration."""
+    """Dispatch a Haiku rewrite. Ladder: BYOK Anthropic key (the user
+    pays their own bill, no Heard cap) → Heard cloud /v1/persona-rewrite
+    proxy (active plan, not capped today) → `claude -p` (OAuth from the
+    user's keychain — works as long as Claude Code is installed) →
+    None, so callers fall through to template-only narration."""
     if _anthropic_key():
         return _byok_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
     if _managed_rewrite_available() and not _managed_haiku_capped_today():
         return _managed_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
+    if _cli_rewrite_available():
+        return _cli_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
     return None
 
 
@@ -543,6 +557,32 @@ def _managed_haiku_rewrite(
         return None
     except (_urlerr.URLError, TimeoutError, OSError, ValueError):
         return None
+
+
+def _cli_haiku_rewrite(
+    persona: Persona,
+    event_kind: str,
+    neutral: str,
+    tag: str,
+    ctx: dict[str, Any],
+    session: dict[str, Any],
+) -> str | None:
+    """`claude -p` fallback. Used when there's no BYOK key and no Heard
+    cloud plan, but `claude` is installed locally — which is the common
+    case, since Heard's hooks ride on Claude Code."""
+    from heard import providers
+
+    binary = providers._find_claude_binary()
+    if not binary:
+        return None
+    user_msg = _build_user_message(event_kind, neutral, tag, ctx, session)
+    full_system = _SHARED_NARRATION_RULES + "\n\n" + persona.system_prompt
+    return providers.ClaudeCLIProvider(binary=binary).rewrite(
+        system=full_system,
+        user=user_msg,
+        max_tokens=HAIKU_MAX_TOKENS,
+        timeout=HAIKU_TIMEOUT_S,
+    )
 
 
 def _build_user_message(
