@@ -528,6 +528,10 @@ def handle_cc_pre_tool(data: dict) -> None:
     transcript = data.get("transcript_path")
     spoke_text = 0
     if transcript:
+        # Match Stop's flush wait — Claude Code may not have flushed the
+        # assistant-prose line to the transcript yet when this hook fires,
+        # so reading immediately misses prose written right before the tool.
+        time.sleep(cfg["flush_delay_ms"] / 1000.0)
         spoke_text = _speak_unspoken_texts(transcript, session, cfg, finalize=False)
 
     if spoke_text > 0:
@@ -611,6 +615,10 @@ def handle_codex_pre_tool(data: dict) -> None:
     transcript = data.get("transcript_path")
     spoke_text = 0
     if transcript:
+        # Match Stop's flush wait — Claude Code may not have flushed the
+        # assistant-prose line to the transcript yet when this hook fires,
+        # so reading immediately misses prose written right before the tool.
+        time.sleep(cfg["flush_delay_ms"] / 1000.0)
         spoke_text = _speak_unspoken_texts(transcript, session, cfg, finalize=False)
 
     if spoke_text > 0:
