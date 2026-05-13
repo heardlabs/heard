@@ -1,15 +1,30 @@
 """Narration LLM providers.
 
-Picks the Anthropic API when a key is set, falls back to `claude -p`
-otherwise. The persona layer treats `None` as "use templates".
+Three implementations of the same ``rewrite(system, user, max_tokens,
+timeout) -> str | None`` shape:
+
+- ``AnthropicAPIProvider`` — direct Anthropic HTTPS via the SDK.
+- ``ManagedAPIProvider`` — proxied through ``api.heard.dev`` with a
+  Heard bearer; the user never sees our key.
+- ``ClaudeCLIProvider`` — shells out to ``claude -p``, OAuth from the
+  user's keychain.
+
+The persona layer (`heard.persona`) decides which one to use per call
+based on what's configured. ``None`` from any of them means "this
+provider couldn't handle it"; the persona layer falls through to
+templates.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import ssl
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 from typing import Protocol
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
@@ -70,6 +85,62 @@ class AnthropicAPIProvider:
             return out or None
         except Exception:
             return None
+
+
+class ManagedAPIProvider:
+    """Heard cloud LLM proxy. The browser-side bearer authenticates the
+    call; our Worker swaps in the server-side Anthropic key, runs the
+    same prompt-caching + char-metering as the per-event rewrite path,
+    and returns the standard Messages response shape."""
+
+    name = "managed-api"
+
+    def __init__(
+        self, token: str, base_url: str = "https://api.heard.dev"
+    ) -> None:
+        self._token = token
+        self._base_url = base_url.rstrip("/")
+
+    def rewrite(
+        self, system: str, user: str, max_tokens: int, timeout: float
+    ) -> str | None:
+        body = {
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+            "model": HAIKU_MODEL,
+            "max_tokens": max_tokens,
+        }
+        try:
+            try:
+                import certifi  # type: ignore
+
+                ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                ssl_ctx = ssl.create_default_context()
+            req = urllib.request.Request(
+                f"{self._base_url}/v1/persona-rewrite",
+                data=json.dumps(body).encode("utf-8"),
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    # Cloudflare bot-fight rejects the default urllib UA
+                    # with 403; identify as Heard explicitly.
+                    "User-Agent": "Heard-daemon/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout, context=ssl_ctx) as resp:
+                data = json.loads(resp.read().decode("utf-8") or "{}")
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return None
+        parts = [
+            b.get("text", "")
+            for b in data.get("content", [])
+            if b.get("type") == "text"
+        ]
+        out = " ".join(p.strip() for p in parts if p).strip()
+        return out or None
 
 
 class ClaudeCLIProvider:

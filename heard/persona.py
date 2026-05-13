@@ -585,6 +585,114 @@ def _cli_haiku_rewrite(
     )
 
 
+_PROJECT_SUMMARY_RULES = """\
+You're summarising what one or more AI coding agents did on a single
+project, for a developer who has stepped away from the keyboard. The
+output will be spoken aloud in the persona's voice as one short status
+update.
+
+Rules for this summary:
+- Open with the project name (capitalised, no quoting).
+- One or two short sentences. Spoken length, not written.
+- Aggregate similar events ("five edits to the auth flow", not a list).
+- Name 1-3 files only when it sharpens the picture; otherwise omit.
+- Pass through verbatim test / build / search outcomes if present
+  ("tests passed", "build failed", "no matches").
+- If two or more agents contributed, mention it once ("two agents…").
+- Past tense — the work has happened. No markdown, no bullet lists,
+  no leading "I", no scare quotes.
+"""
+
+
+def _format_events_for_summary(
+    label: str, events: list[dict[str, Any]], member_count: int
+) -> str:
+    """Bullet-list shape Haiku can scan; prefer the event's neutral
+    narration when present (already-natural prose from templates.py),
+    fall back to the raw tag so an event with no text still counts."""
+    lines = [
+        f"Project: {label}",
+        f"Agents involved: {member_count}",
+        f"Event count: {len(events)}",
+        "Events in order:",
+    ]
+    for e in events:
+        neutral = (e.get("neutral") or "").strip()
+        tag = (e.get("tag") or "").strip()
+        if neutral:
+            lines.append(f"- {neutral}")
+        elif tag:
+            lines.append(f"- {tag}")
+    return "\n".join(lines)
+
+
+def summarize_project(
+    persona: Persona,
+    label: str,
+    events: list[dict[str, Any]],
+    member_count: int = 1,
+    *,
+    max_tokens: int = HAIKU_MAX_TOKENS * 2,
+    timeout: float = HAIKU_TIMEOUT_S,
+) -> str | None:
+    """Haiku-narrative summary of a project's batched events. Walks the
+    same provider ladder as the per-event rewrite (BYOK Anthropic →
+    managed Heard cloud → ``claude -p``), with a digest-shaped prompt
+    designed for "one project's chunk of work, rolled up." Returns
+    ``None`` when no LLM path is available so the daemon can fall back
+    to the tag-count formatter."""
+    if not events or not _haiku_enabled():
+        return None
+    user_msg = _format_events_for_summary(label, events, member_count)
+    full_system = (
+        _SHARED_NARRATION_RULES
+        + "\n\n"
+        + persona.system_prompt
+        + "\n\n"
+        + _PROJECT_SUMMARY_RULES
+    )
+
+    from heard import providers as _providers
+
+    key = _anthropic_key()
+    if key:
+        try:
+            out = _providers.AnthropicAPIProvider(api_key=key).rewrite(
+                system=full_system, user=user_msg,
+                max_tokens=max_tokens, timeout=timeout,
+            )
+        except Exception:
+            out = None
+        if out:
+            return out
+
+    if _managed_rewrite_available() and not _managed_haiku_capped_today():
+        try:
+            from heard import config as _config
+            cfg = _config.load()
+        except Exception:
+            cfg = {}
+        token = (cfg.get("heard_token") or "").strip()
+        if token:
+            base_url = (cfg.get("heard_api_base") or "https://api.heard.dev").rstrip("/")
+            out = _providers.ManagedAPIProvider(token=token, base_url=base_url).rewrite(
+                system=full_system, user=user_msg,
+                max_tokens=max_tokens, timeout=timeout,
+            )
+            if out:
+                return out
+
+    binary = _providers._find_claude_binary()
+    if binary:
+        out = _providers.ClaudeCLIProvider(binary=binary).rewrite(
+            system=full_system, user=user_msg,
+            max_tokens=max_tokens, timeout=timeout,
+        )
+        if out:
+            return out
+    return None
+
+
 def _build_user_message(
     event_kind: str,
     neutral: str,

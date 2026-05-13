@@ -83,3 +83,58 @@ def test_suffix_address_skips_if_already_present():
 def test_suffix_address_adds_when_missing():
     out = persona._suffix_address("Running tests.", "Sir")
     assert out == "Running tests, Sir."
+
+
+def test_summarize_project_returns_none_when_no_llm_available(monkeypatch):
+    """No BYOK key, no Heard token, no `claude` binary → no LLM path
+    reachable → return None so the caller falls back to a deterministic
+    tag-count summary."""
+    p = persona.load("jarvis")
+    monkeypatch.setattr(persona, "_anthropic_key", lambda: "")
+    monkeypatch.setattr(persona, "_managed_rewrite_available", lambda: False)
+    monkeypatch.setattr(persona, "_cli_rewrite_available", lambda: False)
+    events = [{"tag": "tool_edit", "neutral": "Editing x.py"}]
+    assert persona.summarize_project(p, "api", events, member_count=1) is None
+
+
+def test_summarize_project_uses_byok_anthropic_when_available(monkeypatch):
+    """When _anthropic_key() returns a key, summarize_project hits the
+    AnthropicAPIProvider's rewrite() and returns its text."""
+    p = persona.load("jarvis")
+    monkeypatch.setattr(persona, "_anthropic_key", lambda: "sk-ant-abc")
+    monkeypatch.setattr(persona, "_haiku_enabled", lambda: True)
+
+    captured: dict = {}
+
+    class FakeProvider:
+        def __init__(self, api_key):
+            captured["api_key"] = api_key
+
+        def rewrite(self, system, user, max_tokens, timeout):
+            captured["system"] = system
+            captured["user"] = user
+            return "On the API project — edited the auth flow across three files."
+
+    monkeypatch.setattr(
+        "heard.providers.AnthropicAPIProvider", FakeProvider
+    )
+    events = [
+        {"tag": "tool_edit", "neutral": "Editing auth.py"},
+        {"tag": "tool_edit", "neutral": "Editing handler.py"},
+        {"tag": "tool_edit", "neutral": "Editing middleware.py"},
+    ]
+    out = persona.summarize_project(p, "api", events, member_count=2)
+    assert out == "On the API project — edited the auth flow across three files."
+    # System prompt includes the project-summary rules; user message
+    # carries the project name + event list.
+    assert "PROJECT" in captured["system"].upper() or "project" in captured["system"]
+    assert "Project: api" in captured["user"]
+    assert "Agents involved: 2" in captured["user"]
+
+
+def test_summarize_project_returns_none_on_empty_events(monkeypatch):
+    """Empty event list → None (nothing to summarise) regardless of
+    LLM availability."""
+    p = persona.load("jarvis")
+    monkeypatch.setattr(persona, "_haiku_enabled", lambda: True)
+    assert persona.summarize_project(p, "api", [], member_count=1) is None

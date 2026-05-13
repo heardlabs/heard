@@ -231,9 +231,21 @@ class Daemon:
                     continue
                 flushes = self.router.collect_project_flushes(auto_voices=auto_voices)
                 for pf in flushes:
-                    summary = multi_agent_mod.format_project_summary(
-                        pf.label, pf.events, member_count=len(pf.member_session_ids)
+                    # Prefer the LLM-narrative summary ("On the API
+                    # project, edited the auth flow across three files;
+                    # tests passed"). Falls back to the deterministic
+                    # tag-count formatter when no LLM path is reachable
+                    # or every provider returned None.
+                    summary = persona_mod.summarize_project(
+                        self.persona,
+                        pf.label,
+                        pf.events,
+                        member_count=len(pf.member_session_ids),
                     )
+                    if not summary:
+                        summary = multi_agent_mod.format_project_summary(
+                            pf.label, pf.events, member_count=len(pf.member_session_ids)
+                        )
                     if not summary:
                         continue
                     _log(
