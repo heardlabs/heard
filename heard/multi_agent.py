@@ -69,6 +69,19 @@ def _auto_voice_for(repo_name: str) -> str:
 # still cooking".
 SESSION_ACTIVE_S = 30.0
 
+# Per-project channel scheduler (new SWARM behaviour). When ≥2 sessions
+# are active concurrently, routine narration is no longer "whichever
+# session fired last speaks live, the rest defer". Instead every
+# non-pierce event lands in its session's pending pile, and the daemon's
+# 1s scheduler drains each *project* (grouped by repo_name) as one
+# narrative summary when the project's been quiet for IDLE_FLUSH_S
+# (natural turn boundary) or its total pending count hits MAX_PENDING
+# (backpressure cap so a busy agent doesn't hold its update hostage).
+# Same-project agents collapse into one summary stream; different-project
+# agents drain as their own streams in distinct voices.
+CHANNEL_IDLE_FLUSH_S = 2.0
+CHANNEL_MAX_PENDING = 5
+
 # Show a session in active_sessions() for this long after its last
 # event, even if it's no longer "active" for mode purposes. Lets the
 # user pin a session that just went idle for a moment.
@@ -117,6 +130,24 @@ class RoutingDecision:
     action: str  # "speak" | "drop" | "defer_to_digest"
     label_prefix: str = ""
     voice_override: str | None = None
+
+
+@dataclass
+class ProjectFlush:
+    """One project's worth of pending events, ready to drain as a
+    single attributed summary utterance. Channels are by project
+    (repo_name), not session — same-project agents collapse into one
+    summary stream so the listener gets project-level insight rather
+    than alternating per-agent blurbs.
+    """
+
+    project_key: str                  # repo_name, or session_id fallback
+    label: str                        # spoken-friendly name ("api")
+    events: list[dict[str, Any]]      # union of pending across project's sessions, ts-ordered
+    member_session_ids: list[str]     # which sessions contributed
+    speaker_session_id: str           # most-recently-active session in the project
+    voice_override: str | None        # auto-pool voice keyed by repo_name; None = persona
+    is_primary: bool                  # this is the most-recently-active project globally
 
 
 # Map of common event tags to short verbs for the digest summary.
@@ -171,6 +202,42 @@ def _format_session_summary(info: SessionInfo, events: list[dict[str, Any]]) -> 
             parts.append(f"{count} {verb}s")
     label = _label_for(info).capitalize()
     return f"{label}: {', '.join(parts)}."
+
+
+def format_project_summary(
+    label: str, events: list[dict[str, Any]], member_count: int = 1
+) -> str | None:
+    """Aggregated tag-count summary for a project's drain — pools events
+    from every session in the project so multiple agents working in
+    ``~/api`` produce one line instead of N indistinguishable "Api: …"
+    blurbs. Robotic but informative; Haiku-narrative form is layered on
+    top by the daemon when an LLM is available.
+
+    Output shape: ``"Api: 3 edits, a search, ran a test."`` Bumps to
+    ``"Api: 3 edits, a search across two agents."`` when ≥2 member
+    sessions contributed, so the listener knows the events are pooled."""
+    if not events:
+        return None
+    by_verb: dict[str, int] = {}
+    for e in events:
+        verb = _TAG_TO_VERB.get(e.get("tag", ""), "operation")
+        by_verb[verb] = by_verb.get(verb, 0) + 1
+    if not by_verb:
+        return None
+    parts: list[str] = []
+    for verb, count in sorted(by_verb.items(), key=lambda kv: (-kv[1], kv[0])):
+        if count == 1:
+            parts.append(f"a {verb}")
+        else:
+            parts.append(f"{count} {verb}s")
+    tail = ""
+    if member_count >= 2:
+        tail = f" across {_count_word(member_count)} agents"
+    return f"{label.capitalize()}: {', '.join(parts)}{tail}."
+
+
+def _count_word(n: int) -> str:
+    return {2: "two", 3: "three", 4: "four", 5: "five"}.get(n, str(n))
 
 
 def _label_for(info: SessionInfo) -> str:
@@ -275,24 +342,12 @@ class MultiAgentRouter:
                     session_id, RoutingDecision(action="speak", voice_override=voice)
                 )
 
-            # Swarm: >=2 active. Most-recently-active wins; others
-            # pierce only on critical tags, otherwise digest-defer.
-            most_recent = max(active, key=lambda s: (s.last_event, s.event_seq))
-            is_focus = session_id == most_recent.session_id
-            if is_focus:
-                voice = self._voice_for_locked(
-                    session_id, agent_voices, auto_voices, is_focus=True
-                )
-                return self._speaking_locked(
-                    session_id,
-                    RoutingDecision(
-                        action="speak",
-                        voice_override=voice,
-                        label_prefix=self._focus_label_prefix_locked(
-                            session_id, agent_voices, auto_voices, now
-                        ),
-                    ),
-                )
+            # Swarm: ≥2 active. Per-project channel scheduler — every
+            # non-pierce event lands in its session's pending pile; the
+            # daemon drains each *project* (grouped by repo_name) on
+            # idle / backpressure as one attributed summary. Pierces
+            # (failures, questions) still cut through immediately with
+            # the agent's name.
             if tag in _PIERCE_TAGS:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=False
@@ -377,6 +432,111 @@ class MultiAgentRouter:
         if auto_voices and not is_focus and info.repo_name:
             return _auto_voice_for(info.repo_name)
         return None
+
+    # --- project channel scheduler ----------------------------------------
+
+    @staticmethod
+    def _project_key(info: SessionInfo) -> str:
+        """Key for grouping sessions into channels. cwd-basename when
+        we have one; session_id fallback so an unknown-cwd session
+        still gets its own channel rather than colliding under ''."""
+        return info.repo_name or info.session_id
+
+    def collect_project_flushes(
+        self, *, auto_voices: bool = True, now: float | None = None
+    ) -> list[ProjectFlush]:
+        """Atomically pop pending events from every project whose channel
+        is ready to drain. A channel is ready when its most recent event
+        in any member session was ≥ ``CHANNEL_IDLE_FLUSH_S`` ago (natural
+        turn boundary) OR its total pending count is ≥
+        ``CHANNEL_MAX_PENDING`` (backpressure). Member sessions' piles
+        are cleared as part of the call so the next event starts a fresh
+        accumulation. Largest pile first so the worst backlog gets
+        spoken first when several flush at once.
+
+        Voice routing: the project whose most-recently-active session
+        is the global newest gets ``voice_override=None`` (= persona);
+        every other project gets a deterministic auto-pool voice keyed
+        by its ``repo_name`` (so "api" always sounds the same way) iff
+        ``auto_voices`` is True. With ``auto_voices=False`` ("one voice"
+        mode) every project uses the persona voice — the listener
+        distinguishes them by the project name baked into the summary
+        text instead.
+        """
+        now_ts = time.time() if now is None else now
+        with self._lock:
+            # Group sessions by project.
+            by_project: dict[str, list[SessionInfo]] = {}
+            for info in self._sessions.values():
+                by_project.setdefault(self._project_key(info), []).append(info)
+
+            # Primary project = the one containing the globally most-
+            # recently-active session. That project speaks in the
+            # persona's voice so the listener's "main" channel sounds
+            # familiar; the rest get auto-pool voices.
+            primary_key: str | None = None
+            best_event = -1.0
+            best_seq = -1
+            for info in self._sessions.values():
+                if (info.last_event, info.event_seq) > (best_event, best_seq):
+                    best_event = info.last_event
+                    best_seq = info.event_seq
+                    primary_key = self._project_key(info)
+
+            out: list[ProjectFlush] = []
+            for project_key, members in by_project.items():
+                total_pending = sum(len(m.pending_digest) for m in members)
+                if total_pending == 0:
+                    continue
+                last_event = max(m.last_event for m in members)
+                idle_for = now_ts - last_event
+                if (
+                    idle_for < CHANNEL_IDLE_FLUSH_S
+                    and total_pending < CHANNEL_MAX_PENDING
+                ):
+                    continue
+                # Atomic drain — copy out and clear under the lock so
+                # any event landing during this call goes into the next
+                # cycle's pile, not this one.
+                events: list[dict[str, Any]] = []
+                contributing: list[str] = []
+                for m in members:
+                    if m.pending_digest:
+                        events.extend(m.pending_digest)
+                        contributing.append(m.session_id)
+                        m.pending_digest.clear()
+                events.sort(key=lambda e: e.get("ts", 0.0))
+                # Speaker session id = most recently active in the project
+                # (so the daemon's speaker-change tracking treats this
+                # project as one speaker).
+                speaker = max(members, key=lambda s: (s.last_event, s.event_seq))
+                label = speaker.repo_name or (
+                    speaker.session_id[:8] if speaker.session_id else "agent"
+                )
+                is_primary = project_key == primary_key
+                voice_override: str | None = None
+                if auto_voices and not is_primary and speaker.repo_name:
+                    voice_override = _auto_voice_for(speaker.repo_name)
+                out.append(
+                    ProjectFlush(
+                        project_key=project_key,
+                        label=label,
+                        events=events,
+                        member_session_ids=contributing,
+                        speaker_session_id=speaker.session_id,
+                        voice_override=voice_override,
+                        is_primary=is_primary,
+                    )
+                )
+            out.sort(key=lambda pf: -len(pf.events))
+            return out
+
+    def note_flush_spoken(self, speaker_session_id: str) -> None:
+        """Update ``_last_narrated_session`` after the daemon speaks a
+        project flush, so a same-project pierce arriving right after
+        doesn't redundantly re-announce the agent name."""
+        with self._lock:
+            self._last_narrated_session = speaker_session_id
 
     # --- pin control -------------------------------------------------------
 

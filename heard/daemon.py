@@ -205,28 +205,56 @@ class Daemon:
         )
 
     def _start_digest_timer(self) -> None:
-        """Periodic background-agent digest. Drains the router's
-        deferred events on every tick, formats a one-line summary,
-        and enqueues it as a synthetic intermediate event. No-op when
-        nothing's accumulated (solo-mode, idle, or feature off)."""
+        """Per-project channel scheduler. Drains the router's pending
+        piles grouped by *project* (cwd basename), not session — same-
+        project agents collapse into one summary stream so the listener
+        gets project-level insight, different projects drain as their
+        own streams in distinct voices. Solo (one active session) and
+        pinned routing bypass this entirely; only SWARM-mode events
+        accumulate here.
+
+        Ticks every second. A project channel flushes when its most
+        recent event is ≥ ``CHANNEL_IDLE_FLUSH_S`` ago (natural turn
+        boundary) or its total pending count hits
+        ``CHANNEL_MAX_PENDING`` (backpressure cap on a busy agent).
+        Largest pile first; coexists=True so several flushes in the
+        same tick don't cancel each other."""
 
         def _tick() -> None:
             while True:
-                interval = float(self.cfg.get("multi_agent_digest_interval_s") or 60)
-                time.sleep(max(15.0, interval))
+                time.sleep(1.0)
+                auto_voices = bool(self.cfg.get("multi_agent_auto_voices", True))
                 if not self.cfg.get("multi_agent_digest_enabled", True):
-                    # Drop accumulated events silently — feature off.
-                    self.router.collect_digest()
+                    # Feature off — drain silently so events don't pile
+                    # up forever waiting on a scheduler that won't speak.
+                    self.router.collect_project_flushes(auto_voices=auto_voices)
                     continue
-                drained = self.router.collect_digest()
-                summary = self.router.format_digest(drained)
-                if not summary:
-                    continue
-                _log("digest_emit", chars=len(summary), sessions=len(drained))
-                # Use a "digest" session id so the router's own
-                # classify() doesn't try to suppress this. Voice falls
-                # through to the active persona/cfg.
-                self._start_speech(summary, cfg=self.cfg, persona=self.persona, session_id="__digest__")
+                flushes = self.router.collect_project_flushes(auto_voices=auto_voices)
+                for pf in flushes:
+                    summary = multi_agent_mod.format_project_summary(
+                        pf.label, pf.events, member_count=len(pf.member_session_ids)
+                    )
+                    if not summary:
+                        continue
+                    _log(
+                        "project_flush",
+                        project=pf.label,
+                        sessions=len(pf.member_session_ids),
+                        events=len(pf.events),
+                        primary=pf.is_primary,
+                    )
+                    # Speaker session = the project's most-recently-
+                    # active session, so the speaker-change label-prefix
+                    # logic treats this flush as that session speaking.
+                    self.router.note_flush_spoken(pf.speaker_session_id)
+                    self._start_speech(
+                        summary,
+                        cfg=self.cfg,
+                        persona=self.persona,
+                        session_id=pf.speaker_session_id,
+                        voice_override=pf.voice_override,
+                        coexists=True,
+                    )
 
         threading.Thread(target=_tick, daemon=True).start()
 
@@ -856,6 +884,7 @@ class Daemon:
         session_id: str = "",
         voice_override: str | None = None,
         history_meta: dict | None = None,
+        coexists: bool = False,
     ) -> None:
         """Queue an utterance behind whatever's currently playing.
 
@@ -883,9 +912,13 @@ class Daemon:
         if not text:
             return
         with self._queue_cv:
-            if session_id and self._queue:
-                # Drop queued items from any session that isn't this
-                # one — user has switched contexts.
+            # Scheduler-driven project flushes pass ``coexists=True`` so
+            # several flushes (e.g. two projects ready in the same tick)
+            # don't destructively cancel each other — they sit in the
+            # queue alongside one another and play in turn. A subsequent
+            # *live* event (coexists=False) from the user actively driving
+            # an agent still clears them, since by then they're stale.
+            if session_id and self._queue and not coexists:
                 before = len(self._queue)
                 self._queue = [e for e in self._queue if e[3] == session_id]
                 dropped = before - len(self._queue)

@@ -31,18 +31,18 @@ def test_solo_mode_speaks_everything():
     assert r.mode() == multi_agent.Mode.SOLO
 
 
-def test_swarm_focus_speaks_others_defer():
-    """Two active sessions: most-recently-active gets routine
-    narration; the other defers to digest."""
+def test_swarm_defers_routine_for_project_flush():
+    """Two active sessions in SWARM: every non-pierce event defers to
+    the project channel scheduler (the daemon drains each project as
+    one summary on idle / backpressure). There's no live "focus
+    speaker" — audio is one channel, so we route by project."""
     r = _new_router()
     r.note_event("a", cwd="/Users/x/projects/api")
     r.note_event("b", cwd="/Users/x/projects/web")
-    # b fired more recently — it's the focus.
 
     assert r.mode() == multi_agent.Mode.SWARM
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "speak"
-    a_decision = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a")
-    assert a_decision.action == "defer_to_digest"
+    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "defer_to_digest"
+    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "defer_to_digest"
 
 
 def test_swarm_critical_pierces_with_label():
@@ -62,20 +62,98 @@ def test_swarm_critical_pierces_with_label():
     assert "api" in q_a.label_prefix
 
 
-def test_focus_shifts_with_most_recent_activity():
-    """When a different session fires later, it becomes the focus."""
+def test_project_flush_backpressure_drains_busy_project_early():
+    """A project's pending pile flushes once it hits CHANNEL_MAX_PENDING
+    even if events are still fresh — a runaway-busy agent shouldn't
+    hold its summary hostage."""
     r = _new_router()
-    r.note_event("a")
-    time.sleep(0.01)
-    r.note_event("b")
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "speak"
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "defer_to_digest"
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")  # second project so we're in SWARM
+    for _ in range(multi_agent.CHANNEL_MAX_PENDING):
+        r.add_to_digest("a", "tool_pre", "tool_edit", "Editing x.")
+    flushes = r.collect_project_flushes(auto_voices=True, now=time.time())
+    labels = [pf.label for pf in flushes]
+    assert "api" in labels  # backpressure flushed despite freshness
 
-    # Now a fires — focus shifts back to a.
-    time.sleep(0.01)
-    r.note_event("a")
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "speak"
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "defer_to_digest"
+
+def test_project_flushes_ordered_longest_first():
+    """When several projects are ready in the same tick, the worst
+    backlog gets drained first so listeners hear the chunkiest summary
+    before smaller ones."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    for _ in range(3):
+        r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    for _ in range(5):
+        r.add_to_digest("b", "tool_pre", "tool_edit", "edit")
+    old = time.time() - multi_agent.CHANNEL_IDLE_FLUSH_S - 0.5
+    r._sessions["a"].last_event = old
+    r._sessions["b"].last_event = old
+    flushes = r.collect_project_flushes(auto_voices=True, now=time.time())
+    assert [pf.label for pf in flushes] == ["web", "api"]
+
+
+def test_project_flush_one_voice_mode_uses_persona_for_all():
+    """auto_voices=False ("one voice"): every project's flush gets
+    voice_override=None — the listener distinguishes projects from
+    the label baked into the summary text."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    r.add_to_digest("b", "tool_pre", "tool_edit", "edit")
+    old = time.time() - multi_agent.CHANNEL_IDLE_FLUSH_S - 0.5
+    r._sessions["a"].last_event = old
+    r._sessions["b"].last_event = old
+    flushes = r.collect_project_flushes(auto_voices=False, now=time.time())
+    assert all(pf.voice_override is None for pf in flushes)
+
+
+def test_format_project_summary_marks_multi_agent_aggregation():
+    """When several sessions in a project contribute to one flush,
+    the summary tells the listener the events span agents."""
+    events = [
+        {"tag": "tool_edit", "ts": 1.0},
+        {"tag": "tool_edit", "ts": 2.0},
+        {"tag": "tool_bash_test", "ts": 3.0},
+    ]
+    single = multi_agent.format_project_summary("api", events, member_count=1)
+    assert "across" not in single  # single agent → no aggregation tail
+    pooled = multi_agent.format_project_summary("api", events, member_count=2)
+    assert "across two agents" in pooled
+
+
+def test_project_flush_idle_drain_aggregates_same_project():
+    """Two CC sessions in the same project (same cwd basename) drain
+    as one combined summary stream — that's the "project-level
+    insight" point. Two sessions in different projects drain
+    separately, in their own auto-pool voices."""
+    r = _new_router()
+    r.note_event("a1", cwd="/Users/x/projects/api")
+    r.note_event("a2", cwd="/Users/x/projects/api")
+    r.note_event("w", cwd="/Users/x/projects/web")
+    r.add_to_digest("a1", "tool_pre", "tool_edit", "edit one")
+    r.add_to_digest("a2", "tool_pre", "tool_edit", "edit two")
+    r.add_to_digest("w", "tool_pre", "tool_grep", "grep")
+
+    # Backdate everyone past the idle window so all three are ready.
+    old = time.time() - multi_agent.CHANNEL_IDLE_FLUSH_S - 0.5
+    for sid in ("a1", "a2", "w"):
+        r._sessions[sid].last_event = old
+
+    flushes = r.collect_project_flushes(auto_voices=True, now=time.time())
+    by_label = {pf.label: pf for pf in flushes}
+    assert set(by_label) == {"api", "web"}
+    # Same-project aggregation: a1 + a2's events collapse into one
+    # "api" flush carrying both members.
+    api = by_label["api"]
+    assert len(api.events) == 2
+    assert set(api.member_session_ids) == {"a1", "a2"}
+    # Cross-project separation: web has its own flush.
+    web = by_label["web"]
+    assert len(web.events) == 1
+    assert web.member_session_ids == ["w"]
 
 
 def test_pinned_session_always_speaks_others_drop():
@@ -148,22 +226,23 @@ def test_digest_collection_drains_pending():
     assert r.collect_digest() == []
 
 
-def test_agent_voices_override_on_speak_decision():
-    """When agent_voices maps a session's repo to a voice id, a speak
-    decision returns it as voice_override. b is the focus (most
-    recently active) so its event speaks; we expect the override."""
+def test_agent_voices_override_on_pinned_speak():
+    """agent_voices map applies to the pinned-session live narration
+    path (the canonical "this one speaks" route now that SWARM defers
+    routine events to project flushes)."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
+    r.pin("a")
 
     voices = {"api": "voice_id_api", "web": "voice_id_web"}
-    db = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", agent_voices=voices)
-    assert db.action == "speak"
-    assert db.voice_override == "voice_id_web"
+    da = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a", agent_voices=voices)
+    assert da.action == "speak"
+    assert da.voice_override == "voice_id_api"
 
     # Without the map: None.
-    db_no_map = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b")
-    assert db_no_map.voice_override is None
+    da_no_map = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a")
+    assert da_no_map.voice_override is None
 
 
 def test_agent_voices_override_on_pierce_too():
@@ -256,10 +335,11 @@ def test_auto_voices_off_keeps_persona_voice():
     assert da_fail.voice_override is None
 
 
-def test_auto_voices_does_not_override_focus_or_solo():
-    """The persona's voice is the default narrator. Auto-pick never
-    overrides the focus session — otherwise solo users would hear a
-    hash-picked voice instead of the persona they configured."""
+def test_auto_voices_does_not_override_solo_or_primary_project():
+    """Solo: the persona's voice always wins (no swarm, no pool). And
+    in SWARM, the *primary* project (containing the globally most
+    recently-active session) keeps the persona voice on its flush —
+    only background projects get auto-pool voices."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")  # solo
 
@@ -267,15 +347,20 @@ def test_auto_voices_does_not_override_focus_or_solo():
         kind="tool_pre", tag="tool_bash_grep", session_id="a",
         auto_voices=True,
     )
-    assert d.voice_override is None  # solo focus → persona voice
+    assert d.voice_override is None  # solo → persona voice
 
-    # Add b → swarm. a is now non-focus, b is focus.
+    # Add b → swarm. b is the primary project (most recent); a is bg.
     r.note_event("b", cwd="/x/web")
-    db = r.classify(
-        kind="tool_pre", tag="tool_bash_grep", session_id="b",
-        auto_voices=True,
-    )
-    assert db.voice_override is None  # focus → persona voice still
+    r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    r.add_to_digest("b", "tool_pre", "tool_edit", "edit")
+    old = time.time() - multi_agent.CHANNEL_IDLE_FLUSH_S - 0.5
+    r._sessions["a"].last_event = old
+    r._sessions["b"].last_event = old
+    flushes = {pf.label: pf for pf in r.collect_project_flushes(auto_voices=True, now=time.time())}
+    # Primary (most-recently-touched in setup) was b → "web" gets
+    # persona; "api" gets the deterministic auto-pool voice.
+    assert flushes["web"].voice_override is None
+    assert flushes["api"].voice_override in multi_agent._AUTO_VOICE_POOL
 
 
 def test_manual_map_beats_auto_voice():
@@ -331,13 +416,15 @@ def test_list_active_for_menu():
     assert names["web"]["pinned"] is False
 
 
-def test_swarm_single_voice_mode_prefixes_focus_agent():
-    """auto_voices off (the "One voice" mode): the focused agent's own
-    narration gets an "Agent <name>: " prefix, since the listener can't
-    tell agents apart by sound. With auto_voices on, no focus prefix."""
+def test_pinned_single_voice_mode_prefixes_pinned_agent():
+    """auto_voices off (the "one voice" mode): the pinned session's
+    live narration gets an "Agent <name>: " prefix when another
+    channel is active in the background, since the listener can't
+    tell agents apart by sound. With auto_voices on, no prefix."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
-    r.note_event("b", cwd="/x/web")  # most recent → focus
+    r.note_event("b", cwd="/x/web")
+    r.pin("b")
     d = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
     assert d.action == "speak"
     assert d.label_prefix.startswith("Agent web")
@@ -354,12 +441,13 @@ def test_solo_never_prefixes_even_in_single_voice_mode():
     assert d.label_prefix == ""
 
 
-def test_single_voice_mode_skips_prefix_when_manual_voice_set():
+def test_pinned_single_voice_mode_skips_prefix_when_manual_voice_set():
     """A manually-mapped voice carries the agent's identity — no prefix
     needed even in single-voice mode."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
-    r.note_event("b", cwd="/x/web")  # focus
+    r.note_event("b", cwd="/x/web")
+    r.pin("b")
     d = r.classify(
         kind="tool_pre", tag="tool_bash_grep", session_id="b",
         agent_voices={"web": "voice_xyz"}, auto_voices=False,
@@ -369,19 +457,23 @@ def test_single_voice_mode_skips_prefix_when_manual_voice_set():
     assert d.label_prefix == ""
 
 
-def test_single_voice_prefix_only_on_speaker_change():
-    """One-voice mode: the agent name is spoken only when the speaker
-    changes — not on every consecutive line from the agent you're
-    actively driving."""
+def test_pinned_single_voice_prefix_only_on_speaker_change():
+    """One-voice mode: the agent name announces on the *first* line and
+    then stays silent for consecutive lines from the same speaker. The
+    live-speaker path in the new model is pinned narration + pierces;
+    a cross-room pierce from a different session re-announces."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
-    r.note_event("b", cwd="/x/web")  # b is focus (most recent)
+    r.note_event("b", cwd="/x/web")
+    r.pin("b")
     d1 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
     assert d1.label_prefix.startswith("Agent web")  # first line → announce
     d2 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
     assert d2.label_prefix == ""  # same speaker → silent
-    r.note_event("a")  # focus shifts
-    d3 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a", auto_voices=False)
-    assert d3.label_prefix.startswith("Agent api")  # speaker changed → announce
-    d4 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a", auto_voices=False)
-    assert d4.label_prefix == ""  # same speaker again → silent
+    # A failure from the other (un-pinned) session pierces with its
+    # name — speaker changed, announce.
+    d3 = r.classify(kind="tool_post", tag="tool_post_failure", session_id="a", auto_voices=False)
+    assert d3.label_prefix.startswith("Agent api")
+    # b speaks again (pinned focus) — speaker changed back, re-announce.
+    d4 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
+    assert d4.label_prefix.startswith("Agent web")
