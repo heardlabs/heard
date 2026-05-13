@@ -63,11 +63,20 @@ def _auto_voice_for(repo_name: str) -> str:
     digest = hashlib.sha1(repo_name.encode("utf-8")).hexdigest()
     return _AUTO_VOICE_POOL[int(digest, 16) % len(_AUTO_VOICE_POOL)]
 
-# How long after the last event a session counts as "active". Used
-# both for the SOLO/SWARM mode decision and for the menu's active-
-# sessions list. 30 s is roughly "I just ran a thing, the agent's
-# still cooking".
-SESSION_ACTIVE_S = 30.0
+# How long after the last event a session counts as "active" for the
+# SOLO/SWARM decision. 180 s captures bursty rotation: if you've
+# touched an agent in the last few minutes it still counts as
+# running, so opening a second Claude Code anywhere flips the system
+# into the multi-channel scheduler implicitly.
+SESSION_ACTIVE_S = 180.0
+
+# Per-channel flush rules used by the daemon's scheduler when the
+# router is in multi-channel mode. A channel flushes when its pending
+# pile has been quiet for IDLE_S (natural turn boundary) OR its
+# pending count hits MAX_PENDING (backpressure cap so a runaway
+# busy agent doesn't hold its summary hostage).
+CHANNEL_IDLE_FLUSH_S = 2.0
+CHANNEL_MAX_PENDING = 5
 
 # Show a session in active_sessions() for this long after its last
 # event, even if it's no longer "active" for mode purposes. Lets the
@@ -227,6 +236,25 @@ class MultiAgentRouter:
                 return Mode.PINNED
             return Mode.SWARM if len(self._active_locked(time.time())) >= 2 else Mode.SOLO
 
+    def sessions_ready_to_flush(self) -> list[str]:
+        """Return the session_ids whose pending piles should be drained
+        right now. Sorted longest-pile first so the daemon's scheduler
+        handles the worst backlog when ties collide. A pile is ready
+        when it's been idle CHANNEL_IDLE_FLUSH_S seconds (natural turn
+        boundary) OR has hit CHANNEL_MAX_PENDING (backpressure)."""
+        with self._lock:
+            now = time.time()
+            ready: list[tuple[int, str]] = []
+            for sid, info in self._sessions.items():
+                pending = len(info.pending_digest)
+                if pending == 0:
+                    continue
+                idle_for = now - info.last_event
+                if idle_for >= CHANNEL_IDLE_FLUSH_S or pending >= CHANNEL_MAX_PENDING:
+                    ready.append((pending, sid))
+            ready.sort(key=lambda t: -t[0])
+            return [sid for _, sid in ready]
+
     # --- routing -----------------------------------------------------------
 
     def classify(
@@ -275,24 +303,12 @@ class MultiAgentRouter:
                     session_id, RoutingDecision(action="speak", voice_override=voice)
                 )
 
-            # Swarm: >=2 active. Most-recently-active wins; others
-            # pierce only on critical tags, otherwise digest-defer.
-            most_recent = max(active, key=lambda s: (s.last_event, s.event_seq))
-            is_focus = session_id == most_recent.session_id
-            if is_focus:
-                voice = self._voice_for_locked(
-                    session_id, agent_voices, auto_voices, is_focus=True
-                )
-                return self._speaking_locked(
-                    session_id,
-                    RoutingDecision(
-                        action="speak",
-                        voice_override=voice,
-                        label_prefix=self._focus_label_prefix_locked(
-                            session_id, agent_voices, auto_voices, now
-                        ),
-                    ),
-                )
+            # Multi-channel: every non-pierce event lands in its own
+            # session's pending pile. The daemon's per-session scheduler
+            # drains each channel as one summarized utterance when the
+            # pile goes quiet (CHANNEL_IDLE_FLUSH_S) or hits the
+            # backpressure cap (CHANNEL_MAX_PENDING). Nothing is dropped;
+            # the user hears each agent's batched catch-up in turn.
             if tag in _PIERCE_TAGS:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=False

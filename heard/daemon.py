@@ -205,28 +205,39 @@ class Daemon:
         )
 
     def _start_digest_timer(self) -> None:
-        """Periodic background-agent digest. Drains the router's
-        deferred events on every tick, formats a one-line summary,
-        and enqueues it as a synthetic intermediate event. No-op when
-        nothing's accumulated (solo-mode, idle, or feature off)."""
+        """Per-channel scheduler. Ticks every second; for each session
+        whose pending pile is either idle (no events for a couple of
+        seconds — natural turn boundary) or has hit the backpressure
+        cap (runaway busy agent), drain just that session's pile and
+        speak it as one summarized utterance attributed to the agent.
+
+        Single-channel scenarios bypass this entirely because the
+        router only routes events to defer when two or more sessions
+        are active; with one session, classify() returns speak and
+        the live path takes over."""
 
         def _tick() -> None:
             while True:
-                interval = float(self.cfg.get("multi_agent_digest_interval_s") or 60)
-                time.sleep(max(15.0, interval))
+                time.sleep(1.0)
                 if not self.cfg.get("multi_agent_digest_enabled", True):
-                    # Drop accumulated events silently — feature off.
+                    # Feature off — drop everything that piled up.
                     self.router.collect_digest()
                     continue
-                drained = self.router.collect_digest()
-                summary = self.router.format_digest(drained)
-                if not summary:
-                    continue
-                _log("digest_emit", chars=len(summary), sessions=len(drained))
-                # Use a "digest" session id so the router's own
-                # classify() doesn't try to suppress this. Voice falls
-                # through to the active persona/cfg.
-                self._start_speech(summary, cfg=self.cfg, persona=self.persona, session_id="__digest__")
+                for session_id in self.router.sessions_ready_to_flush():
+                    summary = self.router.drain_session_summary(session_id)
+                    if not summary:
+                        continue
+                    _log(
+                        "channel_flush",
+                        session=session_id,
+                        chars=len(summary),
+                    )
+                    self._start_speech(
+                        summary,
+                        cfg=self.cfg,
+                        persona=self.persona,
+                        session_id=session_id,
+                    )
 
         threading.Thread(target=_tick, daemon=True).start()
 

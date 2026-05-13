@@ -31,18 +31,18 @@ def test_solo_mode_speaks_everything():
     assert r.mode() == multi_agent.Mode.SOLO
 
 
-def test_swarm_focus_speaks_others_defer():
-    """Two active sessions: most-recently-active gets routine
-    narration; the other defers to digest."""
+def test_swarm_all_non_pierce_events_defer():
+    """Multi-channel mode: every routine event lands in its own
+    session's pending pile. There's no live "focus speaker" — the
+    daemon's per-session scheduler drains each channel separately
+    once idle or backpressured."""
     r = _new_router()
     r.note_event("a", cwd="/Users/x/projects/api")
     r.note_event("b", cwd="/Users/x/projects/web")
-    # b fired more recently — it's the focus.
 
     assert r.mode() == multi_agent.Mode.SWARM
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "speak"
-    a_decision = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a")
-    assert a_decision.action == "defer_to_digest"
+    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "defer_to_digest"
+    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "defer_to_digest"
 
 
 def test_swarm_critical_pierces_with_label():
@@ -62,20 +62,48 @@ def test_swarm_critical_pierces_with_label():
     assert "api" in q_a.label_prefix
 
 
-def test_focus_shifts_with_most_recent_activity():
-    """When a different session fires later, it becomes the focus."""
+def test_sessions_ready_to_flush_on_idle():
+    """A pending pile that's been quiet for CHANNEL_IDLE_FLUSH_S
+    becomes ready to flush — natural turn boundary."""
     r = _new_router()
-    r.note_event("a")
-    time.sleep(0.01)
-    r.note_event("b")
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "speak"
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "defer_to_digest"
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "Editing x.")
+    # Both fresh — neither idle yet.
+    assert r.sessions_ready_to_flush() == []
 
-    # Now a fires — focus shifts back to a.
-    time.sleep(0.01)
-    r.note_event("a")
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "speak"
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "defer_to_digest"
+    # Backdate a past the idle window.
+    r._sessions["a"].last_event = time.time() - multi_agent.CHANNEL_IDLE_FLUSH_S - 0.5
+    assert r.sessions_ready_to_flush() == ["a"]
+
+
+def test_sessions_ready_to_flush_on_backpressure():
+    """A pending pile that hits CHANNEL_MAX_PENDING flushes even if
+    fresh — a runaway busy agent shouldn't hold its summary hostage."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    for _ in range(multi_agent.CHANNEL_MAX_PENDING):
+        r.add_to_digest("a", "tool_pre", "tool_edit", "Editing x.")
+    # Even though a is fresh, backpressure ready.
+    assert "a" in r.sessions_ready_to_flush()
+
+
+def test_sessions_ready_to_flush_longest_first():
+    """When several channels are due at once, longest pile wins so
+    the worst backlog gets drained first."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    for _ in range(3):
+        r.add_to_digest("a", "tool_pre", "tool_edit", "Editing x.")
+    for _ in range(5):
+        r.add_to_digest("b", "tool_pre", "tool_edit", "Editing y.")
+    # Force both idle.
+    old = time.time() - multi_agent.CHANNEL_IDLE_FLUSH_S - 0.5
+    r._sessions["a"].last_event = old
+    r._sessions["b"].last_event = old
+    ready = r.sessions_ready_to_flush()
+    assert ready == ["b", "a"]
 
 
 def test_pinned_session_always_speaks_others_drop():
@@ -150,20 +178,22 @@ def test_digest_collection_drains_pending():
 
 def test_agent_voices_override_on_speak_decision():
     """When agent_voices maps a session's repo to a voice id, a speak
-    decision returns it as voice_override. b is the focus (most
-    recently active) so its event speaks; we expect the override."""
+    decision returns it as voice_override. Pinned mode is the
+    canonical "this one speaks" path now that multi-channel always
+    defers routine events."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
+    r.pin("a")
 
     voices = {"api": "voice_id_api", "web": "voice_id_web"}
-    db = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", agent_voices=voices)
-    assert db.action == "speak"
-    assert db.voice_override == "voice_id_web"
+    da = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a", agent_voices=voices)
+    assert da.action == "speak"
+    assert da.voice_override == "voice_id_api"
 
     # Without the map: None.
-    db_no_map = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b")
-    assert db_no_map.voice_override is None
+    da_no_map = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a")
+    assert da_no_map.voice_override is None
 
 
 def test_agent_voices_override_on_pierce_too():
@@ -331,13 +361,15 @@ def test_list_active_for_menu():
     assert names["web"]["pinned"] is False
 
 
-def test_swarm_single_voice_mode_prefixes_focus_agent():
-    """auto_voices off (the "One voice" mode): the focused agent's own
-    narration gets an "Agent <name>: " prefix, since the listener can't
-    tell agents apart by sound. With auto_voices on, no focus prefix."""
+def test_pinned_single_voice_mode_prefixes_pinned_agent():
+    """auto_voices off (the "One voice" mode): the pinned agent's own
+    narration gets an "Agent <name>: " prefix when another channel
+    is active in the background, since the listener can't tell agents
+    apart by sound. With auto_voices on, no prefix."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
-    r.note_event("b", cwd="/x/web")  # most recent → focus
+    r.note_event("b", cwd="/x/web")
+    r.pin("b")
     d = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
     assert d.action == "speak"
     assert d.label_prefix.startswith("Agent web")
@@ -359,7 +391,8 @@ def test_single_voice_mode_skips_prefix_when_manual_voice_set():
     needed even in single-voice mode."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
-    r.note_event("b", cwd="/x/web")  # focus
+    r.note_event("b", cwd="/x/web")
+    r.pin("b")
     d = r.classify(
         kind="tool_pre", tag="tool_bash_grep", session_id="b",
         agent_voices={"web": "voice_xyz"}, auto_voices=False,
@@ -370,18 +403,19 @@ def test_single_voice_mode_skips_prefix_when_manual_voice_set():
 
 
 def test_single_voice_prefix_only_on_speaker_change():
-    """One-voice mode: the agent name is spoken only when the speaker
-    changes — not on every consecutive line from the agent you're
-    actively driving."""
+    """One-voice mode: the agent name announces once on speaker change,
+    then stays silent for consecutive lines from that agent. Tested
+    against the pinned + cross-pierce path since live speakers in
+    multi-channel mode are pierces only now."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
-    r.note_event("b", cwd="/x/web")  # b is focus (most recent)
+    r.note_event("b", cwd="/x/web")
+    r.pin("b")
+    # b speaks first with the prefix because it's the first speaker.
     d1 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
-    assert d1.label_prefix.startswith("Agent web")  # first line → announce
+    assert d1.label_prefix.startswith("Agent web")
     d2 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
     assert d2.label_prefix == ""  # same speaker → silent
-    r.note_event("a")  # focus shifts
-    d3 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a", auto_voices=False)
-    assert d3.label_prefix.startswith("Agent api")  # speaker changed → announce
-    d4 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a", auto_voices=False)
-    assert d4.label_prefix == ""  # same speaker again → silent
+    # a pierces with a failure — speaker change announces.
+    d3 = r.classify(kind="tool_post", tag="tool_post_failure", session_id="a", auto_voices=False)
+    assert "api" in d3.label_prefix
