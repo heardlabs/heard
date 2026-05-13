@@ -218,20 +218,9 @@ class Daemon:
 
         No-op when nothing's accumulated."""
 
-        def _is_batching() -> bool:
-            # Three ways to be in a swarm-like state: multiple top-level
-            # sessions active, one session with parallel subagents
-            # fanning out, or any session firing events fast enough to
-            # look like parallel agents. The digest timer reacts to any.
-            return (
-                self.router.active_count() >= 2
-                or self.router.peak_subagent_count() >= 2
-                or self.router.any_high_event_rate()
-            )
-
         def _tick() -> None:
             while True:
-                in_swarm = _is_batching()
+                in_swarm = self.router.is_batching()
                 if in_swarm:
                     interval = float(
                         self.cfg.get("multi_agent_swarm_digest_interval_s") or 5
@@ -249,7 +238,7 @@ class Daemon:
                     continue
                 drained = self.router.collect_digest()
                 summary = self.router.format_digest(
-                    drained, swarm_active=_is_batching()
+                    drained, swarm_active=self.router.is_batching()
                 )
                 if not summary:
                     continue
@@ -999,14 +988,9 @@ class Daemon:
         cfg = config.load(cwd=cwd)
         persona = self._persona_for(cfg)
         session = self.sessions.touch(session_id, cwd=cwd)
-        # Note this event so the router knows the session is active.
+        # Note this event so the router knows the session is active
+        # and the rate window updates.
         self.router.note_event(session_id, cwd or "")
-        # An Agent tool kicking off means a subagent is starting. Track
-        # it so the router can detect parallel fan-out within ONE CC
-        # session (those subagents all share the parent session_id at
-        # the hook layer, so naive session counting misses them).
-        if kind == "tool_pre" and tag == "tool_agent":
-            self.router.note_subagent_start(session_id)
 
         if kind == "tool_pre":
             density = self.sessions.tool_density(session_id)

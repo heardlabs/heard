@@ -1,28 +1,28 @@
 """Multi-agent routing.
 
-When more than one agent session fires events into the daemon
-concurrently — say three Claude Code instances running in three
-Ghostty tabs — naive per-event narration becomes incoherent: the
-listener hears half-sentences from each agent, bouncing.
+One rule: speech is serial — one utterance at a time, ~1 s minimum —
+so when events arrive faster than we can physically speak them, we
+batch. That single signal handles every "N agents talking at once"
+scenario: two CC instances in two terminals, one CC fanning out via
+the Agent tool, or a single agent on a bursty stretch of tool calls.
 
-This module classifies each event into one of three actions:
+Events are classified into three actions:
 
   speak           — go through the queue normally
-  drop            — silent (routine narration from a non-focus agent)
-  defer_to_digest — batch for the digest timer, which combines events
-                    from all active agents into a single spoken line
-                    per window
+  drop            — silent (only used in pinned mode)
+  defer_to_digest — batch into the per-session pile, drained by the
+                    daemon's digest timer
 
-Three modes, picked automatically:
+Three modes:
 
-  SOLO    — only one session active in the last SESSION_ACTIVE_S.
-            Everything plays. Today's behaviour.
-  SWARM   — 2+ active sessions. Every non-pierce event batches into
-            the digest pile; the daemon drains it on a fast cadence
-            (a few seconds) and produces one combined line per window
-            so two agents can't speak over each other. Failures and
-            wait-state questions still pierce immediately with an
-            "Agent <name>:" prefix so urgent events cut through.
+  SOLO    — under the rate threshold. Everything plays live.
+  SWARM   — over the rate threshold. Routine tool events batch into
+            the digest pile; finals + intermediates speak with the
+            speaker-change label so the agent's actual prose isn't
+            lost; failures + questions always pierce with an
+            "Agent <name>:" prefix. The daemon's digest timer drains
+            the pile every few seconds with per-session labels
+            preserved.
   PINNED  — user explicitly picked one session to follow. Only that
             session's events narrate; others drop, except again
             failures/questions pierce with prefix.
@@ -81,24 +81,16 @@ SESSION_ACTIVE_S = 180.0
 # user pin a session that just went idle for a moment.
 SESSION_VISIBLE_S = 600.0
 
-# Recent Agent-tool invocations are remembered for this long when
-# counting parallel subagents within one CC session. The hook fires
-# on PreToolUse(Agent) but the matching PostToolUse for a successful
-# Agent call is silent (templates.post_tool_event returns None on
-# success), so we can't decrement on completion — we just expire
-# entries after this window. 300 s is long enough to span a typical
-# multi-minute subagent run but short enough that "did three quick
-# Agents an hour ago" doesn't keep us in batch mode forever.
-SUBAGENT_TRACK_WINDOW_S = 300.0
-
-# Per-session event-rate detection. A single sequential agent rarely
-# fires more than ~1 event per second during active tool use;
-# sustained bursts well above that point at parallel agents under one
-# CC session_id (e.g. a fan-out we can't see from the Agent-tool
-# signal alone). When the window is busy, we treat that session as
-# swarm-equivalent. The threshold is intentionally a bit forgiving
-# — false positives just mean a brief burst gets batched, which is
-# fine; false negatives leave the listener hearing N agents at once.
+# Rate-based batching. Speech is fundamentally serial — one utterance
+# at a time, ~1 s minimum — so when events arrive faster than we can
+# physically speak them, the only sane response is to batch. That
+# signal is also what makes multi-agent narration coherent: whether
+# it's two CC instances in two terminals or one CC session fanning
+# out via the Agent tool, the symptom is the same (events firing
+# faster than ~1/s). One rule covers both — count events in a short
+# rolling window, batch when over threshold. Tune is per-installation
+# via config; defaults are 6 events in 3 s, which a sequential agent
+# won't sustain but parallel narrators will trip immediately.
 EVENT_RATE_WINDOW_S = 3.0
 EVENT_RATE_THRESHOLD = 6
 
@@ -129,16 +121,6 @@ class SessionInfo:
     # events on a fast machine) so "most recent" is deterministic.
     event_seq: int = 0
     pending_digest: list[dict[str, Any]] = field(default_factory=list)
-    # Timestamps of recent Agent-tool invocations for this session.
-    # Used to detect parallel subagent fan-out within one CC session
-    # (the hook payloads from subagents all carry the parent's
-    # session_id, so we'd otherwise see only one busy agent).
-    subagent_starts: list[float] = field(default_factory=list)
-    # Rolling-window timestamps of every event from this session.
-    # Lets us catch fan-out we couldn't see from the Agent-tool
-    # signal alone — when a single session_id fires events faster
-    # than a sequential agent ever would, it's parallel narration.
-    recent_event_times: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -230,6 +212,12 @@ class MultiAgentRouter:
         # the speaker *changes* — narrating ten lines in a row from the
         # agent you're driving shouldn't read its name ten times.
         self._last_narrated_session: str | None = None
+        # Rolling window of every event timestamp across all sessions.
+        # When this exceeds EVENT_RATE_THRESHOLD inside EVENT_RATE_WINDOW_S
+        # we're producing narration faster than we can physically speak
+        # — batch the noise. One signal covers every "N agents are
+        # talking at once" scenario.
+        self._event_times: list[float] = []
 
     # --- session tracking --------------------------------------------------
 
@@ -255,11 +243,14 @@ class MultiAgentRouter:
             now = time.time()
             info.last_event = now
             info.event_seq = self._event_counter
+            # Bump the global rate window. Inter-session by design:
+            # two sessions each at moderate rate will combine here
+            # and trip the threshold together, which is exactly what
+            # we want — the listener can only consume one voice
+            # stream, no matter where the events come from.
             rate_cutoff = now - EVENT_RATE_WINDOW_S
-            info.recent_event_times = [
-                t for t in info.recent_event_times if t >= rate_cutoff
-            ]
-            info.recent_event_times.append(now)
+            self._event_times = [t for t in self._event_times if t >= rate_cutoff]
+            self._event_times.append(now)
 
     def _active_locked(self, now: float) -> list[SessionInfo]:
         cutoff = now - SESSION_ACTIVE_S
@@ -269,75 +260,21 @@ class MultiAgentRouter:
         with self._lock:
             if self._pinned and self._pinned in self._sessions:
                 return Mode.PINNED
-            return Mode.SWARM if len(self._active_locked(time.time())) >= 2 else Mode.SOLO
+            return Mode.SWARM if self._is_batching_locked() else Mode.SOLO
 
-    def active_count(self) -> int:
-        """How many sessions have fired an event within
-        ``SESSION_ACTIVE_S``. Used by the daemon to pick a fast
-        digest cadence while a swarm is in flight and a slow one
-        when things go quiet."""
-        with self._lock:
-            return len(self._active_locked(time.time()))
-
-    def note_subagent_start(self, session_id: str) -> None:
-        """Record that this session just kicked off an Agent-tool call.
-        Called by the daemon when a ``tool_agent`` pre-event arrives.
-        The session must already exist (note_event runs first)."""
-        with self._lock:
-            info = self._sessions.get(session_id)
-            if info is None:
-                return
-            cutoff = time.time() - SUBAGENT_TRACK_WINDOW_S
-            info.subagent_starts = [t for t in info.subagent_starts if t >= cutoff]
-            info.subagent_starts.append(time.time())
-
-    def _subagent_count_locked(self, session_id: str) -> int:
-        info = self._sessions.get(session_id)
-        if info is None:
-            return 0
-        cutoff = time.time() - SUBAGENT_TRACK_WINDOW_S
-        info.subagent_starts = [t for t in info.subagent_starts if t >= cutoff]
-        return len(info.subagent_starts)
-
-    def subagent_count(self, session_id: str) -> int:
-        with self._lock:
-            return self._subagent_count_locked(session_id)
-
-    def peak_subagent_count(self) -> int:
-        """Max parallel subagents across all active sessions. The
-        daemon uses this alongside active_count() to decide whether
-        the digest timer should run on its fast cadence."""
-        with self._lock:
-            cutoff = time.time() - SUBAGENT_TRACK_WINDOW_S
-            peak = 0
-            for info in self._sessions.values():
-                info.subagent_starts = [t for t in info.subagent_starts if t >= cutoff]
-                if len(info.subagent_starts) > peak:
-                    peak = len(info.subagent_starts)
-            return peak
-
-    def _high_event_rate_locked(self, session_id: str) -> bool:
-        """True when this session has fired more than
-        ``EVENT_RATE_THRESHOLD`` events in the last
-        ``EVENT_RATE_WINDOW_S``. A sequential agent rarely sustains
-        that rate; bursts past it are almost always parallel agents
-        under one session_id."""
-        info = self._sessions.get(session_id)
-        if info is None:
-            return False
+    def _is_batching_locked(self) -> bool:
         cutoff = time.time() - EVENT_RATE_WINDOW_S
-        info.recent_event_times = [t for t in info.recent_event_times if t >= cutoff]
-        return len(info.recent_event_times) >= EVENT_RATE_THRESHOLD
+        self._event_times = [t for t in self._event_times if t >= cutoff]
+        return len(self._event_times) >= EVENT_RATE_THRESHOLD
 
-    def any_high_event_rate(self) -> bool:
-        """True when ANY active session is firing fast enough to look
-        like parallel agents. The daemon checks this to flip the
-        digest cadence to its fast tick."""
+    def is_batching(self) -> bool:
+        """True when events are arriving faster than we can physically
+        speak them. The router defers routine events to the digest and
+        the daemon picks a fast digest cadence — both keyed off this
+        one signal. Inter-session: counts across all sessions, since
+        the listener is the bottleneck regardless of source."""
         with self._lock:
-            for sid in list(self._sessions.keys()):
-                if self._high_event_rate_locked(sid):
-                    return True
-            return False
+            return self._is_batching_locked()
 
     # --- routing -----------------------------------------------------------
 
@@ -377,23 +314,8 @@ class MultiAgentRouter:
                     return self._speaking_locked(session_id, self._pierced(session_id, voice))
                 return RoutingDecision(action="drop")
 
-            active = self._active_locked(now)
-            # "In a swarm-like environment" — any of:
-            #   - multiple top-level sessions active (two CC instances
-            #     in two terminals)
-            #   - this session has parallel subagents in flight (one
-            #     CC session fanning out via the Agent tool — shares
-            #     one session_id at the hook layer)
-            #   - this session is firing events faster than a
-            #     sequential agent ever would (catches parallel
-            #     fan-out we couldn't see from the Agent signal alone)
-            in_swarm = (
-                len(active) >= 2
-                or self._subagent_count_locked(session_id) >= 2
-                or self._high_event_rate_locked(session_id)
-            )
-            # Solo: not in a swarm-like state, today's behaviour, everything plays.
-            if not in_swarm:
+            # Under-rate: just speak it live, the usual UX.
+            if not self._is_batching_locked():
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=True
                 )
@@ -401,24 +323,15 @@ class MultiAgentRouter:
                     session_id, RoutingDecision(action="speak", voice_override=voice)
                 )
 
-            # Swarm: >=2 active. The old "most recently active speaks"
-            # heuristic flipped focus on every event from two busy
-            # agents, so the listener heard them stepping on each
-            # other. Split by kind instead:
-            #
-            #   - Pierces (failures, questions) cut through with an
-            #     explicit "Agent <name>:" label — urgent events
-            #     should always announce who, even if the same agent
-            #     was the last speaker.
-            #   - Finals + intermediates SPEAK with the speaker-change
-            #     label (silent prefix when consecutive lines come
-            #     from the same agent in one-voice mode). The agent's
-            #     actual prose isn't reduced to a tag count, but the
-            #     listener doesn't hear the name on every line either.
-            #   - Routine tool events batch into the digest pile; the
-            #     daemon's fast digest timer (cadence chosen by
-            #     active_count) drains them as one combined count line
-            #     per window. This is where the noise lives.
+            # Over-rate: the listener can't keep up. Three lanes:
+            #   - Pierces (failures, questions) always cut through
+            #     with an "Agent <name>:" label.
+            #   - Finals + intermediates speak with the speaker-change
+            #     label so prose content survives but consecutive lines
+            #     from one agent don't redundantly announce its name.
+            #   - Everything else batches into the digest pile, which
+            #     the daemon drains every few seconds with per-session
+            #     labels preserved.
             if tag in _PIERCE_TAGS:
                 voice = self._voice_for_locked(
                     session_id, agent_voices, auto_voices, is_focus=False
@@ -455,16 +368,15 @@ class MultiAgentRouter:
         auto_voices: bool,
         now: float,
     ) -> str:
-        """"Agent <name>: " prefix for the focused agent's narration when
-        there's no other way to tell agents apart by sound — i.e. the
-        single-voice multi-agent mode (auto_voices off, no manual voice
-        for this repo). Empty when:
+        """"Agent <name>: " prefix for narration when there's no other
+        way to tell agents apart by sound — i.e. the single-voice mode
+        (auto_voices off, no manual voice for this repo). Empty when:
           - only one active agent (no ambiguity),
           - this agent has a distinct voice (auto-pool or manual map),
-          - this agent already spoke last (don't re-announce its name on
-            every consecutive line — only on a speaker change).
-        Must be called with ``self._lock`` held, *before* the speaker is
-        recorded via ``_speaking_locked``."""
+          - this agent already spoke last (don't re-announce its name
+            on every consecutive line — only on a speaker change).
+        Must be called with ``self._lock`` held, *before* the speaker
+        is recorded via ``_speaking_locked``."""
         if len(self._active_locked(now)) < 2:
             return ""
         if auto_voices:

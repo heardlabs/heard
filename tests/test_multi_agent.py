@@ -1,12 +1,15 @@
 """Multi-agent router tests.
 
-Three scenarios drive the design:
-  - Solo: one CC instance, today's UX, everything plays.
-  - Swarm: 2+ instances active concurrently. Every non-pierce event
-    batches into the digest pile; the daemon's adaptive digest timer
-    drains it as one combined line per window. Failures/questions
-    pierce with an agent label so urgent events still cut through.
-  - Pinned: user explicitly chose one to follow. Only that session
+One rule drives the design now: speech is serial, so when events fire
+faster than we can speak them we batch. Inter-session by construction
+— the rolling event window counts across all sessions.
+
+Three modes:
+  - Solo / under-rate: everything plays live.
+  - Batching (Mode.SWARM): rate-trip. Routine tool events defer to the
+    digest pile; finals/intermediates speak with the speaker-change
+    label; failures/questions pierce with an agent label.
+  - Pinned: user explicitly chose one to follow; only that session
     plays unconditionally; others pierce on critical only.
 """
 
@@ -21,6 +24,17 @@ def _new_router() -> multi_agent.MultiAgentRouter:
     return multi_agent.MultiAgentRouter()
 
 
+def _trip_batching(r: multi_agent.MultiAgentRouter, sessions: tuple[str, ...] = ("a", "b")) -> None:
+    """Push the router past the rate threshold by firing alternating
+    note_events across the given sessions. Lets a test set up a
+    batching scenario without depending on real-time waits."""
+    # +1 ensures the rolling-window count strictly exceeds the threshold.
+    total = multi_agent.EVENT_RATE_THRESHOLD + 1
+    for i in range(total):
+        r.note_event(sessions[i % len(sessions)])
+    assert r.is_batching() is True
+
+
 def test_solo_mode_speaks_everything():
     r = _new_router()
     r.note_event("only-session", cwd="/Users/x/projects/api")
@@ -32,29 +46,27 @@ def test_solo_mode_speaks_everything():
     assert r.mode() == multi_agent.Mode.SOLO
 
 
-def test_swarm_defers_all_non_pierce_events():
-    """Two active sessions: every routine event defers to the digest
-    regardless of who fired most recently. The old "most-recently-
-    active speaks" behaviour caused two busy agents to trade speakers
-    on every event and step on each other."""
+def test_batching_defers_routine_events():
+    """Past the rate threshold, every routine tool event defers to the
+    digest — regardless of which session fired it. Inter-session: the
+    combined rate is what matters, not any one session's tempo."""
     r = _new_router()
     r.note_event("a", cwd="/Users/x/projects/api")
     r.note_event("b", cwd="/Users/x/projects/web")
+    _trip_batching(r, ("a", "b"))
 
     assert r.mode() == multi_agent.Mode.SWARM
-    a_decision = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a")
-    b_decision = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b")
-    assert a_decision.action == "defer_to_digest"
-    assert b_decision.action == "defer_to_digest"
+    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "defer_to_digest"
+    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "defer_to_digest"
 
 
-def test_swarm_critical_pierces_with_label():
-    """Failures + questions from any session in swarm still narrate,
-    prefixed with the agent label so urgent events cut through the
-    batched digest."""
+def test_batching_pierces_critical_with_label():
+    """When batching, failures + questions cut through with an agent
+    label so urgent events aren't lost in the digest."""
     r = _new_router()
     r.note_event("a", cwd="/Users/x/projects/api")
     r.note_event("b", cwd="/Users/x/projects/web")
+    _trip_batching(r, ("a", "b"))
 
     fail_a = r.classify(kind="tool_post", tag="tool_post_failure", session_id="a")
     assert fail_a.action == "speak"
@@ -65,19 +77,18 @@ def test_swarm_critical_pierces_with_label():
     assert "api" in q_a.label_prefix
 
 
-def test_swarm_does_not_flip_focus_on_event_burst():
-    """Regression guard: a tight burst of alternating events from two
-    agents used to flip the live speaker on every event, which sounded
-    like two voices on top of each other. Now both stay batched."""
+def test_batching_inter_session_combines_rates():
+    """Two sessions each below the threshold on their own can combine
+    over the threshold — and batching should trip together. This is
+    the multi-CC-terminal case."""
     r = _new_router()
-    r.note_event("a")
-    time.sleep(0.01)
-    r.note_event("b")
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "defer_to_digest"
-    assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "defer_to_digest"
-
-    time.sleep(0.01)
-    r.note_event("a")
+    # Half the threshold from each session — neither alone trips.
+    half = multi_agent.EVENT_RATE_THRESHOLD // 2 + 1
+    for _ in range(half):
+        r.note_event("a")
+    for _ in range(half):
+        r.note_event("b")
+    assert r.is_batching() is True
     assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "defer_to_digest"
     assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b").action == "defer_to_digest"
 
@@ -109,8 +120,7 @@ def test_pinned_critical_still_pierces_from_others():
 
 def test_unpin_returns_to_auto_mode():
     r = _new_router()
-    r.note_event("a")
-    r.note_event("b")
+    _trip_batching(r)
     r.pin("a")
     assert r.mode() == multi_agent.Mode.PINNED
     r.unpin()
@@ -123,15 +133,14 @@ def test_pin_unknown_session_returns_false():
     assert r.pinned_session_id() is None
 
 
-def test_solo_after_inactive_threshold():
-    """If only one session has been active in the SESSION_ACTIVE_S
-    window, mode is solo even with stale entries lingering."""
+def test_solo_when_under_rate():
+    """Under the rate threshold, mode is solo and routine events speak
+    live — even with multiple sessions registered."""
     r = _new_router()
     r.note_event("a")
-    # Manually backdate b past the active threshold.
     r.note_event("b")
-    r._sessions["b"].last_event = time.time() - multi_agent.SESSION_ACTIVE_S - 5
 
+    assert r.is_batching() is False
     assert r.mode() == multi_agent.Mode.SOLO
     assert r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="a").action == "speak"
 
@@ -178,9 +187,10 @@ def test_agent_voices_override_on_pierce_too():
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
+    _trip_batching(r, ("a", "b"))
     voices = {"api": "voice_id_api"}
 
-    # a is non-focus; failure should pierce with both label and voice.
+    # Failure should pierce with both label and voice.
     da_fail = r.classify(
         kind="tool_post", tag="tool_post_failure",
         session_id="a", agent_voices=voices,
@@ -214,22 +224,20 @@ def test_format_digest_returns_none_when_empty():
     assert r.format_digest() is None
 
 
-def test_auto_voices_pick_distinct_for_non_focus_in_swarm():
-    """auto_voices=True: non-focus sessions in swarm get hash-picked
-    voices from the pool. Same repo_name → same voice across runs."""
+def test_auto_voices_pick_distinct_for_non_focus_when_batching():
+    """auto_voices=True under batching: routine tool events defer;
+    pierces speak with a hash-picked voice from the pool."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
-    # b is focus.
+    _trip_batching(r, ("a", "b"))
 
     da = r.classify(
         kind="tool_pre", tag="tool_bash_grep", session_id="a",
         auto_voices=True,
     )
-    # Non-focus → defer (not pierce), no voice override on a defer.
     assert da.action == "defer_to_digest"
 
-    # But on a pierce (failure), non-focus gets auto-picked voice.
     da_fail = r.classify(
         kind="tool_post", tag="tool_post_failure", session_id="a",
         auto_voices=True,
@@ -247,11 +255,12 @@ def test_auto_voices_pick_distinct_for_non_focus_in_swarm():
 
 
 def test_auto_voices_off_keeps_persona_voice():
-    """auto_voices=False: non-focus sessions get None voice_override
-    (caller falls through to persona / cfg)."""
+    """auto_voices=False during batching: pierces speak with None
+    voice_override (caller falls through to persona / cfg)."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
+    _trip_batching(r, ("a", "b"))
 
     da_fail = r.classify(
         kind="tool_post", tag="tool_post_failure", session_id="a",
@@ -274,13 +283,16 @@ def test_auto_voices_does_not_override_focus_or_solo():
     )
     assert d.voice_override is None  # solo focus → persona voice
 
-    # Add b → swarm. a is now non-focus, b is focus.
+    # Even when batching with two sessions, intermediates from the
+    # current speaker keep the persona voice (auto-pick is for non-
+    # focus / pierces only).
     r.note_event("b", cwd="/x/web")
+    _trip_batching(r, ("a", "b"))
     db = r.classify(
-        kind="tool_pre", tag="tool_bash_grep", session_id="b",
+        kind="intermediate", tag="intermediate_short", session_id="b",
         auto_voices=True,
     )
-    assert db.voice_override is None  # focus → persona voice still
+    assert db.voice_override is None
 
 
 def test_manual_map_beats_auto_voice():
@@ -289,6 +301,7 @@ def test_manual_map_beats_auto_voice():
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
+    _trip_batching(r, ("a", "b"))
 
     fail_a = r.classify(
         kind="tool_post", tag="tool_post_failure", session_id="a",
@@ -336,14 +349,15 @@ def test_list_active_for_menu():
     assert names["web"]["pinned"] is False
 
 
-def test_swarm_single_voice_mode_prefixes_focus_agent():
-    """auto_voices off (the "One voice" mode): the focused agent's own
-    narration gets an "Agent <name>: " prefix, since the listener can't
-    tell agents apart by sound. With auto_voices on, no focus prefix.
-    Uses intermediate prose since tool events batch in swarm now."""
+def test_single_voice_mode_prefixes_focus_agent_when_batching():
+    """auto_voices off (the "One voice" mode): under batching, the
+    focused agent's own narration gets an "Agent <name>: " prefix
+    since the listener can't tell agents apart by sound. With
+    auto_voices on, no focus prefix."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
+    _trip_batching(r, ("a", "b"))
     d = r.classify(kind="intermediate", tag="intermediate_short", session_id="b", auto_voices=False)
     assert d.action == "speak"
     assert d.label_prefix.startswith("Agent web")
@@ -377,13 +391,13 @@ def test_single_voice_mode_skips_prefix_when_manual_voice_set():
 
 
 def test_single_voice_prefix_only_on_speaker_change():
-    """One-voice mode: the agent name is spoken only when the speaker
-    changes — not on every consecutive line from the agent you're
-    actively driving. Tested on intermediates since tool events now
-    batch in swarm."""
+    """One-voice mode under batching: the agent name is spoken only
+    when the speaker changes, not on every consecutive line from the
+    agent you're actively driving."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
+    _trip_batching(r, ("a", "b"))
     d1 = r.classify(kind="intermediate", tag="intermediate_short", session_id="b", auto_voices=False)
     assert d1.label_prefix.startswith("Agent web")  # first line → announce
     d2 = r.classify(kind="intermediate", tag="intermediate_short", session_id="b", auto_voices=False)
@@ -395,105 +409,53 @@ def test_single_voice_prefix_only_on_speaker_change():
     assert d4.label_prefix == ""  # same speaker again → silent
 
 
-def test_parallel_subagents_in_one_session_trigger_swarm():
-    """One CC session that fans out via the Agent tool sees all
-    subagents share its session_id, so naive session counting would
-    miss the concurrency. Tracking note_subagent_start brings them
-    into the swarm path even though only one top-level session is
-    active."""
+def test_high_event_rate_triggers_batching():
+    """A single session that's firing fast enough to overrun the
+    speech channel trips batching even with no other agents in play.
+    Catches the case of one CC session fanning out via the Agent
+    tool — those subagents share the parent session_id at the hook
+    layer, so we can only see them via the rate."""
     r = _new_router()
-    r.note_event("solo", cwd="/x/api")
-    # Single session, no subagents → solo, speak.
-    d = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="solo")
-    assert d.action == "speak"
-
-    # Same session fans out two Agent invocations → swarm-equivalent.
-    r.note_subagent_start("solo")
-    r.note_subagent_start("solo")
-    assert r.subagent_count("solo") == 2
-
-    d2 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="solo")
-    assert d2.action == "defer_to_digest"
-
-    # Finals from a session in subagent-swarm still speak with label.
-    d3 = r.classify(kind="final", tag="final_short", session_id="solo")
-    assert d3.action == "speak"
-
-
-def test_subagent_starts_age_out():
-    """Subagents that started a long time ago shouldn't keep a session
-    in swarm mode forever — entries expire from the rolling window."""
-    r = _new_router()
-    r.note_event("a")
-    r.note_subagent_start("a")
-    r.note_subagent_start("a")
-    # Backdate both starts past the tracking window.
-    expired = time.time() - multi_agent.SUBAGENT_TRACK_WINDOW_S - 10
-    r._sessions["a"].subagent_starts = [expired, expired]
-    assert r.subagent_count("a") == 0
-
-
-def test_high_event_rate_triggers_swarm_in_one_session():
-    """A single session that's firing faster than a sequential agent
-    plausibly could — the rate-based fallback signal for parallel
-    fan-out we can't see from explicit Agent-tool events."""
-    r = _new_router()
-    # Below threshold → solo.
+    # Below threshold → speak live.
     for _ in range(multi_agent.EVENT_RATE_THRESHOLD - 1):
         r.note_event("solo", cwd="/x/api")
     d = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="solo")
     assert d.action == "speak"
 
-    # Push the rolling window past threshold.
+    # Push past threshold → batch.
     for _ in range(3):
         r.note_event("solo", cwd="/x/api")
-    assert r.any_high_event_rate() is True
+    assert r.is_batching() is True
     d2 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="solo")
     assert d2.action == "defer_to_digest"
 
 
-def test_peak_subagent_count_across_sessions():
-    """peak_subagent_count returns the max parallel subagents on any
-    single session. Daemon uses it to flip digest cadence."""
+def test_event_rate_window_expires():
+    """The rolling window drops old timestamps so a long-ago burst
+    doesn't keep the router in batching mode."""
     r = _new_router()
-    r.note_event("a")
-    r.note_event("b")
-    r.note_subagent_start("a")
-    r.note_subagent_start("b")
-    r.note_subagent_start("b")
-    assert r.peak_subagent_count() == 2
+    _trip_batching(r)
+    assert r.is_batching() is True
+    expired = time.time() - multi_agent.EVENT_RATE_WINDOW_S - 1
+    r._event_times = [expired for _ in r._event_times]
+    assert r.is_batching() is False
 
 
-def test_active_count_tracks_recent_sessions():
-    """The daemon uses this to flip its digest cadence between fast
-    (swarm) and slow (solo)."""
-    r = _new_router()
-    assert r.active_count() == 0
-    r.note_event("a")
-    assert r.active_count() == 1
-    r.note_event("b")
-    assert r.active_count() == 2
-
-    # Backdate b past the active window — drops out of count.
-    r._sessions["b"].last_event = time.time() - multi_agent.SESSION_ACTIVE_S - 5
-    assert r.active_count() == 1
-
-
-def test_swarm_finals_speak_with_agent_label():
+def test_batching_finals_speak_with_agent_label():
     """Finals carry the agent's actual answer — flattening them into
     the digest's tag-count summary would lose the content. They speak
-    instead, with a label so the listener can tell which agent
-    finished. The speech queue serializes them so two finals from two
-    agents queue back-to-back without overlapping audio."""
+    instead with the speaker-change label so the listener can tell
+    which agent finished. Tool events still batch."""
     r = _new_router()
     r.note_event("a", cwd="/x/api")
     r.note_event("b", cwd="/x/web")
+    _trip_batching(r, ("a", "b"))
 
-    final_a = r.classify(kind="final", tag="final_short", session_id="a")
+    final_a = r.classify(kind="final", tag="final_short", session_id="a", auto_voices=False)
     assert final_a.action == "speak"
     assert "api" in final_a.label_prefix
 
-    intermediate_b = r.classify(kind="intermediate", tag="intermediate_short", session_id="b")
+    intermediate_b = r.classify(kind="intermediate", tag="intermediate_short", session_id="b", auto_voices=False)
     assert intermediate_b.action == "speak"
     assert "web" in intermediate_b.label_prefix
 
