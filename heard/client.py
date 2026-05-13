@@ -440,6 +440,18 @@ def _session_from_data(data: dict) -> dict:
 # --- Claude Code event handlers ---------------------------------------------
 
 
+def _mark_transcript_prose_spoken(transcript_path: str, sid: str) -> None:
+    """Advance the offset and mark all pending assistant prose as spoken
+    without sending it. Used to suppress narration we know would land
+    too late to be useful."""
+    start = spoken.get_offset(sid)
+    fresh, end = extract_assistant_texts_from(transcript_path, start)
+    if end != start:
+        spoken.set_offset(sid, end)
+    for t in fresh:
+        spoken.mark_spoken(sid, t)
+
+
 def _speak_unspoken_texts(
     transcript_path: str,
     session: dict,
@@ -521,35 +533,17 @@ def handle_cc_pre_tool(data: dict) -> None:
     transcript = data.get("transcript_path")
     tool_name = data.get("tool_name") or ""
 
-    # AskUserQuestion races us. The hook is registered async, so CC shows
-    # the popup immediately while we're still sleeping for the flush; if
-    # the model wrote a long preface, ElevenLabs synth runs 0.3–6 s and
-    # the user has typically answered before audio plays. Stale prose
-    # arriving after the answer is worse than silence — and Stop would
-    # later re-narrate it if left unspoken. So mark pending prose as
-    # spoken without sending it, then forward the question itself via
-    # the tool_question template (Haiku summarises down to one sentence
-    # so synthesis stays short).
+    # AskUserQuestion's popup races our async hook — preface prose
+    # would land after the user answered. Mark it spoken (Stop won't
+    # replay) and narrate the question itself instead.
     if tool_name == "AskUserQuestion":
         if transcript:
             time.sleep(cfg["flush_delay_ms"] / 1000.0)
-            sid = session["id"]
-            start = spoken.get_offset(sid)
-            fresh, end = extract_assistant_texts_from(transcript, start)
-            if end != start:
-                spoken.set_offset(sid, end)
-            for t in fresh:
-                spoken.mark_spoken(sid, t)
+            _mark_transcript_prose_spoken(transcript, session["id"])
         if cfg.get("narrate_tools", True):
             ev = templates.pre_tool_event(tool_name, data.get("tool_input") or {})
             if ev is not None:
-                send_event(
-                    kind="tool_pre",
-                    neutral=ev.text,
-                    tag=ev.tag,
-                    ctx=ev.ctx,
-                    session=session,
-                )
+                send_event(kind="tool_pre", neutral=ev.text, tag=ev.tag, ctx=ev.ctx, session=session)
         return
 
     # First, surface any prose Claude wrote leading up to this tool call.

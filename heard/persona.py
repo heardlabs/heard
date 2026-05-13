@@ -645,11 +645,6 @@ def _build_user_message(
             "the tool has run. Stay in character. No markdown."
         )
     elif event_kind == "tool_pre" and tag == "tool_question":
-        # AskUserQuestion races the popup — we have a few hundred ms
-        # of synth budget before the user starts answering. Summarise
-        # the question to one short spoken sentence so audio lands
-        # while the popup is still on screen, instead of synthing the
-        # full question text verbatim (which can run several seconds).
         lines.append(
             "Summarise the question in ONE short sentence I will speak "
             "aloud. Lead with 'Quick question:'. Stay in character. No "
