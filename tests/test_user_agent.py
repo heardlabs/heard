@@ -15,11 +15,28 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-def _captured_request(stack):
-    """Pull the urllib Request object out of a captured ``urlopen`` call."""
-    assert stack.call_count == 1, f"expected one urlopen call, got {stack.call_count}"
-    args, _kwargs = stack.call_args
-    return args[0]
+def _captured_request(stack, *, host: str = "heard.dev"):
+    """Pull the api.heard.dev urllib Request object out of the captured
+    ``urlopen`` call list. Filters by host rather than asserting an exact
+    call count, because a previously-started daemon worker thread (from
+    a different test) can leak a second urlopen call into our patch
+    context on CI — the assertion we actually care about is the
+    User-Agent on Heard's *own* request, not the absence of leaks."""
+    for call in stack.call_args_list:
+        args, _kwargs = call
+        if not args:
+            continue
+        req = args[0]
+        url = getattr(req, "full_url", None) or (
+            req.get_full_url() if hasattr(req, "get_full_url") else ""
+        )
+        if host in (url or ""):
+            return req
+    raise AssertionError(
+        f"no urlopen call to {host} captured "
+        f"(saw {stack.call_count} call(s): "
+        f"{[getattr(c.args[0], 'full_url', '?') for c in stack.call_args_list if c.args]})"
+    )
 
 
 def test_managed_tts_sends_heard_user_agent():
