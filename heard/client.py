@@ -643,6 +643,37 @@ def handle_cc_post_tool(data: dict) -> None:
     )
 
 
+# Skip ``UserPromptSubmit`` narration for prompts shorter than this.
+# Quick confirmations ("yes", "go", "do it") don't earn a Haiku round-
+# trip + spoken summary — they finish faster than the summary would.
+_PROMPT_INTENT_MIN_CHARS = 20
+
+
+def handle_cc_user_prompt_submit(data: dict) -> None:
+    """User just hit Enter on a prompt — fire a ``prompt_intent`` event
+    so Heard speaks a 6-10 word "looking into X" summary while Claude's
+    first tokens are still being generated. Fills the dead air with
+    relevant context. Disabled via ``narrate_prompt_intent`` config."""
+    cfg = config.load()
+    if not cfg.get("narrate_prompt_intent", True):
+        return
+    prompt = (data.get("prompt") or "").strip()
+    if len(prompt) < _PROMPT_INTENT_MIN_CHARS:
+        # Short confirmation, not worth a thinking-summary.
+        return
+    send_event(
+        kind="prompt_intent",
+        # ``tag`` doubles as the pierce key in heard.multi_agent so the
+        # router speaks this immediately even in SWARM mode (don't
+        # batch a single-shot input-acknowledgement into a project
+        # flush — by the time it drains, the agent's already replied).
+        tag="prompt_intent",
+        neutral=prompt,
+        ctx={"recent_intent": prompt},
+        session=_session_from_data(data),
+    )
+
+
 # --- Codex event handlers ---------------------------------------------------
 
 

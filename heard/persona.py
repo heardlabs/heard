@@ -154,11 +154,22 @@ class Persona:
             # ElevenLabs field to the modal" beats "Editing key_prompt"
             # and is worth the Haiku round trip.
             haiku_eligible = True
+        if event_kind == "prompt_intent":
+            # Thinking-summary needs Haiku — the whole point is to
+            # paraphrase the user's prompt, not echo it verbatim.
+            haiku_eligible = True
 
         if haiku_eligible and _haiku_enabled():
             haiku = _haiku_rewrite(self, event_kind, neutral, tag, ctx_for_haiku, session or {})
             if haiku:
                 return haiku
+
+        # Prompt-intent has no useful template fallback — speaking the
+        # raw prompt verbatim ("Hi Claude, can you look into..." read
+        # aloud) defeats the executive-summary point. Drop quietly if
+        # Haiku couldn't produce a phrase.
+        if event_kind == "prompt_intent":
+            return ""
 
         # Backwards compat: legacy YAML personas could ship a templates
         # dict; new MD personas don't. If a fork ships one, honour it.
@@ -764,6 +775,18 @@ def _build_user_message(
         lines.append(
             "Write ONE sentence describing what just happened. PAST tense — "
             "the tool has run. Stay in character. No markdown."
+        )
+    elif event_kind == "prompt_intent":
+        lines.append(
+            "The user just submitted this prompt to their AI coding "
+            "agent. Distil it into a brief 'looking into X' phrase you "
+            "say aloud while the agent starts thinking. 6-10 words. "
+            "PRESENT tense — work is starting. Stay in character. Do "
+            "NOT echo the prompt verbatim or quote it. Skip code "
+            "identifiers, file paths, log keys; describe the intent in "
+            "plain English. Examples: 'Looking into the Wispr mute, "
+            "Sir.' / 'Sorting out the rewrite budget bug.' / 'On the "
+            "Anthropic key fallback now.'"
         )
     elif event_kind == "tool_pre" and tag == "tool_question":
         lines.append(

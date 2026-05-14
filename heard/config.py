@@ -147,6 +147,18 @@ DEFAULTS: dict[str, Any] = {
     # the daemon respawn on the next agent event. Only "Resume Heard"
     # (menu or hotkey) clears it — there's no auto-timeout.
     "muted": False,
+    # One-shot first-launch greeting. Flips True after the daemon
+    # speaks the welcome line the first time it comes up with a real
+    # TTS backend (i.e. *after* sign-in / key paste — a no-voice user
+    # doesn't hear it). A fresh wipe re-greets.
+    "greeted": False,
+    # "Thinking summary": when the user submits a prompt, Heard
+    # speaks a 6-10 word "looking into X" phrase in the persona's
+    # voice, filling Claude's first-token latency with relevant
+    # context. Short prompts ("yes", "go ahead") are skipped at the
+    # hook layer regardless. Off-by-config disables the feature
+    # entirely.
+    "narrate_prompt_intent": True,
     # Once a day the daemon hits api.github.com to check for a newer
     # stable release and posts a one-time notification per version.
     # Anonymous request, no telemetry. Set False to disable entirely

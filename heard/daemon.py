@@ -148,6 +148,12 @@ class Daemon:
         self._last_error: dict | None = None
         self._hotkey_listener: object | None = None
         self._audio_monitor: audio_monitor.AudioMonitor | None = None
+        # Transient "mic capture in progress" flag, flipped by the
+        # audio monitor callbacks. Combined with the persisted
+        # ``muted`` config flag in _speak / _start_speech: while either
+        # is true, narration is fully suppressed (no synth, no queue).
+        # Not persisted — purely runtime state.
+        self._mic_active: bool = False
         # Speech queue. Bounded so we don't accumulate a wall of stale
         # tool announcements; oldest is dropped when full. Drained by
         # a single worker thread, so utterances play sequentially
@@ -182,6 +188,47 @@ class Daemon:
         self.pending_update: updater.UpdateInfo | None = None
         self._start_update_check()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+        # First-launch greeting — speaks a friendly "I'm on" line the
+        # first time we have a real voice configured. Runs once per
+        # install (gated by cfg["greeted"]); a wiped config re-greets.
+        self._maybe_greet()
+
+    def _maybe_greet(self) -> None:
+        """Speak the one-shot welcome line if we haven't yet AND we
+        have a real TTS backend to speak it through. Persists the
+        ``greeted`` flag immediately so a daemon respawn mid-greeting
+        doesn't double-fire."""
+        if self.cfg.get("greeted"):
+            return
+        if isinstance(self.tts, NullTTS):
+            # No voice configured — silent greeting is no greeting.
+            # Next reload (after sign-in / key paste) will revisit.
+            return
+        # Capitalise the persona name for spoken use: "jarvis" → "Jarvis",
+        # "aria" → "Aria". Falls back to "Heard" if a custom persona
+        # has no name set, which never happens for the bundled four
+        # but defends against forks.
+        who = (self.persona.name or "Heard").strip().capitalize() or "Heard"
+        greeting = (
+            f"Hi, I'm {who}. Just letting you know I'm on. "
+            "If you want, you can switch to other voices in the menu bar."
+        )
+        self.cfg["greeted"] = True
+        try:
+            config.set_value("greeted", True)
+        except Exception:
+            pass
+        _log("greet_spoken", persona=self.persona.name)
+        # Bypass the speech queue's "drop other sessions" logic by
+        # passing coexists=True — a hook event arriving moments later
+        # shouldn't cancel the greeting before it gets to play.
+        self._start_speech(
+            greeting,
+            cfg=self.cfg,
+            persona=self.persona,
+            session_id="__greet__",
+            coexists=True,
+        )
 
     def _start_update_check(self) -> None:
         """Spawn the GitHub-Releases poller. Notification + menu-bar
@@ -358,19 +405,43 @@ class Daemon:
 
     def _start_audio_monitor(self) -> None:
         """Start the mic-capture watcher (CoreAudio polling) so Heard
-        auto-silences when a call / dictation / Wispr starts recording.
-        Mirrors macOS's orange recording dot — same signal.
+        auto-silences whenever any app starts capturing the mic — call,
+        dictation, Wispr Flow, voice memo, Granola, etc. Mirrors
+        macOS's orange recording dot.
 
-        ``auto_resume_on_mic_release`` (default off, opt-in): when the
-        mic releases at the end of the call, replay whatever was cut
-        off. The replay path goes through the queue + persona, same
-        as a long-press."""
+        Behaviour: ``self._mic_active`` flips True on capture-start
+        AND we cancel whatever's mid-speech; ``_speak`` and
+        ``_start_speech`` early-return while the flag is set so new
+        narration also gets suppressed for the duration of the
+        capture. Flag clears on release, so narration resumes
+        naturally for the *next* event without replaying anything
+        from before. (Replaying mid-call to the person on the other
+        end is worse than the silence that gets there.)
+
+        Opt-out: ``auto_silence_on_mic: false`` disables the monitor
+        entirely. The legacy ``auto_resume_on_mic_release`` flag is no
+        longer consulted — auto-resume is now the only behaviour, and
+        users who prefer "stay silent until I say so" should use the
+        Pause Heard toggle instead."""
         if not self.cfg.get("auto_silence_on_mic", True):
             return
-        on_release = None
-        if self.cfg.get("auto_resume_on_mic_release", False):
-            on_release = self._replay_last
-        self._audio_monitor = audio_monitor.start(self._cancel_only, on_release)
+        self._audio_monitor = audio_monitor.start(
+            self._on_mic_active, self._on_mic_released
+        )
+
+    def _on_mic_active(self) -> None:
+        """Mic just started capturing — kill anything mid-stream and
+        flip the suppression flag so subsequent events drop at the
+        front door rather than queue up behind a 5-second call."""
+        self._mic_active = True
+        self._cancel_only()
+        _log("mic_active")
+
+    def _on_mic_released(self) -> None:
+        """Mic released — drop the suppression flag so the next
+        narration event narrates."""
+        self._mic_active = False
+        _log("mic_released")
 
     def _stop_audio_monitor(self) -> None:
         if self._audio_monitor is not None:
@@ -483,7 +554,6 @@ class Daemon:
         old_token = self.cfg.get("heard_token", "")
         old_plan = self.cfg.get("heard_plan", "")
         old_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
-        old_auto_resume = bool(self.cfg.get("auto_resume_on_mic_release", False))
         self.cfg = config.load()
         # Re-evaluate trial expiry after every reload — the user may
         # have set the system clock forward, or the trial may have
@@ -525,15 +595,18 @@ class Daemon:
             self._hotkey_listener = None
             self._start_hotkey()
         new_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
-        new_auto_resume = bool(self.cfg.get("auto_resume_on_mic_release", False))
-        # Either knob change requires a fresh AudioMonitor — the
-        # release callback is captured at construction. Without this,
-        # toggling auto_resume via `heard config set` left the monitor
-        # using the stale callback until the next process restart.
-        if new_auto_silence != old_auto_silence or new_auto_resume != old_auto_resume:
+        # auto_silence_on_mic flipping enables / disables the AudioMonitor.
+        # (The legacy auto_resume_on_mic_release knob no longer matters —
+        # auto-resume is the only behaviour now; see _start_audio_monitor.)
+        if new_auto_silence != old_auto_silence:
             self._stop_audio_monitor()
             if new_auto_silence:
                 self._start_audio_monitor()
+        # Greeting check: if the user just signed in / pasted a key and
+        # we re-picked from NullTTS to a real backend, fire the welcome
+        # line on this reload rather than waiting for the next daemon
+        # restart. (_maybe_greet is idempotent via cfg["greeted"].)
+        self._maybe_greet()
 
     def _voice(self, cfg: dict | None = None, persona: persona_mod.Persona | None = None) -> str:
         cfg = cfg or self.cfg
@@ -564,6 +637,13 @@ class Daemon:
         # suspenders with the start_speech guard.
         if bool(cfg.get("muted")):
             _log("synth_skipped", reason="muted")
+            return
+        # Mic-active suppression (Wispr / Zoom / dictation): the audio
+        # monitor flips this true on capture-start, false on release,
+        # so narration sits out the whole capture rather than just
+        # cancelling the current sentence.
+        if self._mic_active:
+            _log("synth_skipped", reason="mic_active")
             return
         # If we fell back to a BYOK ElevenLabs key after a daily-cap 429
         # and the cap has since reset (new UTC day), return to the
@@ -936,6 +1016,10 @@ class Daemon:
         if bool(self.cfg.get("muted")):
             _log("speech_skipped", reason="muted", session=session_id)
             return
+        # Mic-active suppression — see _speak / _on_mic_active.
+        if self._mic_active:
+            _log("speech_skipped", reason="mic_active", session=session_id)
+            return
         with self._queue_cv:
             # Scheduler-driven project flushes pass ``coexists=True`` so
             # several flushes (e.g. two projects ready in the same tick)
@@ -1092,6 +1176,15 @@ class Daemon:
                 session = self.sessions.get(session_id)
             if verbosity.classify_post(cfg, tag) != "speak":
                 _log("event_drop", kind=kind, tag=tag, reason="verbosity_post")
+                return
+        elif kind == "prompt_intent":
+            # "Thinking summary" — user just submitted a prompt; we
+            # speak a 6-10 word "looking into X" while the agent
+            # starts. No verbosity gating (one event per submission,
+            # not in the burst-of-tools volume profile); the user can
+            # disable the whole feature via narrate_prompt_intent.
+            if not cfg.get("narrate_prompt_intent", True):
+                _log("event_drop", kind=kind, reason="narrate_prompt_intent_off")
                 return
         elif kind in ("intermediate", "final"):
             if verbosity.classify_prose(cfg) != "speak":

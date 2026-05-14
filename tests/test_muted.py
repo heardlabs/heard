@@ -41,6 +41,11 @@ def _make_daemon(tmp_path, monkeypatch, cfg_overrides):
 
     def _load(*a, **kw):
         cfg = real_load(*a, **kw)
+        # Default ``greeted`` to True so the daemon's first-launch
+        # welcome line doesn't queue itself in the speech queue on
+        # construction — every test below is poking at speak / queue
+        # behaviour and the greeting would be confounding state.
+        cfg["greeted"] = True
         cfg.update(cfg_overrides)
         return cfg
 
@@ -149,3 +154,41 @@ def test_hook_short_circuits_when_muted(monkeypatch):
     monkeypatch.setattr(client, "is_muted", lambda: False)
     hook.main()
     assert calls["n"] == 1
+
+
+def test_speak_drops_when_mic_active(tmp_path, monkeypatch):
+    """The mic-monitor flips ``daemon._mic_active`` true while Wispr /
+    Zoom / dictation is capturing; ``_speak`` short-circuits for the
+    duration so a 5-second call doesn't get talked over."""
+    daemon, _ = _make_daemon(
+        tmp_path, monkeypatch, {"muted": False, "elevenlabs_api_key": "sk_x"}
+    )
+    called = {"synth": 0}
+
+    class _Sentinel:
+        AUDIO_EXT = ".mp3"
+        MAX_NATIVE_SPEED = 1.2
+
+        def synth_to_file(self, *a, **kw):
+            called["synth"] += 1
+
+    daemon.tts = _Sentinel()
+    daemon._mic_active = True
+    daemon._speak("during the call", threading.Event())
+    assert called["synth"] == 0
+    # Flag clears → narration resumes.
+    daemon._mic_active = False
+    daemon._speak("after the call", threading.Event())
+    assert called["synth"] == 1
+
+
+def test_start_speech_does_not_queue_when_mic_active(tmp_path, monkeypatch):
+    """No queueing while the mic's hot, so a quick dictation isn't
+    immediately followed by a wall of catch-up narration once the
+    user releases."""
+    daemon, _ = _make_daemon(
+        tmp_path, monkeypatch, {"muted": False, "elevenlabs_api_key": "sk_x"}
+    )
+    daemon._mic_active = True
+    daemon._start_speech("queued during call", session_id="s1")
+    assert daemon._queue == []

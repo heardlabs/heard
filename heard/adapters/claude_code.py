@@ -1,5 +1,5 @@
-"""Claude Code adapter: writes Stop/PreToolUse/PostToolUse hooks
-into ~/.claude/settings.json.
+"""Claude Code adapter: writes Stop/PreToolUse/PostToolUse/UserPromptSubmit
+hooks into ~/.claude/settings.json.
 """
 
 from __future__ import annotations
@@ -9,7 +9,11 @@ from pathlib import Path
 
 SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 HOOK_MARKER = "heard.hook"
-EVENTS = ("Stop", "PreToolUse", "PostToolUse")
+# UserPromptSubmit fires when the user hits Enter on a prompt; Heard
+# uses it to speak a "looking into X" thinking-summary while Claude
+# starts generating. Adapter install() is idempotent, so old installs
+# pick up the new hook on next launch via _refresh_existing_hooks().
+EVENTS = ("Stop", "PreToolUse", "PostToolUse", "UserPromptSubmit")
 
 
 def _hook_command() -> str:

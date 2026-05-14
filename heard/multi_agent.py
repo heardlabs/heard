@@ -89,11 +89,15 @@ SESSION_VISIBLE_S = 600.0
 
 # Tags that always pierce regardless of mode/focus — the "name across
 # the room" signal. Failures and wait-state questions are events the
-# user must hear even from background agents.
+# user must hear even from background agents. ``prompt_intent`` joins
+# the list because batching "the user just told agent X to do Y" into
+# a project flush that fires 2 seconds later is useless — by then the
+# agent has already started replying.
 _PIERCE_TAGS = (
     "tool_post_failure",
     "tool_post_command_failed",
     "tool_question",
+    "prompt_intent",
 )
 
 

@@ -26,6 +26,8 @@ def _cc() -> None:
         client.handle_cc_pre_tool(data)
     elif event == "PostToolUse":
         client.handle_cc_post_tool(data)
+    elif event == "UserPromptSubmit":
+        client.handle_cc_user_prompt_submit(data)
 
 
 def _codex() -> None:
