@@ -35,26 +35,36 @@ history.append (after successful play)
 
 | File | Responsibility |
 |---|---|
-| `heard/daemon.py` | Long-running daemon. Owns the speech queue, hotkey listener, audio monitor, multi-agent router instance, history append, periodic digest timer. |
-| `heard/client.py` | Hook-side helpers: spawn the daemon if needed, send events / status / pin commands over the Unix socket. |
+| `heard/daemon.py` | Long-running daemon. Owns the speech queue, hotkey listener, audio monitor, multi-agent router instance, history append, periodic digest timer. Also reads `config.silenced` on every event so "Pause Heard" (indefinite mute) survives quit + respawn. |
+| `heard/client.py` | Hook-side helpers: spawn the daemon if needed, send events / status / pin commands over the Unix socket. Six `handle_cc_*` / `handle_codex_*` event handlers (CC ↔ Codex pairs are near-duplicates — collapse candidate; the post-tool pair is byte-identical). |
 | `heard/hook.py` | Entry-point invoked by the agent's hook command. Routes to `client.handle_cc_*` / `client.handle_codex_*`. |
-| `heard/adapters/claude_code.py` + `codex.py` | Install / uninstall the hook into `~/.claude/settings.json` and `~/.codex/hooks.json`. PYTHONHOME-wrapped command for the .app bundle case. |
-| `heard/multi_agent.py` | Solo / Swarm / Pinned router. Decides per-event: speak / drop / defer-to-digest. Carries label prefix + voice override. Has `format_digest`, `drain_session_summary`, `pin`/`unpin`, `list_active`. |
+| `heard/wrapper.py` | `heard run <cmd> [args...]` — universal terminal wrapper. Spawns an agent, tees its stdout, and synthesizes events for agents without a native hook surface. |
+| `heard/adapters/claude_code.py` + `codex.py` | Install / uninstall the hook into `~/.claude/settings.json` and `~/.codex/hooks.json`. PYTHONHOME-wrapped command for the .app bundle case. JSON read-modify-write is duplicated between the two — factor candidate. |
+| `heard/multi_agent.py` | Solo / Swarm / Pinned router. Decides per-event: speak / drop / defer-to-digest. Project-keyed channel scheduler (v0.8.0) batches background-agent activity into narrative summaries via Haiku, with template fallback. Carries label prefix + voice override. Has `format_digest`, `drain_session_summary`, `pin`/`unpin`, `list_active`. |
+| `heard/session.py` | In-memory per-session state (id + cwd + timestamps) held by the daemon. Keyed by transcript path. |
 | `heard/profile.py` + `heard/profiles/*.yaml` | Verbosity profiles (quiet / brief / normal / verbose). Five dimensions per profile: `pre_tool`, `post_success`, `prose`, `final_budget`, `burst_threshold`. User dir overrides bundled. |
 | `heard/verbosity.py` | Three-way classifier: `classify_pre` → `speak/drop/digest`. Failures + questions always pierce. Long-running tags (`tool_bash_test` etc.) pierce even at quiet/digest. |
-| `heard/persona.py` | Persona load + Haiku rewrite. `_SHARED_NARRATION_RULES` is the cross-persona framing every Haiku call gets. `_build_user_message` adds tense rules per event_kind. Model: `claude-haiku-4-5-20251001`. |
+| `heard/persona.py` | Persona load + Haiku rewrite dispatcher. `_SHARED_NARRATION_RULES` is the cross-persona framing every Haiku call gets. `_build_user_message` adds tense rules per event_kind. Three rewrite paths live here today: `_byok_haiku_rewrite` (BYOK Anthropic), `_managed_haiku_rewrite` (Heard cloud), `_cli_haiku_rewrite` (`claude -p` fallback). Model: `claude-haiku-4-5-20251001`. Dispatcher should eventually move into `heard/providers.py`. |
+| `heard/providers.py` | Provider abstraction for the narration LLM. Partially-finished extraction — the three rewrite paths in `persona.py` are still inline. |
 | `heard/personas/*.md` | Bundled personas (aria, friday, jarvis, atlas). YAML frontmatter (voice/speed/verbosity/narrate_tools/address) + Markdown body (Haiku system prompt). |
 | `heard/templates.py` | Per-tool narration templates. `_bash_tag_and_text` extracts intent from shell verbs (grep → search, ls → list, etc.). `_first_token` handles `cd && grep` compound commands. |
 | `heard/markdown.py` | Strips MD before TTS. Handles fenced + indented code, blockquotes, tables → comma-separated cells, links, bold/italic/strike. |
 | `heard/spoken.py` | Per-CC-session dedup of already-narrated assistant text. `flock`'d read-modify-write on `<session>.json`. Sibling `.offset` file caches transcript byte offset for incremental reads. |
-| `heard/history.py` | Spoken-history JSONL log. Append-only, checkpoint-based pruning. |
+| `heard/history.py` | Spoken-history JSONL log. Append-only, checkpoint-based pruning. flock pattern duplicated from `spoken.py` — factor candidate. |
 | `heard/tts/elevenlabs.py` + `tts/kokoro.py` + `tts/managed.py` + `tts/null.py` | TTS backends. Selector order in `Daemon._make_tts`: signed-in Heard token (≠expired) → `ManagedTTS` (proxies api.heard.dev); else BYOK `elevenlabs_api_key` → `ElevenLabsTTS`; else if the Kokoro model is *already downloaded* → `KokoroTTS`; else `NullTTS` (no audio + a one-time "add a voice" nudge from `_speak`). Kokoro is **opt-in only** — never auto-downloaded; the user pulls it via Options → Download voice. All real backends expose `synth_to_file(text, voice, speed, lang, path)` + `AUDIO_EXT` + `MAX_NATIVE_SPEED`. |
 | `heard/url_scheme.py` | `heard://` Apple-Event handler (registered from `ui.run`). Only answers `heard://auth?code=…` (or `?token=…`) — the tail of the web Google sign-in handoff: claims the install code for a bearer, writes config, reloads the daemon, brings the onboarding window forward signed-in. `CFBundleURLTypes` lives in `packaging/setup.py`. |
+| `heard/heard_api.py` | Client for `api.heard.dev`. Auth endpoints (install-code → bearer, refresh, signout) + plan/usage status. ManagedTTS and the managed Haiku path read the bearer from here. |
 | `heard/audio_monitor.py` | CoreAudio polling for "any app capturing the mic" → auto-silence. Optional resume callback for `auto_resume_on_mic_release`. |
 | `heard/hotkey.py` + `accessibility.py` | pynput tap-hold listener. Daemon polls Accessibility trust every 5 s and re-inits on the False→True transition. |
-| `heard/ui.py` | rumps menu bar. Persona / Speed / Verbosity submenus, Active agents (multi-agent router state), Options, status header (`On · Persona · Profile`, `● Speaking` when active, `⚠ <kind>` on error). |
+| `heard/ui.py` | rumps menu bar. Persona / Speed / Verbosity submenus, Active agents (multi-agent router state), Options, "Pause Heard" / "Resume Heard" toggle, status header (`On · Persona · Profile`, `Paused` when muted, `● Speaking` when active, `⚠ <kind>` on error). |
+| `heard/settings_widgets.py` | Native NSToolbar widget primitives: theme constants, fonts, `_PillButton`, `_GhostPopUp`, `_GhostSegment`, `_CardView`, `_setting_row`, `_field_row`, `_card`, etc. Extracted from `settings_window.py` in #13 so the controller file is just controllers + delegates. |
+| `heard/settings_window.py` | Settings panel + first-launch onboarding wizard. `SettingsController` (5 tabs: Account, Voice, Keys, Shortcuts, Advanced) + `_OnboardingController` (Welcome → Sign in → Connect → AX). `url_scheme.py` reaches in for `_OnboardingController` and `_self_test_managed_async`. The onboarding wizard could be extracted into its own file next — it shares only `_GoogleButton` / wizard widgets with the settings panel. |
+| `heard/notify.py` | User-visible macOS notifications via `osascript`. `notify(title, body, kind=…)` dedups per `kind` for 60 s — use a stable kind to avoid spam. |
+| `heard/service.py` | macOS LaunchAgent integration. Writes `~/Library/LaunchAgents/dev.heard.daemon.plist` and runs `launchctl load/unload`. Wraps the py2app frozen Python with `PYTHONHOME` in the plist. |
+| `heard/updater.py` | In-app updater. Polls GitHub releases; resolves the running app's version from `Info.plist` as a backstop for the stringly version in `heard/__init__.py`. |
+| `heard/tune.py` | `heard tune` — interactive walk through voice / persona / verbosity for CLI users. |
 | `heard/doctor.py` | End-to-end self-test. Live ElevenLabs synth, Anthropic Haiku ping, accessibility check, hook-python check, LaunchAgent-python check. |
-| `heard/cli.py` | Typer CLI: `install`, `demo`, `tune`, `voices`, `say`, `silence`, `replay`, `history`, `doctor`, `config get/set`, `service install/uninstall`. |
+| `heard/cli.py` | Typer CLI: `install`, `uninstall`, `demo`, `tune`, `voices`, `say`, `silence`, `replay`, `history`, `improve`, `doctor`, `config get/set`, `service install/uninstall`, `signup`, `signout`, `stop`. |
 | `packaging/setup.py` + `build-app.sh` + `app_entry.py` | py2app build. Bundles certifi, charset_normalizer, idna, urllib3, libssl/libcrypto/libffi (the frozen Python's @rpath quirks). `app_entry.py` sets `SSL_CERT_FILE` before any HTTPS-using import. |
 
 ## Hot-patch workflow
