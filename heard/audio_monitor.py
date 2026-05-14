@@ -48,9 +48,11 @@ _kAudioDevicePropertyDeviceIsRunningSomewhere = 0x676F6E65  # 'gone'
 _kAudioObjectPropertyScopeGlobal = 0x676C6F62  # 'glob'
 _kAudioObjectPropertyElementMain = 0
 
-POLL_INTERVAL_S = 0.5
-# Number of consecutive "running" reads before we trust it. With a 0.5 s
-# poll, this means the mic must be held for ~0.5–1 s before we silence.
+POLL_INTERVAL_S = 0.25
+# Number of consecutive "running" reads before we trust it. With a 0.25 s
+# poll, this means the mic must be held for ~0.25–0.5 s before we silence.
+# Debounce stays at 1 so transient blips (Siri waking, system services)
+# don't trigger a phantom silence.
 DEBOUNCE_POLLS = 1
 
 _FRAMEWORK_PATH = "/System/Library/Frameworks/CoreAudio.framework/CoreAudio"

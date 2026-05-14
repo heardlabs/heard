@@ -154,6 +154,14 @@ class Daemon:
         # is true, narration is fully suppressed (no synth, no queue).
         # Not persisted — purely runtime state.
         self._mic_active: bool = False
+        # Deferred clear for ``_mic_active`` on mic-release. Wispr /
+        # dictation users naturally pause between phrases, briefly
+        # releasing the hotkey; without a grace tail, an agent event
+        # that lands in that gap would narrate over the next phrase.
+        # Held for MIC_RELEASE_GRACE_S after the mic releases; any new
+        # capture in that window cancels the timer and keeps the flag
+        # set, so a continuous dictation stays fully suppressed.
+        self._mic_release_timer: threading.Timer | None = None
         # Speech queue. Bounded so we don't accumulate a wall of stale
         # tool announcements; oldest is dropped when full. Drained by
         # a single worker thread, so utterances play sequentially
@@ -429,21 +437,53 @@ class Daemon:
             self._on_mic_active, self._on_mic_released
         )
 
+    # Tail-hold after the mic releases. Bridges Wispr / dictation
+    # phrase pauses where the user briefly lifts the hotkey, so an
+    # agent event landing in that gap doesn't talk over the next
+    # phrase.
+    MIC_RELEASE_GRACE_S: float = 2.0
+
     def _on_mic_active(self) -> None:
         """Mic just started capturing — kill anything mid-stream and
         flip the suppression flag so subsequent events drop at the
-        front door rather than queue up behind a 5-second call."""
+        front door rather than queue up behind a 5-second call. If a
+        release timer was pending (user briefly let go between Wispr
+        phrases), cancel it so the suppression stays continuous."""
+        if self._mic_release_timer is not None:
+            self._mic_release_timer.cancel()
+            self._mic_release_timer = None
         self._mic_active = True
         self._cancel_only()
         _log("mic_active")
 
     def _on_mic_released(self) -> None:
-        """Mic released — drop the suppression flag so the next
-        narration event narrates."""
-        self._mic_active = False
-        _log("mic_released")
+        """Mic released — defer the suppression-clear by
+        ``MIC_RELEASE_GRACE_S`` seconds. Inter-phrase pauses in Wispr
+        / dictation re-trip the mic before the timer fires, so the
+        flag never actually drops mid-dictation; only a real
+        end-of-speech releases narration."""
+        _log("mic_released_pending")
+
+        def _clear() -> None:
+            self._mic_active = False
+            self._mic_release_timer = None
+            _log("mic_released")
+
+        if self._mic_release_timer is not None:
+            self._mic_release_timer.cancel()
+        self._mic_release_timer = threading.Timer(
+            self.MIC_RELEASE_GRACE_S, _clear
+        )
+        self._mic_release_timer.daemon = True
+        self._mic_release_timer.start()
 
     def _stop_audio_monitor(self) -> None:
+        if self._mic_release_timer is not None:
+            try:
+                self._mic_release_timer.cancel()
+            except Exception:
+                pass
+            self._mic_release_timer = None
         if self._audio_monitor is not None:
             try:
                 self._audio_monitor.stop()
