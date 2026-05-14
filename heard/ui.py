@@ -56,6 +56,12 @@ class HeardApp(rumps.App):
         # the first time, and "stopped" makes a fresh user think
         # they're already broken.
         self._daemon_ever_alive = False
+        # Tracks whether the menu-bar app's icon/title is currently
+        # in the "muted" presentation — flipping NSImage and title on
+        # every refresh tick would be wasteful even though rumps would
+        # accept it. Initialised to None so the first refresh always
+        # writes through and matches whatever state we boot into.
+        self._muted_indicator: bool | None = None
         self._build_menu()
         self.refresh(None)
         rumps.Timer(self.refresh, 3).start()
@@ -267,7 +273,16 @@ class HeardApp(rumps.App):
 
         last_error = (status or {}).get("last_error") or None
 
-        if not alive:
+        # "Pause Heard" — the user explicitly silenced narration. This
+        # wins over every other status (speaking, errors, etc.) so the
+        # menu bar always reads "Paused" while muted and the menu-bar
+        # icon flips to a speaker-off glyph as a glanceable cue.
+        muted = bool((status or {}).get("muted")) or bool(cfg.get("muted"))
+        self._reflect_muted_in_menu_bar(muted)
+
+        if muted:
+            self.status_item.title = "Paused"
+        elif not alive:
             # Distinguish cold start (daemon hasn't come up yet, ~1-3 s
             # window after launch) from a true crash (was alive, now
             # isn't). "starting…" reads correctly during the gap;
@@ -325,7 +340,14 @@ class HeardApp(rumps.App):
         # on Right Option. Pull from live config so the menu reflects
         # what's actually wired up.
         silence_hint, replay_hint = self._hotkey_hints(cfg)
-        self.silence_item.title = f"Stop narrating  ({silence_hint})"
+        # "Pause Heard" / "Resume Heard" toggle — wraps the cancel-current
+        # behaviour of the old "Stop narrating" plus an indefinite mute
+        # that survives quit/respawn. Indefinite by design: the user
+        # explicitly resumes when they're ready.
+        if muted:
+            self.silence_item.title = f"Resume Heard  ({silence_hint})"
+        else:
+            self.silence_item.title = f"Pause Heard  ({silence_hint})"
         self.replay_item.title = f"Replay last  ({replay_hint})"
 
         # Update-available callout. Mount under the status row when
@@ -439,6 +461,29 @@ class HeardApp(rumps.App):
             pass
         self.refresh(None)
 
+    def _reflect_muted_in_menu_bar(self, muted: bool) -> None:
+        """Glanceable cue for "Pause Heard": while muted, clear the
+        template icon and show a speaker-off glyph in its place. Flips
+        back on resume. Idempotent — only writes the underlying NSImage
+        / title when the indicator state actually changes."""
+        if self._muted_indicator == muted:
+            return
+        self._muted_indicator = muted
+        try:
+            if muted:
+                self.icon = None
+                self.title = "🔇"
+            else:
+                self.title = ""
+                if ICON_PATH.exists():
+                    self.icon = str(ICON_PATH)
+                else:
+                    self.title = "Heard"
+        except Exception:
+            # rumps shouldn't fail on these but we never want a UI cue
+            # bug to crash the menu bar.
+            pass
+
     def _hotkey_hints(self, cfg: dict) -> tuple[str, str]:
         if cfg.get("hotkey_mode", "taphold") == "taphold":
             key = cfg.get("hotkey_taphold_key", "right_option")
@@ -510,8 +555,20 @@ class HeardApp(rumps.App):
     # --- action callbacks ---------------------------------------------------
 
     def on_silence(self, _sender) -> None:
+        """The "Pause Heard" / "Resume Heard" toggle. (Variable name
+        kept as ``on_silence`` to minimise diff churn — the displayed
+        label and behaviour are what the user sees.)"""
         try:
-            client.send({"cmd": "stop"})
+            if client.is_muted():
+                client.unmute(source="menu")
+            else:
+                client.mute(source="menu")
+        except Exception:
+            pass
+        # Tickle a refresh so the menu label flips immediately rather
+        # than waiting up to 3 s for the next poll tick.
+        try:
+            self.refresh(None)
         except Exception:
             pass
 
@@ -903,6 +960,16 @@ class HeardApp(rumps.App):
         webbrowser.open(self._update_url or "https://github.com/heardlabs/heard/releases/latest")
 
     def on_quit(self, _sender) -> None:
+        # Latch the indefinite-mute flag *before* quitting so that the
+        # next agent event — which would otherwise respawn the daemon
+        # via ensure_daemon() — finds heard.client.is_muted() == True
+        # and short-circuits in heard.hook.main without starting
+        # anything. Without this, Quit-while-CC-is-running just
+        # results in a respawn loop on the next tool call.
+        try:
+            client.mute(source="quit")
+        except Exception:
+            pass
         rumps.quit_application()
 
 

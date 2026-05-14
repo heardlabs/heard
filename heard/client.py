@@ -307,6 +307,50 @@ def get_status() -> dict:
     return request({"cmd": "status"})
 
 
+def is_muted() -> bool:
+    """Read the persisted "Pause Heard" flag straight from config —
+    no daemon needed. The hook subprocess uses this to short-circuit
+    *before* `ensure_daemon()`, so a paused Heard doesn't get
+    respawned on the next agent event."""
+    try:
+        return bool(config.load().get("muted", False))
+    except Exception:
+        return False
+
+
+def mute(source: str = "client") -> None:
+    """Pause narration indefinitely. Cancels current speech, clears
+    the queue, persists ``muted=true``. Spawns the daemon if needed
+    so the cancel happens; if the daemon's already dead, just persist
+    the flag so the next respawn comes up muted."""
+    if is_daemon_alive():
+        try:
+            send({"cmd": "mute", "source": source})
+            return
+        except Exception:
+            pass
+    # Daemon down or send failed — write the flag directly so a future
+    # respawn (e.g. via a hook event) reads it and stays silent.
+    try:
+        config.set_value("muted", True)
+    except Exception:
+        pass
+
+
+def unmute(source: str = "client") -> None:
+    """Resume narration. Persists ``muted=false``; if the daemon is
+    alive, also reload its in-memory copy."""
+    try:
+        config.set_value("muted", False)
+    except Exception:
+        pass
+    if is_daemon_alive():
+        try:
+            send({"cmd": "unmute", "source": source})
+        except Exception:
+            pass
+
+
 def _send_with_retry(payload: dict) -> None:
     ensure_daemon()
     try:

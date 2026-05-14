@@ -343,14 +343,14 @@ class Daemon:
             self._hotkey_listener = hotkey.start_taphold(
                 key_name,
                 threshold,
-                on_tap=self._cancel_only,
+                on_tap=self._toggle_mute,
                 on_hold=self._replay_last,
             )
         else:
             bindings: dict = {}
             silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
             if silence:
-                bindings[silence] = self._cancel_only
+                bindings[silence] = self._toggle_mute
             replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
             if replay:
                 bindings[replay] = self._replay_last
@@ -557,6 +557,14 @@ class Daemon:
         voice: str | None = None,
     ) -> None:
         cfg = cfg or self.cfg
+        # "Pause Heard" — indefinite mute set via the menu / hotkey.
+        # Drop here too in case a stale queued utterance survived the
+        # mute command's queue-clear (cancel_only ran on a different
+        # _speak thread, this one already had its text). Belt-and-
+        # suspenders with the start_speech guard.
+        if bool(cfg.get("muted")):
+            _log("synth_skipped", reason="muted")
+            return
         # If we fell back to a BYOK ElevenLabs key after a daily-cap 429
         # and the cap has since reset (new UTC day), return to the
         # managed cloud path. (A signed-in user is only ever on
@@ -923,6 +931,11 @@ class Daemon:
         text = (text or "").strip()
         if not text:
             return
+        # "Pause Heard" — indefinite mute. Don't even queue; the mute
+        # command already cleared whatever was in flight.
+        if bool(self.cfg.get("muted")):
+            _log("speech_skipped", reason="muted", session=session_id)
+            return
         with self._queue_cv:
             # Scheduler-driven project flushes pass ``coexists=True`` so
             # several flushes (e.g. two projects ready in the same tick)
@@ -1008,6 +1021,40 @@ class Daemon:
                 self._current_cancel.set()
             self._kill_current()
             self._queue.clear()
+
+    def _toggle_mute(self) -> None:
+        """Tap-hotkey handler: flip the "Pause Heard" flag. While muted,
+        every event is dropped at both ``_speak`` and ``_start_speech``,
+        and the hook subprocess short-circuits via ``client.is_muted()``
+        so a quit-while-muted Heard stays silent on the next agent
+        event. Resume is explicit — only another toggle (menu or
+        hotkey) clears it."""
+        was_muted = bool(self.cfg.get("muted"))
+        if was_muted:
+            self.cfg["muted"] = False
+            try:
+                config.set_value("muted", False)
+            except Exception:
+                pass
+            _log("unmuted", source="hotkey")
+            notify.notify(
+                "Heard resumed",
+                "Narration is back on.",
+                kind="muted_toggle",
+            )
+        else:
+            self._cancel_only()
+            self.cfg["muted"] = True
+            try:
+                config.set_value("muted", True)
+            except Exception:
+                pass
+            _log("muted", source="hotkey")
+            notify.notify(
+                "Heard paused",
+                "Click Resume Heard in the menu to turn narration back on.",
+                kind="muted_toggle",
+            )
 
     # --- event handling -----------------------------------------------------
 
@@ -1165,6 +1212,7 @@ class Daemon:
                 "backend": type(self.tts).__name__,
                 "persona": self.persona.name,
                 "narrate_tools": bool(self.cfg.get("narrate_tools", True)),
+                "muted": bool(self.cfg.get("muted", False)),
                 "last_error": self._last_error,
                 # Real-time activity hint for the menu bar header.
                 "speaking": speaking,
@@ -1214,6 +1262,23 @@ class Daemon:
             return None
         if cmd == "stop":
             self._cancel_only()
+            return None
+        if cmd == "mute":
+            self._cancel_only()
+            self.cfg["muted"] = True
+            try:
+                config.set_value("muted", True)
+            except Exception:
+                pass
+            _log("muted", source=req.get("source") or "socket")
+            return None
+        if cmd == "unmute":
+            self.cfg["muted"] = False
+            try:
+                config.set_value("muted", False)
+            except Exception:
+                pass
+            _log("unmuted", source=req.get("source") or "socket")
             return None
         if cmd == "replay":
             self._replay_last()

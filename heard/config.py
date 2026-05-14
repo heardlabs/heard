@@ -141,6 +141,12 @@ DEFAULTS: dict[str, Any] = {
     # Set to True after the user finishes the welcome flow (or skips it),
     # so we never re-prompt them.
     "onboarded": False,
+    # Indefinite "Pause Heard": when true, the daemon drops every
+    # event and the hook subprocess short-circuits without spawning
+    # the daemon, so a paused Heard stays silent even if Quit makes
+    # the daemon respawn on the next agent event. Only "Resume Heard"
+    # (menu or hotkey) clears it — there's no auto-timeout.
+    "muted": False,
     # Once a day the daemon hits api.github.com to check for a newer
     # stable release and posts a one-time notification per version.
     # Anonymous request, no telemetry. Set False to disable entirely

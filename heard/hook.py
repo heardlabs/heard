@@ -58,6 +58,13 @@ def main() -> None:
     # in-flight subprocess never feeds the daemon.
     if os.environ.get("HEARD_HOOK_DISABLED") == "1":
         sys.exit(0)
+    # "Pause Heard" — indefinite mute set via the menu / hotkey. Check
+    # the config flag *before* anything daemon-related so the daemon
+    # doesn't get respawned by ensure_daemon() on a muted session.
+    # Without this, Quit-while-paused would still trigger a respawn
+    # loop on the next agent event.
+    if client.is_muted():
+        sys.exit(0)
     if len(sys.argv) < 2:
         sys.exit(0)
     fn = AGENTS.get(sys.argv[1])
