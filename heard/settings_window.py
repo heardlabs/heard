@@ -536,6 +536,17 @@ class SettingsController(NSObject):
     def _build_voice_panel(self) -> NSView:
         outer, body = self._panel_shell("voice")
 
+        # Pause Heard — top-of-panel toggle for the persistent mute. Mirrors
+        # the rumps menu's "Pause Heard / Resume Heard" item so users don't
+        # have to leave Settings to silence narration.
+        mute_switch = _checkbox("", target=self, action="onPauseHeardToggled:")
+        mute_row = _setting_row(
+            "Pause Heard",
+            "Stop narrating until you flip this off. Survives quit and respawn.",
+            mute_switch,
+        )
+        self._add_card(body, _card([mute_row]))
+
         # Persona + speed. Dropdown labels are title-cased to match the
         # segmented control ("Normal / Fast / Hyper"); the underlying
         # config values stay lowercase (handled in the change handlers
@@ -604,6 +615,7 @@ class SettingsController(NSObject):
         self._add_card(body, _card([auto_silence_row, agent_voices_row]))
 
         self._refs["voice"].update({
+            "mute": mute_switch,
             "persona": persona_pop,
             "speed": speed_seg,
             "verbosity": verbosity_pop,
@@ -879,6 +891,8 @@ class SettingsController(NSObject):
         if swarm in r["swarm"].itemTitles():
             r["swarm"].selectItemWithTitle_(swarm)
         r["auto_silence"].setState_(1 if cfg.get("auto_silence_on_mic", True) else 0)
+        if r.get("mute") is not None:
+            r["mute"].setState_(1 if cfg.get("muted", False) else 0)
         if r.get("agent_voices_mode") is not None:
             r["agent_voices_mode"].selectItemWithTitle_(
                 "Distinct voices" if cfg.get("multi_agent_auto_voices", True) else "One voice"
@@ -1130,6 +1144,20 @@ class SettingsController(NSObject):
     def onAutoSilenceToggled_(self, sender) -> None:
         config.set_value("auto_silence_on_mic", bool(sender.state()))
         _reload_daemon()
+
+    def onPauseHeardToggled_(self, sender) -> None:
+        # Routes through client.mute / client.unmute so the daemon cancels
+        # the current utterance + clears the queue, and so the persisted
+        # ``muted`` flag survives a quit/respawn (same path as the rumps
+        # menu's "Pause Heard" item).
+        try:
+            if bool(sender.state()):
+                client.mute(source="settings")
+            else:
+                client.unmute(source="settings")
+        except Exception:
+            pass
+        self._refresh_all()
 
     def onAgentVoicesModeChanged_(self, sender) -> None:
         title = (sender.titleOfSelectedItem() or "").strip().lower()
