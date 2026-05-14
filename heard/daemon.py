@@ -1190,10 +1190,14 @@ class Daemon:
             if verbosity.classify_prose(cfg) != "speak":
                 _log("event_drop", kind=kind, tag=tag, reason="profile_prose_silent")
                 return
-            if kind == "final":
-                budget = verbosity.final_char_budget(cfg)
-                if len(neutral) > budget and persona.is_raw:
-                    neutral = verbosity.truncate_to_sentences(neutral, budget)
+            # No `final_budget` truncation anymore — _SHARED_NARRATION_RULES
+            # tells Haiku to compress aggressively, so silently dropping
+            # the trailing half of a multi-topic answer just to fit a
+            # 600-char cap (the bug Christian hit, where my own multi-
+            # part replies got cut mid-thought) is the wrong tradeoff.
+            # The raw-persona path (no Haiku) is now also un-budgeted —
+            # if someone forks a raw persona and feeds it a wall of text,
+            # they get the wall.
             # Drain pending tool digest for this session BEFORE the
             # prose plays — gives the user a coherent "Made 3 edits,
             # ran tests. OK, all green." narrative instead of stale
@@ -1238,8 +1242,13 @@ class Daemon:
             _log("event_drop", kind=kind, tag=tag, reason="persona_empty", persona=persona.name)
             return
 
-        if kind == "final" and len(final) > verbosity.final_char_budget(cfg):
-            final = verbosity.truncate_to_sentences(final, verbosity.final_char_budget(cfg))
+        # `final_budget` truncation removed: the tightened Haiku prompt
+        # (PR #17 — "summarise the source, never read it verbatim")
+        # caps spoken length at the prompt layer instead, and chopping
+        # multi-topic answers at a sentence boundary dropped the second
+        # half entirely with no audible "…and more". Long finals stay
+        # long; if Haiku misbehaves and produces a wall, the user hears
+        # the wall — better than silent truncation.
 
         # Apply the router's label prefix (e.g. "Agent api: ") AFTER
         # persona rewrite + truncation so it survives both. Empty in

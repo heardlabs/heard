@@ -35,6 +35,16 @@ def _make_daemon(tmp_path, monkeypatch):
     def _load(*a, **kw):
         cfg = real_load(*a, **kw)
         cfg["elevenlabs_api_key"] = "sk_x"
+        # Suppress the first-launch greeting (which would queue itself
+        # on Daemon construction) so these tests see only the items
+        # they enqueue themselves.
+        cfg["greeted"] = True
+        # The test fixture monkeypatches CONFIG_DIR but not CONFIG_PATH,
+        # so real_load reads the user's actual config.yaml — if Heard
+        # is currently paused on the dev machine the tests inherit
+        # ``muted=True`` and _start_speech drops every enqueue. Pin it
+        # off so the queue tests can actually exercise the queue.
+        cfg["muted"] = False
         return cfg
 
     monkeypatch.setattr("heard.config.load", _load)
