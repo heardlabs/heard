@@ -35,11 +35,16 @@ ICON_PATH = ASSETS_DIR / "menubar.png"
 class HeardApp(rumps.App):
     def __init__(self) -> None:
         # template=True asks macOS to auto-tint the icon to match the menu
-        # bar (white in dark mode, black in light mode). Falls back to a
-        # short text title if the icon asset wasn't bundled (source builds
-        # without rsvg-convert available).
+        # bar (white in dark mode, black in light mode). title="" keeps
+        # the menu-bar slot icon-only — the "Heard" text next to the
+        # glyph reads as clutter on a busy bar where every other
+        # well-behaved menu-bar app shows just its mark. Falls back to a
+        # short text title if the icon asset wasn't bundled (source
+        # builds without rsvg-convert available).
         if ICON_PATH.exists():
-            super().__init__("Heard", icon=str(ICON_PATH), template=True, quit_button=None)
+            super().__init__(
+                "Heard", title="", icon=str(ICON_PATH), template=True, quit_button=None
+            )
         else:
             super().__init__("Heard", title="Heard", quit_button=None)
         # Register the heard:// URL handler here (not in ui.run) — the
