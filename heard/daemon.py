@@ -196,10 +196,42 @@ class Daemon:
         self.pending_update: updater.UpdateInfo | None = None
         self._start_update_check()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+        # Post-update notification — runs before the greeting so a
+        # fresh upgrade-and-relaunch tells the user we cleaned up
+        # after ourselves *before* the persona introduces itself.
+        # No-op on a normal launch.
+        self._maybe_notify_post_update()
         # First-launch greeting — speaks a friendly "I'm on" line the
         # first time we have a real voice configured. Runs once per
         # install (gated by cfg["greeted"]); a wiped config re-greets.
         self._maybe_greet()
+
+    def _maybe_notify_post_update(self) -> None:
+        """Surface a one-time 'we replaced the old version in place'
+        notification if the in-app update pipeline just swapped the
+        bundle. The marker is written by ``updater.stage_and_swap``
+        and deleted on read so this fires exactly once per upgrade.
+
+        The wording explicitly addresses the silent worry users have
+        about app updates ('did I just leave a stale copy taking up
+        disk space?') — the swap pipeline does an rm -rf + mv into
+        the install path, so there's genuinely nothing to clean up,
+        and the notification says so."""
+        try:
+            version = updater.consume_post_update_marker()
+        except Exception:
+            version = None
+        if not version:
+            return
+        _log("post_update_notice", version=version)
+        try:
+            notify.notify(
+                f"Heard updated to v{version}",
+                "Replaced the old version in place — nothing left in Applications to clean up.",
+                kind="post_update",
+            )
+        except Exception:
+            pass
 
     def _maybe_greet(self) -> None:
         """Speak the one-shot welcome line if we haven't yet AND we
@@ -1369,6 +1401,8 @@ class Daemon:
                         "version": self.pending_update.version,
                         "tag": self.pending_update.tag,
                         "url": self.pending_update.url,
+                        "zip_url": self.pending_update.zip_url,
+                        "zip_size": self.pending_update.zip_size,
                     }
                     if self.pending_update is not None
                     else None
