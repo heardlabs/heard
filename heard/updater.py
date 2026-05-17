@@ -28,7 +28,10 @@ Design notes:
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
+import subprocess
 import threading
 import time
 import urllib.error
@@ -39,6 +42,27 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from heard import config
+
+
+# In-app update artefacts (download, staging, post-update marker)
+# live under this dir. Kept separate from the long-lived state files
+# (``update_check.json``) so the install pipeline can clean up its
+# scratch without touching dedup state.
+def _updates_dir() -> Path:
+    return config.DATA_DIR / "updates"
+
+
+def _post_update_marker_path() -> Path:
+    return _updates_dir() / "post_update.txt"
+
+
+# Default download chunk size. 64 KiB keeps the progress callback
+# updating smoothly without thrashing the GIL for a 95 MB zip.
+_DOWNLOAD_CHUNK_BYTES = 64 * 1024
+
+# Default install location for the .app bundle. Override via the
+# ``target_app`` argument to ``stage_and_swap`` — tests use a tmp dir.
+DEFAULT_INSTALL_PATH = Path("/Applications/Heard.app")
 
 # Strict semver match. `-beta`, `-rc1`, etc. are deliberately rejected
 # so users don't get prompted to "upgrade" to a pre-release.
@@ -54,6 +78,16 @@ class UpdateInfo:
     version: str  # "0.4.4" — no leading v
     tag: str  # "v0.4.4" — verbatim from GitHub
     url: str  # release html_url
+    # Direct download URL for ``Heard.zip`` on this release, if the
+    # release shipped one. ``None`` for releases that only ship a
+    # versioned name (``Heard-vX.Y.Z.zip``); callers fall back to the
+    # browser flow when this is missing. Populated from the release
+    # payload's assets array.
+    zip_url: str | None = None
+    # Size in bytes of ``zip_url`` per the release asset metadata.
+    # Used for download progress + post-stream truncation check;
+    # ``None`` when the zip URL itself is missing.
+    zip_size: int | None = None
 
 
 def parse_version(tag: str) -> tuple[int, int, int] | None:
@@ -214,11 +248,47 @@ def check_for_update(current_version: str) -> UpdateInfo | None:
     if was_notified(version):
         return None
 
+    zip_url, zip_size = _pick_zip_asset(payload)
+
     return UpdateInfo(
         version=version,
         tag=tag,
         url=payload.get("html_url") or f"https://github.com/heardlabs/heard/releases/tag/{tag}",
+        zip_url=zip_url,
+        zip_size=zip_size,
     )
+
+
+def _pick_zip_asset(payload: dict) -> tuple[str | None, int | None]:
+    """Extract the Heard.zip download URL from a release payload's
+    ``assets`` array. Prefers the stable ``Heard.zip`` name so a fresh
+    download URL keeps working across releases (the in-app update flow
+    caches by version, so versionless is fine here). Falls back to the
+    versioned ``Heard-vX.Y.Z.zip`` if the stable name is absent — that
+    can happen in older releases before the dual-name convention.
+    Returns ``(None, None)`` if no usable asset is found."""
+    assets = payload.get("assets") or []
+    if not isinstance(assets, list):
+        return None, None
+    stable: tuple[str, int] | None = None
+    versioned: tuple[str, int] | None = None
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = asset.get("name") or ""
+        url = asset.get("browser_download_url") or ""
+        if not url:
+            continue
+        size_raw = asset.get("size")
+        size = int(size_raw) if isinstance(size_raw, (int, float)) else 0
+        if name == "Heard.zip":
+            stable = (url, size)
+        elif name.startswith("Heard-v") and name.endswith(".zip"):
+            versioned = (url, size)
+    chosen = stable or versioned
+    if chosen is None:
+        return None, None
+    return chosen[0], chosen[1] or None
 
 
 def start_periodic_check(
@@ -262,3 +332,266 @@ def start_periodic_check(
     t = threading.Thread(target=_tick, daemon=True, name="heard-updater")
     t.start()
     return t
+
+
+# ---------------------------------------------------------------------------
+# In-app update install pipeline
+# ---------------------------------------------------------------------------
+#
+# The "↑ Update to vX.Y.Z →" menu item used to be webbrowser.open — kicked
+# the user to GitHub and made them run the curl one-liner themselves. The
+# functions below replace that with: stream-download the release zip, unzip
+# to a staging dir, spawn a detached bash helper that waits for the running
+# app to quit and then atomically swaps the bundle in place. The new launch
+# reads ``post_update.txt`` and surfaces a "no leftovers" notification so
+# the user knows their /Applications dir wasn't left holding a stale copy.
+#
+# Why a detached shell helper instead of doing it in Python: we have to
+# *delete and replace ourselves on disk*. The running Python interpreter,
+# its dylibs (libpython, libssl, libcrypto, libffi, …), and every imported
+# module live inside the bundle we're trying to remove. We can't rm -rf the
+# bundle while we're executing from inside it on macOS — file handles to
+# loaded dylibs are open. The helper script is independent of the bundle,
+# so it can wait for our PID to exit and then swap freely.
+
+
+class UpdateInstallError(RuntimeError):
+    """Raised by the in-app update pipeline on any swap-blocking failure
+    (download mismatch, unzip failure, missing .app in staging, ...).
+
+    Surfaces to the UI as a user-visible "update failed" toast with the
+    underlying message; never to a Python traceback in stderr."""
+
+
+def download_zip(
+    url: str,
+    dest: Path,
+    *,
+    expected_size: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+    timeout_s: float = _FETCH_TIMEOUT_S,
+    current_version: str | None = None,
+) -> None:
+    """Stream ``url`` to ``dest`` with progress callbacks every chunk.
+    Verifies the final byte count against ``expected_size`` if provided
+    (catches a server-truncated response — same failure mode the Kokoro
+    downloader handles). Atomic-renames the .part on success.
+
+    Raises ``UpdateInstallError`` on any HTTP / network / size failure;
+    callers should report the message to the UI and fall back to the
+    browser flow."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    if tmp.exists():
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    ua = f"Heard/{current_version or resolved_current_version()}"
+    req = urllib.request.Request(url, headers={"User-Agent": ua})
+    written = 0
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — release asset URL
+            total_hint = expected_size or 0
+            advertised = resp.headers.get("Content-Length")
+            if not total_hint and advertised:
+                try:
+                    total_hint = int(advertised)
+                except ValueError:
+                    total_hint = 0
+            with tmp.open("wb") as f:
+                while True:
+                    chunk = resp.read(_DOWNLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    written += len(chunk)
+                    if on_progress is not None:
+                        try:
+                            on_progress(written, total_hint)
+                        except Exception:
+                            # Progress callback bugs are not a reason to
+                            # fail the download.
+                            pass
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise UpdateInstallError(f"download failed: {e}") from e
+
+    if expected_size is not None and written != expected_size:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise UpdateInstallError(
+            f"download truncated: got {written} bytes, expected {expected_size}"
+        )
+
+    tmp.rename(dest)
+
+
+def unzip_app(zip_path: Path, staging_dir: Path) -> Path:
+    """Extract ``Heard.app`` from a release zip into ``staging_dir``.
+    Returns the path to the extracted bundle. Wipes any prior staging
+    contents first so a previously-failed attempt doesn't leave a
+    half-extracted bundle that the swap would then move.
+
+    The release zips ship the bundle directly at the root, so the
+    archive layout is ``Heard.app/...``. Anything else is treated as a
+    corrupt asset."""
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    staged = staging_dir / "Heard.app"
+    if staged.exists():
+        # rm -rf via shell — Python's shutil.rmtree blows up on macOS
+        # bundles with broken symlinks inside the Frameworks dir, which
+        # the py2app build is known to produce. /bin/rm -rf is the path
+        # the install script in the README uses for the same reason.
+        subprocess.run(["/bin/rm", "-rf", str(staged)], check=True)
+
+    result = subprocess.run(
+        ["/usr/bin/unzip", "-o", "-q", str(zip_path), "-d", str(staging_dir)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise UpdateInstallError(
+            f"unzip exited {result.returncode}: {result.stderr.strip() or 'unknown'}"
+        )
+    if not staged.is_dir():
+        raise UpdateInstallError(
+            f"release zip did not contain Heard.app at the expected layout "
+            f"(staging dir: {staging_dir})"
+        )
+    return staged
+
+
+def _build_swap_script(
+    *,
+    parent_pid: int,
+    staged_app: Path,
+    target_app: Path,
+    target_version: str,
+    marker_path: Path,
+    log_path: Path,
+) -> str:
+    """Render the bash helper that performs the actual bundle swap.
+
+    Exposed as a module-level function so tests can pin the exact
+    commands the helper will run without spawning it for real. The
+    script:
+
+    1. Waits up to 30 s for ``parent_pid`` to exit so we don't try to
+       rm -rf a bundle whose dylibs are still mmap'd.
+    2. ``rm -rf`` the install target — guarantees no stale files from
+       the previous version survive (deleted persona MDs, renamed test
+       fixtures, etc.).
+    3. ``mv`` the staged bundle into place.
+    4. Strips the quarantine xattr so Gatekeeper doesn't second-guess
+       the relaunch.
+    5. Writes the post-update marker so the new process knows to
+       surface the "we cleaned up after ourselves" notification.
+    6. ``open`` to relaunch.
+
+    Logs to ``log_path`` so a failed swap is debuggable; the helper is
+    detached so it has no stdout/stderr to inherit from us."""
+    return (
+        "#!/bin/bash\n"
+        "set -u\n"
+        f"exec >>{shlex.quote(str(log_path))} 2>&1\n"
+        "echo \"--- $(date) swap start ---\"\n"
+        f"parent_pid={parent_pid}\n"
+        f"staged={shlex.quote(str(staged_app))}\n"
+        f"target={shlex.quote(str(target_app))}\n"
+        f"marker={shlex.quote(str(marker_path))}\n"
+        f"version={shlex.quote(target_version)}\n"
+        "for _ in $(seq 1 150); do\n"
+        "  if ! kill -0 \"$parent_pid\" 2>/dev/null; then break; fi\n"
+        "  sleep 0.2\n"
+        "done\n"
+        "if [ ! -d \"$staged\" ]; then\n"
+        "  echo \"staged bundle missing at $staged\" >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "/bin/rm -rf \"$target\"\n"
+        "/bin/mv \"$staged\" \"$target\"\n"
+        "/usr/bin/xattr -dr com.apple.quarantine \"$target\" 2>/dev/null || true\n"
+        "mkdir -p \"$(dirname \"$marker\")\"\n"
+        "printf '%s' \"$version\" > \"$marker\"\n"
+        "/usr/bin/open \"$target\"\n"
+        "echo \"--- $(date) swap done ---\"\n"
+    )
+
+
+def stage_and_swap(
+    staged_app: Path,
+    target_version: str,
+    *,
+    parent_pid: int | None = None,
+    target_app: Path = DEFAULT_INSTALL_PATH,
+    spawn: bool = True,
+) -> Path:
+    """Write the swap-helper script and (when ``spawn`` is True) launch
+    it in a detached session so it survives the calling app quitting.
+
+    Returns the helper script path so callers / tests can inspect it.
+    ``spawn=False`` is for tests that want to assert what the helper
+    would do without actually firing the swap.
+
+    The caller is expected to ``rumps.quit_application()`` (or
+    equivalent) shortly after this returns; the helper waits up to
+    30 s for the PID to exit before proceeding."""
+    parent_pid = parent_pid if parent_pid is not None else os.getpid()
+    updates_dir = _updates_dir()
+    updates_dir.mkdir(parents=True, exist_ok=True)
+    helper_path = updates_dir / "apply_update.sh"
+    log_path = updates_dir / "apply_update.log"
+    marker_path = _post_update_marker_path()
+
+    script = _build_swap_script(
+        parent_pid=parent_pid,
+        staged_app=staged_app,
+        target_app=target_app,
+        target_version=target_version,
+        marker_path=marker_path,
+        log_path=log_path,
+    )
+    helper_path.write_text(script, encoding="utf-8")
+    helper_path.chmod(0o755)
+
+    if spawn:
+        # start_new_session=True is the POSIX-equivalent of setsid:
+        # detaches the child from our process group so quitting the
+        # menu-bar app doesn't SIGHUP the helper mid-swap. close_fds
+        # plus DEVNULL on stdin/stdout/stderr severs every inherited
+        # handle, so the helper has no tie to the bundle dylibs we're
+        # about to delete out from under ourselves.
+        subprocess.Popen(  # noqa: S603 — fixed script path under our DATA_DIR
+            ["/bin/bash", str(helper_path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    return helper_path
+
+
+def consume_post_update_marker() -> str | None:
+    """Read and delete the post-update marker. Returns the version
+    string written by ``stage_and_swap``, or ``None`` if no swap
+    happened on this launch. Idempotent — calling twice in a row
+    returns ``(version, None)``."""
+    marker = _post_update_marker_path()
+    if not marker.is_file():
+        return None
+    try:
+        version = marker.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        version = None
+    try:
+        marker.unlink()
+    except OSError:
+        pass
+    return version
