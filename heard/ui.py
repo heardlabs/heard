@@ -17,6 +17,8 @@ less-used switches.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 import webbrowser
 from pathlib import Path
 
@@ -98,6 +100,13 @@ class HeardApp(rumps.App):
         self._version_item_key = "checking for updates…"
         self.version_item = rumps.MenuItem(self._version_item_key, callback=None)
         self._update_url: str | None = None
+        # Pending update payload from the daemon's status — keeps the
+        # zip download URL + size around so on_update_clicked can run
+        # the in-app install pipeline without a second GitHub fetch.
+        self._pending_update: dict | None = None
+        # Set while the in-app install pipeline is running so a second
+        # click on the menu item doesn't kick off a parallel download.
+        self._update_in_flight: bool = False
 
 
         # Active Sessions submenu. Populated dynamically each refresh
@@ -358,10 +367,18 @@ class HeardApp(rumps.App):
         pending = (status or {}).get("pending_update")
         if pending and pending.get("tag"):
             self._update_url = pending.get("url")
-            self.version_item.title = f"↑ Update to {pending.get('tag', '')} →".rstrip()
-            self.version_item.set_callback(self.on_update_clicked)
+            self._pending_update = pending
+            # Don't overwrite a "Downloading…" / "Installing…" title
+            # while the install pipeline is running — the worker thread
+            # owns the title for the duration. Refresh ticks happen
+            # every couple of seconds and would otherwise clobber the
+            # live progress text.
+            if not self._update_in_flight:
+                self.version_item.title = f"↑ Update to {pending.get('tag', '')} →".rstrip()
+                self.version_item.set_callback(self.on_update_clicked)
         else:
             self._update_url = None
+            self._pending_update = None
             try:
                 cur = updater.resolved_current_version()
             except Exception:
@@ -952,12 +969,129 @@ class HeardApp(rumps.App):
         webbrowser.open("https://github.com/heardlabs/heard")
 
     def on_update_clicked(self, _sender) -> None:
-        # Captured into self._update_url by refresh(); fall back to
-        # the releases page if the click somehow fires without one
-        # (shouldn't happen — item only mounts when status carries a
-        # url, but defensive defaults keep the click from being a
-        # silent no-op).
-        webbrowser.open(self._update_url or "https://github.com/heardlabs/heard/releases/latest")
+        """Run the in-app install pipeline: download the release zip,
+        unzip into a staging dir, spawn a detached helper that waits
+        for our PID to exit and swaps the bundle in /Applications,
+        then quit so the helper can proceed.
+
+        Falls back to the browser flow when the release payload didn't
+        carry a usable zip asset URL — that path is the same as the
+        pre-v0.8.2 behaviour, and lets older clients on releases
+        before the asset-URL contract still ship something useful."""
+        if self._update_in_flight:
+            return
+        pending = self._pending_update or {}
+        zip_url = pending.get("zip_url")
+        tag = (pending.get("tag") or "").strip()
+        if not zip_url or not tag:
+            webbrowser.open(self._update_url or "https://github.com/heardlabs/heard/releases/latest")
+            return
+
+        zip_size = pending.get("zip_size")
+        if isinstance(zip_size, (int, float)):
+            zip_size = int(zip_size) or None
+        else:
+            zip_size = None
+
+        self._update_in_flight = True
+        # Drop the click callback so a re-click during the worker run
+        # doesn't queue a second install (idempotent anyway via the
+        # flag above, but no point letting macOS flash the menu item).
+        try:
+            self.version_item.set_callback(None)
+        except Exception:
+            pass
+        self.version_item.title = f"↓ Downloading {tag}…"
+
+        from heard.notify import notify
+
+        notify(
+            f"Heard is updating to {tag}",
+            "Downloading in the background. The app will restart in a moment.",
+            kind="update_starting",
+        )
+
+        threading.Thread(
+            target=self._run_install_pipeline,
+            args=(zip_url, zip_size, tag),
+            name="heard-ui-installer",
+            daemon=True,
+        ).start()
+
+    def _run_install_pipeline(
+        self, zip_url: str, zip_size: int | None, tag: str
+    ) -> None:
+        """Worker body for ``on_update_clicked``. Lives off the rumps
+        main thread so the menu stays responsive while the download
+        runs. Any failure here surfaces as a notification + the menu
+        item flipping back to a re-clickable update title."""
+        from heard.notify import notify
+
+        updates_dir = config.DATA_DIR / "updates"
+        zip_path = updates_dir / f"Heard-{tag}.zip"
+        staging_dir = updates_dir / "staging"
+        try:
+            last_pct = {"value": -1}
+
+            def _on_progress(written: int, total: int) -> None:
+                if total <= 0:
+                    return
+                pct = int(written * 100 / total)
+                # Throttle title churn to whole-percent ticks; rumps
+                # title mutation triggers a menu redraw and a 64 KiB
+                # chunk for a 95 MB zip would otherwise repaint 1500
+                # times.
+                if pct != last_pct["value"]:
+                    last_pct["value"] = pct
+                    try:
+                        self.version_item.title = f"↓ Downloading {tag} ({pct}%)"
+                    except Exception:
+                        pass
+
+            updater.download_zip(
+                zip_url,
+                zip_path,
+                expected_size=zip_size,
+                on_progress=_on_progress,
+            )
+            self.version_item.title = f"↻ Installing {tag}…"
+            staged = updater.unzip_app(zip_path, staging_dir)
+            # Spawn the detached helper, then quit so it can proceed.
+            updater.stage_and_swap(staged, tag)
+            # Tiny pause to make sure the helper subprocess has
+            # actually launched + cleared our process group before
+            # we tear ourselves down. Without it, macOS occasionally
+            # kills the just-spawned bash when the parent dies first.
+            time.sleep(0.5)
+            try:
+                client.mute(source="update")
+            except Exception:
+                pass
+            rumps.quit_application()
+        except updater.UpdateInstallError as e:
+            self._on_update_failed(str(e), tag, notify)
+        except Exception as e:  # pragma: no cover — last-resort net
+            self._on_update_failed(f"unexpected error: {e}", tag, notify)
+
+    def _on_update_failed(self, message: str, tag: str, notify_fn) -> None:
+        """Update pipeline error path. Restores the menu item so a
+        retry is one click away, and surfaces a notification with the
+        underlying reason so the user can decide between retry vs.
+        falling back to the manual curl install."""
+        self._update_in_flight = False
+        try:
+            self.version_item.title = f"↑ Retry update to {tag} →"
+            self.version_item.set_callback(self.on_update_clicked)
+        except Exception:
+            pass
+        try:
+            notify_fn(
+                f"Update to {tag} failed",
+                f"{message}. Click the menu item to retry, or visit the release page.",
+                kind="update_failed",
+            )
+        except Exception:
+            pass
 
     def on_quit(self, _sender) -> None:
         # Latch the indefinite-mute flag *before* quitting so that the
