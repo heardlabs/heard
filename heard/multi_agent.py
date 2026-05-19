@@ -614,6 +614,106 @@ class MultiAgentRouter:
         # Call it OUTSIDE the lock — pure function, no shared state.
         return _format_session_summary(info, events)
 
+    # --- resume-from-pause helpers ---------------------------------------
+    #
+    # The "Pause Heard" toggle clears the speech queue but leaves the
+    # router's per-session pending_digest piles untouched. Resuming
+    # would normally let the 1-second digest tick drain those stale
+    # piles, replaying audio from before the pause. The three helpers
+    # below let the daemon take explicit control on resume: ask the
+    # user whether to catch them up or start fresh, then either flush
+    # the buffer through the existing project-flush summary path or
+    # drop it on the floor.
+
+    def pending_count(self) -> int:
+        """Total events currently buffered for the digest summary
+        across every session, ignoring the channel thresholds the
+        1-second tick uses. Surfaced in the daemon's status payload
+        so the UI can decide whether the resume prompt is worth
+        showing (zero pending → silent resume)."""
+        with self._lock:
+            return sum(len(info.pending_digest) for info in self._sessions.values())
+
+    def force_flush_all(
+        self, *, auto_voices: bool = True, now: float | None = None
+    ) -> list[ProjectFlush]:
+        """Same shape as ``collect_project_flushes`` but bypasses the
+        idle / backpressure gates — every session with pending events
+        contributes to a flush, regardless of how recent the last
+        event was. Used by the resume-with-catch-up path so a user
+        who just unmuted gets a single recap of *everything* that
+        was buffered, not just the channels the tick happened to
+        consider ready.
+
+        Atomically clears every session's pending_digest as part of
+        the call (same lock + drain pattern as the tick path)."""
+        now_ts = time.time() if now is None else now
+        with self._lock:
+            by_project: dict[str, list[SessionInfo]] = {}
+            for info in self._sessions.values():
+                by_project.setdefault(self._project_key(info), []).append(info)
+
+            primary_key: str | None = None
+            best_event = -1.0
+            best_seq = -1
+            for info in self._sessions.values():
+                if (info.last_event, info.event_seq) > (best_event, best_seq):
+                    best_event = info.last_event
+                    best_seq = info.event_seq
+                    primary_key = self._project_key(info)
+
+            out: list[ProjectFlush] = []
+            for project_key, members in by_project.items():
+                total_pending = sum(len(m.pending_digest) for m in members)
+                if total_pending == 0:
+                    continue
+                events: list[dict[str, Any]] = []
+                contributing: list[str] = []
+                for m in members:
+                    if m.pending_digest:
+                        events.extend(m.pending_digest)
+                        contributing.append(m.session_id)
+                        m.pending_digest.clear()
+                events.sort(key=lambda e: e.get("ts", 0.0))
+                speaker = max(members, key=lambda s: (s.last_event, s.event_seq))
+                label = speaker.repo_name or (
+                    speaker.session_id[:8] if speaker.session_id else "agent"
+                )
+                is_primary = project_key == primary_key
+                voice_override: str | None = None
+                if auto_voices and not is_primary and speaker.repo_name:
+                    voice_override = _auto_voice_for(speaker.repo_name)
+                out.append(
+                    ProjectFlush(
+                        project_key=project_key,
+                        label=label,
+                        events=events,
+                        member_session_ids=contributing,
+                        speaker_session_id=speaker.session_id,
+                        voice_override=voice_override,
+                        is_primary=is_primary,
+                    )
+                )
+            out.sort(key=lambda pf: -len(pf.events))
+            # now_ts threading argument intentionally unused — keeps
+            # the signature parallel with collect_project_flushes so
+            # callers can swap one for the other.
+            _ = now_ts
+            return out
+
+    def clear_pending(self) -> int:
+        """Drop every session's pending_digest events. Returns the
+        number of events thrown away (for logging / status). Used by
+        the resume-with-fresh-start path: user said "don't catch me
+        up", so the buffer goes to /dev/null and the next event
+        narrates as if pause never accumulated anything."""
+        with self._lock:
+            cleared = 0
+            for info in self._sessions.values():
+                cleared += len(info.pending_digest)
+                info.pending_digest.clear()
+            return cleared
+
     # --- introspection for menu UI ----------------------------------------
 
     def format_digest(

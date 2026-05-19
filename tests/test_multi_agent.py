@@ -477,3 +477,68 @@ def test_pinned_single_voice_prefix_only_on_speaker_change():
     # b speaks again (pinned focus) — speaker changed back, re-announce.
     d4 = r.classify(kind="tool_pre", tag="tool_bash_grep", session_id="b", auto_voices=False)
     assert d4.label_prefix.startswith("Agent web")
+
+
+# --- resume-from-pause helpers (pending_count / force_flush_all / clear) ----
+
+
+def test_pending_count_sums_across_sessions():
+    """pending_count is the UI's signal for 'is the resume prompt
+    worth showing?' — must aggregate every session's pending pile."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    assert r.pending_count() == 0
+    r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    r.add_to_digest("b", "tool_pre", "tool_edit", "edit")
+    assert r.pending_count() == 3
+
+
+def test_force_flush_all_returns_every_project_regardless_of_idle():
+    """The 1-second tick respects CHANNEL_IDLE_FLUSH_S and waits for a
+    natural turn boundary. The resume-catch-up path can't wait — the
+    user just unmuted and wants the recap now. force_flush_all must
+    return every project with pending events even if the last event
+    was a moment ago."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    r.add_to_digest("b", "tool_pre", "tool_edit", "edit")
+    # Both sessions just-now active — collect_project_flushes would
+    # return nothing because idle_for < CHANNEL_IDLE_FLUSH_S.
+    assert r.collect_project_flushes() == []
+    flushes = r.force_flush_all()
+    labels = sorted(pf.label for pf in flushes)
+    assert labels == ["api", "web"]
+    # Force-flush is destructive — pending should be empty after.
+    assert r.pending_count() == 0
+
+
+def test_force_flush_all_skips_empty_projects():
+    """A session with zero pending events shouldn't generate an empty
+    ProjectFlush — the daemon would feed it through the summarizer and
+    get an empty string back, wasting a Haiku call."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    flushes = r.force_flush_all()
+    assert [pf.label for pf in flushes] == ["api"]
+
+
+def test_clear_pending_returns_count_and_empties_all_sessions():
+    """The resume-fresh path needs a count (for the log line) and the
+    side effect of emptying every pile in one call."""
+    r = _new_router()
+    r.note_event("a", cwd="/x/api")
+    r.note_event("b", cwd="/x/web")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    r.add_to_digest("a", "tool_pre", "tool_edit", "edit")
+    r.add_to_digest("b", "tool_pre", "tool_edit", "edit")
+    assert r.clear_pending() == 3
+    assert r.pending_count() == 0
+    # Idempotent: a second call on an already-empty router is fine
+    # (the resume flow may call twice via a retry on socket flake).
+    assert r.clear_pending() == 0
