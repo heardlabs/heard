@@ -579,20 +579,98 @@ class HeardApp(rumps.App):
     def on_silence(self, _sender) -> None:
         """The "Pause Heard" / "Resume Heard" toggle. (Variable name
         kept as ``on_silence`` to minimise diff churn — the displayed
-        label and behaviour are what the user sees.)"""
+        label and behaviour are what the user sees.)
+
+        On resume with a non-empty pending buffer, pop the text-input
+        prompt so the persona can ask "catch you up, or start fresh?"
+        and the user can type (or Wispr) their answer. Empty buffer →
+        silent resume, same as before. The daemon side's awaiting
+        flag stays armed for ``_RESUME_INTENT_TIMEOUT_S`` so a missed
+        click here doesn't park the daemon."""
         try:
-            if client.is_muted():
-                client.unmute(source="menu")
-            else:
+            currently_muted = client.is_muted()
+        except Exception:
+            currently_muted = False
+
+        if not currently_muted:
+            # Currently narrating → pause.
+            try:
                 client.mute(source="menu")
+            except Exception:
+                pass
+            try:
+                self.refresh(None)
+            except Exception:
+                pass
+            return
+
+        # Currently paused → resume. Read pending count BEFORE
+        # unmuting so we know whether to pop the panel; the status
+        # call is cheap (one socket round-trip) and reading after
+        # unmute is racier because the digest tick could re-pause /
+        # drain inside the gap.
+        pending_count = self._read_pending_count()
+        try:
+            client.unmute(source="menu")
         except Exception:
             pass
-        # Tickle a refresh so the menu label flips immediately rather
-        # than waiting up to 3 s for the next poll tick.
         try:
             self.refresh(None)
         except Exception:
             pass
+
+        if pending_count <= 0:
+            return
+
+        # Pop the resume prompt. PromptResult.text is the user's
+        # answer; we ship it to the daemon's resume_intent socket
+        # cmd regardless of what they typed (the daemon classifies).
+        try:
+            from heard import prompt_window
+
+            try:
+                cur_status = client.get_status() or {}
+            except Exception:
+                cur_status = {}
+            persona_name = cur_status.get("persona", "Heard")
+            who = (persona_name or "Heard").strip().capitalize() or "Heard"
+            result = prompt_window.ask(
+                title=f"{who}: welcome back.",
+                message=(
+                    "While you were away, I queued up "
+                    f"{pending_count} thing{'s' if pending_count != 1 else ''}. "
+                    "Want me to catch you up, or start fresh? "
+                    "(Empty / Skip = start fresh.)"
+                ),
+                placeholder="catch me up  /  start fresh  /  …",
+                submit_label="OK",
+                cancel_label="Skip",
+            )
+        except Exception:
+            # Prompt couldn't render (rare — AppKit unavailable in a
+            # weird launch context). Default to fresh by sending an
+            # empty resume_intent so the daemon doesn't stay parked.
+            result = None
+
+        text = result.text if (result is not None and result.submitted) else ""
+        try:
+            client.resume_intent(text)
+        except Exception:
+            pass
+
+    def _read_pending_count(self) -> int:
+        """One-shot status read for the pending count. Returns 0 on
+        any error so we default to the silent-resume branch — safer
+        than popping a panel when we can't verify there's anything
+        to recap."""
+        try:
+            status = client.get_status() or {}
+        except Exception:
+            status = {}
+        try:
+            return int(status.get("pending_count") or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def on_replay(self, _sender) -> None:
         """Mirror of the long-press hotkey for users who'd rather
