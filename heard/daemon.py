@@ -162,6 +162,14 @@ class Daemon:
         # capture in that window cancels the timer and keeps the flag
         # set, so a continuous dictation stays fully suppressed.
         self._mic_release_timer: threading.Timer | None = None
+        # Resume-from-pause flow: set True when unmute happens with a
+        # non-empty pending buffer. While set, the digest tick skips
+        # its drain so the UI's prompt panel can ask the user whether
+        # to catch them up or start fresh BEFORE the buffer auto-
+        # drains. Cleared by the resume_intent socket cmd or by the
+        # 30s safety timer (defaults to fresh).
+        self._awaiting_resume_intent: bool = False
+        self._awaiting_resume_intent_timer: threading.Timer | None = None
         # Speech queue. Bounded so we don't accumulate a wall of stale
         # tool announcements; oldest is dropped when full. Drained by
         # a single worker thread, so utterances play sequentially
@@ -315,6 +323,17 @@ class Daemon:
                     # Feature off — drain silently so events don't pile
                     # up forever waiting on a scheduler that won't speak.
                     self.router.collect_project_flushes(auto_voices=auto_voices)
+                    continue
+                if self.cfg.get("muted") or self._awaiting_resume_intent:
+                    # Muted or waiting for the user's resume-intent
+                    # answer. Skip the drain entirely (don't even
+                    # collect) — the buffer stays intact so the
+                    # resume-catch-up path can flush it on demand
+                    # via router.force_flush_all(). On normal mute
+                    # without the resume flow, the buffer simply
+                    # stays in memory while paused; the user's next
+                    # unmute either drains it (catch up) or clears
+                    # it (fresh start) via the same socket cmd.
                     continue
                 flushes = self.router.collect_project_flushes(auto_voices=auto_voices)
                 for pf in flushes:
@@ -1178,38 +1197,203 @@ class Daemon:
             self._kill_current()
             self._queue.clear()
 
+    # Safety timeout for the resume-intent panel. If the user clicks
+    # "Resume Heard" + the panel pops but they never submit (window
+    # forgotten in another space, daemon respawned mid-flow, etc.),
+    # we default to "fresh" after this many seconds so the daemon
+    # doesn't stay parked in the awaiting state forever.
+    _RESUME_INTENT_TIMEOUT_S: float = 30.0
+
     def _toggle_mute(self) -> None:
         """Tap-hotkey handler: flip the "Pause Heard" flag. While muted,
         every event is dropped at both ``_speak`` and ``_start_speech``,
         and the hook subprocess short-circuits via ``client.is_muted()``
         so a quit-while-muted Heard stays silent on the next agent
         event. Resume is explicit — only another toggle (menu or
-        hotkey) clears it."""
+        hotkey) clears it.
+
+        Routes through ``_do_mute`` / ``_do_unmute`` so the hotkey and
+        socket paths share the resume-intent flow (the menu's Resume
+        click and the hotkey unmute both arm the catch-up prompt
+        when there's buffered narration)."""
+        if bool(self.cfg.get("muted")):
+            self._do_unmute(source="hotkey")
+        else:
+            self._do_mute(source="hotkey")
+
+    def _do_mute(self, *, source: str) -> None:
+        """Cancel current speech, clear the speech queue, and persist
+        ``muted=true``. Used by the socket ``mute`` cmd, the hotkey
+        handler, and the "Pause Heard" menu item — same behaviour
+        regardless of entry point."""
+        self._cancel_only()
+        self.cfg["muted"] = True
+        try:
+            config.set_value("muted", True)
+        except Exception:
+            pass
+        # Cancel any in-flight resume-intent state — re-muting while
+        # awaiting a catch-up answer just throws the question away;
+        # the next unmute will re-ask if the buffer's still non-empty.
+        self._clear_awaiting_resume_intent()
+        _log("muted", source=source)
+        if source != "socket":
+            notify.notify(
+                "Heard paused",
+                "Click Resume Heard in the menu to turn narration back on.",
+                kind="muted_toggle",
+            )
+
+    def _do_unmute(self, *, source: str) -> None:
+        """Persist ``muted=false`` and arm the resume-intent flow if
+        the router has buffered narration to choose between.
+
+        Three observable outcomes depending on buffer state:
+
+        * Empty buffer → silent resume. The next agent event narrates
+          normally; no panel pops, no question is asked.
+        * Non-empty buffer → set ``_awaiting_resume_intent`` so the
+          digest tick stays paused, fire the 30 s safety timer
+          (defaults to fresh on timeout), notify the user that the
+          UI will prompt. The UI sees ``awaiting_resume_intent=True``
+          in status and pops the panel.
+        * In every case the persisted ``muted`` flag flips to False,
+          so the hook subprocess will start letting events through
+          again."""
         was_muted = bool(self.cfg.get("muted"))
-        if was_muted:
-            self.cfg["muted"] = False
-            try:
-                config.set_value("muted", False)
-            except Exception:
-                pass
-            _log("unmuted", source="hotkey")
+        self.cfg["muted"] = False
+        try:
+            config.set_value("muted", False)
+        except Exception:
+            pass
+        _log("unmuted", source=source)
+        # Always show a brief "back on" notification when transitioning
+        # from muted → unmuted; skip the notify for socket-driven calls
+        # that didn't actually change state (idempotent retries).
+        if was_muted and source != "socket":
             notify.notify(
                 "Heard resumed",
                 "Narration is back on.",
                 kind="muted_toggle",
             )
-        else:
-            self._cancel_only()
-            self.cfg["muted"] = True
+        # Arm the resume-intent flow if there's anything buffered. The
+        # UI polls status and pops the prompt panel when it sees
+        # ``awaiting_resume_intent=True`` + ``pending_count > 0``.
+        try:
+            pending = self.router.pending_count()
+        except Exception:
+            pending = 0
+        if pending <= 0:
+            return
+        self._awaiting_resume_intent = True
+        # Safety timer — if the panel never gets answered, default to
+        # fresh after _RESUME_INTENT_TIMEOUT_S so the daemon doesn't
+        # stay parked.
+        if self._awaiting_resume_intent_timer is not None:
             try:
-                config.set_value("muted", True)
+                self._awaiting_resume_intent_timer.cancel()
             except Exception:
                 pass
-            _log("muted", source="hotkey")
-            notify.notify(
-                "Heard paused",
-                "Click Resume Heard in the menu to turn narration back on.",
-                kind="muted_toggle",
+        t = threading.Timer(
+            self._RESUME_INTENT_TIMEOUT_S,
+            lambda: self._handle_resume_intent("", from_timeout=True),
+        )
+        t.daemon = True
+        self._awaiting_resume_intent_timer = t
+        t.start()
+        _log("resume_intent_armed", pending=pending)
+
+    def _clear_awaiting_resume_intent(self) -> None:
+        """Drop the awaiting-intent flag and cancel the safety timer.
+        Idempotent — safe to call from any reset path (mute, intent
+        resolved, timer fired)."""
+        self._awaiting_resume_intent = False
+        if self._awaiting_resume_intent_timer is not None:
+            try:
+                self._awaiting_resume_intent_timer.cancel()
+            except Exception:
+                pass
+            self._awaiting_resume_intent_timer = None
+
+    def _handle_resume_intent(self, text: str, *, from_timeout: bool = False) -> None:
+        """Act on the user's typed answer from the resume prompt panel.
+        Classifies the text via ``persona.classify_resume_intent`` —
+        keyword match first (zero-latency for short answers), Haiku
+        fallback for ambiguous cases, defaulting to 'fresh' if neither
+        path succeeds.
+
+        Three actions:
+
+        * ``catch_up`` → force-flush every project's pending buffer
+          through the existing project-flush summary pipeline. Each
+          project gets one rolled-up summary in the appropriate voice,
+          identical to what the 1 s tick would have produced if the
+          channels had passed the idle/backpressure gate.
+        * ``fresh`` → drop the buffer. Next event narrates as if
+          nothing accumulated during the pause.
+        * ``other`` → log the input verbatim (so we can see what users
+          type when none of the keywords / LLM heuristics match) and
+          fall through to ``fresh``.
+        """
+        self._clear_awaiting_resume_intent()
+        intent = persona_mod.classify_resume_intent(text)
+        _log(
+            "resume_intent",
+            intent=intent,
+            timeout=from_timeout,
+            text_len=len(text or ""),
+        )
+        if intent == "catch_up":
+            self._drain_pending_as_summary()
+            return
+        if intent == "other":
+            # Capture verbatim so we can grow the keyword set later if
+            # a particular phrasing shows up repeatedly. Truncate to
+            # keep the log line grepable.
+            _log("resume_intent_other", text=(text or "")[:160])
+        # fresh / other both end up dropping the buffer.
+        cleared = self.router.clear_pending()
+        if cleared:
+            _log("resume_pending_cleared", count=cleared)
+
+    def _drain_pending_as_summary(self) -> None:
+        """Catch-up path: roll the buffered events into the same
+        project-flush summary the digest tick would have produced,
+        and speak each one. Reuses ``summarize_project`` so the voice
+        / persona / formatting is identical to the normal narration
+        stream — the recap just happens on-demand instead of on the
+        next tick boundary."""
+        auto_voices = bool(self.cfg.get("multi_agent_auto_voices", True))
+        flushes = self.router.force_flush_all(auto_voices=auto_voices)
+        if not flushes:
+            return
+        for pf in flushes:
+            summary = persona_mod.summarize_project(
+                self.persona,
+                pf.label,
+                pf.events,
+                member_count=len(pf.member_session_ids),
+            )
+            if not summary:
+                summary = multi_agent_mod.format_project_summary(
+                    pf.label, pf.events, member_count=len(pf.member_session_ids)
+                )
+            if not summary:
+                continue
+            _log(
+                "resume_catch_up",
+                project=pf.label,
+                sessions=len(pf.member_session_ids),
+                events=len(pf.events),
+            )
+            self.router.note_flush_spoken(pf.speaker_session_id)
+            self._start_speech(
+                summary,
+                cfg=self.cfg,
+                persona=self.persona,
+                session_id=pf.speaker_session_id,
+                voice_override=pf.voice_override,
+                coexists=True,
             )
 
     # --- event handling -----------------------------------------------------
@@ -1396,6 +1580,13 @@ class Daemon:
                 # which one is pinned / focus.
                 "active_sessions": self.router.list_active(),
                 "router_mode": self.router.mode().value,
+                # Resume-from-pause UX: the UI needs to know whether
+                # the pending-narration buffer has anything in it so
+                # it can decide between (a) silent resume on click vs
+                # (b) showing the prompt panel ("catch you up, or
+                # start fresh?"). Cheap to compute, always present.
+                "pending_count": self.router.pending_count(),
+                "awaiting_resume_intent": self._awaiting_resume_intent,
                 "pending_update": (
                     {
                         "version": self.pending_update.version,
@@ -1440,21 +1631,14 @@ class Daemon:
             self._cancel_only()
             return None
         if cmd == "mute":
-            self._cancel_only()
-            self.cfg["muted"] = True
-            try:
-                config.set_value("muted", True)
-            except Exception:
-                pass
-            _log("muted", source=req.get("source") or "socket")
+            self._do_mute(source=req.get("source") or "socket")
             return None
         if cmd == "unmute":
-            self.cfg["muted"] = False
-            try:
-                config.set_value("muted", False)
-            except Exception:
-                pass
-            _log("unmuted", source=req.get("source") or "socket")
+            self._do_unmute(source=req.get("source") or "socket")
+            return None
+        if cmd == "resume_intent":
+            text = (req.get("text") or "").strip()
+            self._handle_resume_intent(text)
             return None
         if cmd == "replay":
             self._replay_last()

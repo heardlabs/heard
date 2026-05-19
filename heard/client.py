@@ -351,6 +351,19 @@ def unmute(source: str = "client") -> None:
             pass
 
 
+def resume_intent(text: str) -> None:
+    """Ship the user's resume-panel answer to the daemon. Best-effort
+    — if the daemon isn't alive (rare; we just unmuted it), the
+    awaiting-intent timer on the daemon side will default to fresh
+    after the safety timeout, so a missed socket send isn't fatal."""
+    if not is_daemon_alive():
+        return
+    try:
+        send({"cmd": "resume_intent", "text": text or ""})
+    except Exception:
+        pass
+
+
 def _send_with_retry(payload: dict) -> None:
     ensure_daemon()
     try:
