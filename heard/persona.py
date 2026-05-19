@@ -846,3 +846,171 @@ def _suffix_address(text: str, address: str) -> str:
         return text
     punct = text[len(stripped):] or "."
     return f"{stripped}, {address}{punct}"
+
+
+# ---------------------------------------------------------------------------
+# Resume-intent classifier
+# ---------------------------------------------------------------------------
+#
+# When the user clicks "Resume Heard" after a pause, the menu-bar app
+# pops a text input box and the persona asks "catch you up, or start
+# fresh?". The user types (or Wispr-dictates) a free-form answer; this
+# classifier maps it to one of three intents the daemon acts on.
+#
+# Keyword matching covers the obvious yes/no/continue/fresh answers in
+# zero latency. Anything that doesn't match a keyword falls through to
+# a Haiku one-shot if a provider is available; if no provider is
+# reachable, we default to "fresh" so the user isn't stuck in an
+# awaiting-intent state when their LLM credit ran out at 3 a.m.
+
+_RESUME_INTENT_CATCH_UP_TOKENS = (
+    "catch", "continue", "recap", "summary", "summarize", "summarise",
+    "where", "left", "yes", "yep", "yeah", "yup", "please", "sure",
+    "go", "ok", "okay", "do",
+)
+
+_RESUME_INTENT_FRESH_TOKENS = (
+    "fresh", "skip", "new", "start over", "starting over", "scratch",
+    "no", "nope", "nah", "drop", "forget", "nothing", "later",
+    "don't", "dont", "cancel",
+)
+
+_RESUME_INTENT_VALUES = {"catch_up", "fresh", "other"}
+
+_RESUME_INTENT_SYSTEM_PROMPT = (
+    "You classify a single short user reply into one of exactly three "
+    "labels: catch_up, fresh, or other. The user was just asked "
+    "whether they want a recap of what happened while they had Heard "
+    "paused, or to start narrating fresh from now on. "
+    "Return catch_up if the user wants the recap (e.g. 'yes', "
+    "'catch me up', 'summarise it', 'continue'). "
+    "Return fresh if the user wants to skip the recap (e.g. 'no', "
+    "'fresh start', 'skip it', 'just keep going'). "
+    "Return other for anything that doesn't clearly fit (questions, "
+    "off-topic instructions, gibberish). "
+    "Reply with the label only — no punctuation, no explanation."
+)
+
+
+def _keyword_classify_resume_intent(text: str) -> str | None:
+    """Fast deterministic path: token-match the user's reply against
+    the catch_up / fresh keyword sets. Returns the matched label, or
+    None when neither set hits (caller falls through to Haiku)."""
+    lowered = text.lower()
+    # Multi-word phrase matches first (so 'start over' beats the
+    # single-word 'start' which doesn't appear in either set).
+    for phrase in ("start over", "starting over", "from scratch"):
+        if phrase in lowered:
+            return "fresh"
+    # Strip punctuation for single-token matching so "yes!" still hits.
+    tokens = {
+        t.strip(".,!?;:'\"()[]{}").lower()
+        for t in lowered.split()
+        if t.strip(".,!?;:'\"()[]{}")
+    }
+    catch_hit = tokens & set(_RESUME_INTENT_CATCH_UP_TOKENS)
+    fresh_hit = tokens & set(_RESUME_INTENT_FRESH_TOKENS)
+    if catch_hit and not fresh_hit:
+        return "catch_up"
+    if fresh_hit and not catch_hit:
+        return "fresh"
+    # Both sets hit (ambiguous) OR neither hit — let the LLM decide.
+    return None
+
+
+def _llm_classify_resume_intent(text: str) -> str | None:
+    """Haiku one-shot for the ambiguous keyword cases. Walks the same
+    BYOK → managed → CLI ladder as ``summarize_project``. Returns the
+    normalized label, or None when every provider failed (caller
+    defaults to 'fresh' so the user isn't stuck)."""
+    from heard import providers as _providers
+
+    user_msg = f"User reply: {text.strip()}\n\nLabel:"
+    max_tokens = 8
+    timeout = 2.0
+
+    def _normalize(raw: str | None) -> str | None:
+        if not raw:
+            return None
+        token = raw.strip().lower().strip(".,!?;:'\"()[]{}").split()
+        if not token:
+            return None
+        first = token[0]
+        if first in _RESUME_INTENT_VALUES:
+            return first
+        return None
+
+    key = _anthropic_key()
+    if key:
+        try:
+            out = _providers.AnthropicAPIProvider(api_key=key).rewrite(
+                system=_RESUME_INTENT_SYSTEM_PROMPT, user=user_msg,
+                max_tokens=max_tokens, timeout=timeout,
+            )
+        except Exception:
+            out = None
+        norm = _normalize(out)
+        if norm:
+            return norm
+
+    if _managed_rewrite_available() and not _managed_haiku_capped_today():
+        try:
+            from heard import config as _config
+            cfg = _config.load()
+        except Exception:
+            cfg = {}
+        token_str = (cfg.get("heard_token") or "").strip()
+        if token_str:
+            base_url = (cfg.get("heard_api_base") or "https://api.heard.dev").rstrip("/")
+            try:
+                out = _providers.ManagedAPIProvider(token=token_str, base_url=base_url).rewrite(
+                    system=_RESUME_INTENT_SYSTEM_PROMPT, user=user_msg,
+                    max_tokens=max_tokens, timeout=timeout,
+                )
+            except Exception:
+                out = None
+            norm = _normalize(out)
+            if norm:
+                return norm
+
+    binary = _providers._find_claude_binary()
+    if binary:
+        try:
+            out = _providers.ClaudeCLIProvider(binary=binary).rewrite(
+                system=_RESUME_INTENT_SYSTEM_PROMPT, user=user_msg,
+                max_tokens=max_tokens, timeout=timeout,
+            )
+        except Exception:
+            out = None
+        norm = _normalize(out)
+        if norm:
+            return norm
+    return None
+
+
+def classify_resume_intent(text: str) -> str:
+    """Map a free-form resume-panel answer to ``"catch_up" | "fresh" |
+    "other"``. Two-stage:
+
+    1. Token-keyword match — fires synchronously for the common
+       short-answer cases ("yes", "no", "fresh start", "catch me up")
+       so the daemon doesn't burn a Haiku round-trip on obvious input.
+    2. Haiku one-shot for the ambiguous cases, with BYOK → managed →
+       CLI fallback identical to ``summarize_project``.
+
+    Empty input → ``"fresh"`` (the Esc / empty-Enter dismiss path: the
+    user said nothing, so we don't replay anything). Unrecoverable LLM
+    failure on an ambiguous input also lands on ``"fresh"`` — see the
+    feedback memory for why a paused user prefers a no-op default
+    over a spurious recap from an LLM credit-bleed moment.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return "fresh"
+    kw = _keyword_classify_resume_intent(stripped)
+    if kw is not None:
+        return kw
+    llm = _llm_classify_resume_intent(stripped)
+    if llm is not None:
+        return llm
+    return "fresh"
