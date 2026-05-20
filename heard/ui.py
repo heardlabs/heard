@@ -67,20 +67,24 @@ def _pretty_hotkey(binding: str) -> str:
 class HeardApp(rumps.App):
     def __init__(self) -> None:
         # template=True asks macOS to auto-tint the icon to match the
-        # menu bar (white in dark mode, black in light mode). Using
-        # title=" " (a single space) rather than title="" is load-
-        # bearing: rumps' fallbackOnName() decides "would this slot
-        # be empty?" by checking ``title() or image()``, and during
-        # init the title is applied *before* the image mounts on the
+        # menu bar (white in dark mode, black in light mode). The
+        # title is a Unicode zero-width space (U+200B) — load-bearing
+        # quirk: rumps' fallbackOnName() decides "would this slot be
+        # empty?" by checking ``title() or image()`` during init, and
+        # the title is applied *before* the image mounts on the
         # NSStatusItem. With title="" that check fires when both are
-        # falsy, rumps stamps in the app name ("Heard"), and even
-        # though the image mounts moments later the fallback text is
-        # already locked in. A single space dodges the fallback
-        # entirely (truthy → no rewrite) while staying visually
-        # negligible next to the icon.
+        # falsy, rumps stamps in the app name ("Heard"), and the
+        # fallback persists even after the icon mounts. A regular
+        # space dodges fallback but renders as visible padding next
+        # to the icon. U+200B is truthy (skips fallback) AND has zero
+        # advance width (no visible gap) — best of both.
         if ICON_PATH.exists():
             super().__init__(
-                "Heard", title=" ", icon=str(ICON_PATH), template=True, quit_button=None
+                "Heard",
+                title="​",
+                icon=str(ICON_PATH),
+                template=True,
+                quit_button=None,
             )
         else:
             super().__init__("Heard", title="Heard", quit_button=None)
@@ -533,11 +537,13 @@ class HeardApp(rumps.App):
                 self.icon = None
                 self.title = "🔇"
             else:
-                # Single space, not "" — rumps' fallbackOnName fires
-                # mid-update when the title is empty and re-stamps in
-                # the app name. See HeardApp.__init__ for the longer
-                # writeup.
-                self.title = " "
+                # U+200B (zero-width space), not "" — rumps'
+                # fallbackOnName fires mid-update when the title is
+                # empty and re-stamps in the app name. ZWSP is
+                # truthy (skips the fallback) AND renders no visible
+                # glyph (no padding next to the icon). See
+                # HeardApp.__init__ for the longer writeup.
+                self.title = "​"
                 if ICON_PATH.exists():
                     self.icon = str(ICON_PATH)
                 else:
