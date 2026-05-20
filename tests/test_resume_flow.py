@@ -88,6 +88,85 @@ def test_unmute_with_pending_buffer_arms_resume_intent(tmp_path, monkeypatch):
     daemon._awaiting_resume_intent_timer.cancel()
 
 
+def _swap_in_real_tts(daemon):
+    """The default test config falls through to NullTTS (no key, no
+    managed token). The resume welcome short-circuits on NullTTS so a
+    voiceless install doesn't try to speak. Swap in a sentinel that
+    advertises a real-backend class so the welcome actually fires."""
+
+    class _Sentinel:
+        AUDIO_EXT = ".mp3"
+        MAX_NATIVE_SPEED = 1.2
+
+        def synth_to_file(self, *a, **kw):
+            pass
+
+    daemon.tts = _Sentinel()
+
+
+def test_unmute_with_pending_buffer_speaks_welcome(tmp_path, monkeypatch):
+    """The Jarvis "welcome back" line is the load-bearing UX cue —
+    user hears the question even with the panel covered by another
+    window. Must enqueue on unmute with non-empty pending."""
+    daemon = _make_daemon(tmp_path, monkeypatch, {"muted": True})
+    _arm_pending_buffer(daemon, count=2)
+    _swap_in_real_tts(daemon)
+
+    spoken: list[dict] = []
+
+    def _fake_start_speech(text, **kw):
+        spoken.append({"text": text, "kw": kw})
+
+    monkeypatch.setattr(daemon, "_start_speech", _fake_start_speech)
+
+    daemon._handle('{"cmd":"unmute","source":"test"}')
+    daemon._awaiting_resume_intent_timer.cancel()
+
+    assert len(spoken) == 1
+    line = spoken[0]["text"]
+    assert "Welcome back" in line
+    # Specific count so it reads "2 things", not a vague "some things".
+    assert "2 thing" in line
+    assert "Catch you up" in line or "fresh" in line.lower()
+    # Same session-id pattern as the greeting so a hook event doesn't
+    # cancel it via the speech queue's session-priority logic.
+    assert spoken[0]["kw"].get("session_id") == "__resume__"
+    assert spoken[0]["kw"].get("coexists") is True
+
+
+def test_unmute_with_empty_buffer_does_not_speak_welcome(tmp_path, monkeypatch):
+    """The common case (paused while idle, resume a moment later)
+    should NOT trigger a spoken welcome — silence is the expectation."""
+    daemon = _make_daemon(tmp_path, monkeypatch, {"muted": True})
+
+    spoken: list[str] = []
+    monkeypatch.setattr(
+        daemon, "_start_speech", lambda text, **_kw: spoken.append(text)
+    )
+
+    daemon._handle('{"cmd":"unmute","source":"test"}')
+    assert spoken == []
+
+
+def test_resume_welcome_uses_singular_for_one_item(tmp_path, monkeypatch):
+    """Plural-aware wording: "1 thing", not "1 things"."""
+    daemon = _make_daemon(tmp_path, monkeypatch, {"muted": True})
+    _arm_pending_buffer(daemon, count=1)
+    _swap_in_real_tts(daemon)
+
+    spoken: list[str] = []
+    monkeypatch.setattr(
+        daemon, "_start_speech", lambda text, **_kw: spoken.append(text)
+    )
+
+    daemon._handle('{"cmd":"unmute","source":"test"}')
+    daemon._awaiting_resume_intent_timer.cancel()
+
+    assert len(spoken) == 1
+    assert "1 thing." in spoken[0] or "1 thing " in spoken[0]
+    assert "1 things" not in spoken[0]
+
+
 def test_status_payload_carries_pending_count_and_awaiting_flag(tmp_path, monkeypatch):
     """The UI polls status to decide whether to pop the prompt panel.
     Both fields must be on the wire."""

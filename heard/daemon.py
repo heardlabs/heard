@@ -1286,6 +1286,12 @@ class Daemon:
         if pending <= 0:
             return
         self._awaiting_resume_intent = True
+        # Speak the welcome BEFORE arming the timer so the persona
+        # voice greets the user as the panel appears (they see + hear
+        # the question simultaneously). The speech queues normally —
+        # if the user answers fast, the catch-up summary lands behind
+        # this line via the same queue, so there's no overlap.
+        self._speak_resume_welcome(pending)
         # Safety timer — if the panel never gets answered, default to
         # fresh after _RESUME_INTENT_TIMEOUT_S so the daemon doesn't
         # stay parked.
@@ -1302,6 +1308,36 @@ class Daemon:
         self._awaiting_resume_intent_timer = t
         t.start()
         _log("resume_intent_armed", pending=pending)
+
+    def _speak_resume_welcome(self, pending: int) -> None:
+        """Queue the spoken "welcome back" line the persona greets the
+        user with on resume. Mirrors the panel's question so a user
+        with sound on but the panel covered by another window still
+        knows what to type. Pattern matches the first-launch greeting:
+        ``session_id="__resume__"`` + ``coexists=True`` so a hook
+        event arriving right after doesn't cancel it.
+
+        NullTTS path → silent (no voice configured; the panel still
+        carries the same question as fallback text)."""
+        if isinstance(self.tts, NullTTS):
+            return
+        # Plural-aware count so "1 thing" / "2 things" reads right.
+        # Keep the line short — long welcomes are the kind of thing
+        # users mute Heard *for*, so respect their attention budget.
+        plural = "s" if pending != 1 else ""
+        welcome = (
+            f"Welcome back. While you were away, I queued up "
+            f"{pending} thing{plural}. "
+            "Catch you up, or start fresh?"
+        )
+        _log("resume_welcome_spoken", pending=pending)
+        self._start_speech(
+            welcome,
+            cfg=self.cfg,
+            persona=self.persona,
+            session_id="__resume__",
+            coexists=True,
+        )
 
     def _clear_awaiting_resume_intent(self) -> None:
         """Drop the awaiting-intent flag and cancel the safety timer.
