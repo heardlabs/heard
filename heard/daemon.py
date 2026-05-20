@@ -144,7 +144,6 @@ class Daemon:
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
         self._current_cancel: threading.Event | None = None
-        self._last_spoken: str = ""
         self._last_error: dict | None = None
         self._hotkey_listener: object | None = None
         self._audio_monitor: audio_monitor.AudioMonitor | None = None
@@ -439,28 +438,14 @@ class Daemon:
                 flush=True,
             )
 
-        mode = (self.cfg.get("hotkey_mode") or "taphold").lower()
-        if mode == "taphold":
-            key_name = self.cfg.get("hotkey_taphold_key") or hotkey.DEFAULT_TAPHOLD_KEY
-            threshold = int(
-                self.cfg.get("hotkey_taphold_threshold_ms")
-                or hotkey.DEFAULT_TAPHOLD_THRESHOLD_MS
-            )
-            self._hotkey_listener = hotkey.start_taphold(
-                key_name,
-                threshold,
-                on_tap=self._toggle_mute,
-                on_hold=self._replay_last,
-            )
-        else:
-            bindings: dict = {}
-            silence = self.cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING)
-            if silence:
-                bindings[silence] = self._toggle_mute
-            replay = self.cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING)
-            if replay:
-                bindings[replay] = self._replay_last
-            self._hotkey_listener = hotkey.start(bindings)
+        bindings: dict = {}
+        pause = self.cfg.get("hotkey_pause", hotkey.DEFAULT_PAUSE_BINDING)
+        if pause:
+            bindings[pause] = self._pause_hotkey
+        cont = self.cfg.get("hotkey_continue", hotkey.DEFAULT_CONTINUE_BINDING)
+        if cont:
+            bindings[cont] = self._continue_hotkey
+        self._hotkey_listener = hotkey.start(bindings)
 
     def _start_audio_monitor(self) -> None:
         """Start the mic-capture watcher (CoreAudio polling) so Heard
@@ -631,11 +616,8 @@ class Daemon:
         """Snapshot of every config value that affects hotkey wiring.
         Used to detect when we need to restart the listener."""
         return (
-            (cfg.get("hotkey_mode") or "taphold").lower(),
-            cfg.get("hotkey_taphold_key") or hotkey.DEFAULT_TAPHOLD_KEY,
-            int(cfg.get("hotkey_taphold_threshold_ms") or hotkey.DEFAULT_TAPHOLD_THRESHOLD_MS),
-            cfg.get("hotkey_silence", hotkey.DEFAULT_BINDING),
-            cfg.get("hotkey_replay", hotkey.DEFAULT_REPLAY_BINDING),
+            cfg.get("hotkey_pause", hotkey.DEFAULT_PAUSE_BINDING),
+            cfg.get("hotkey_continue", hotkey.DEFAULT_CONTINUE_BINDING),
             bool(cfg.get("hotkey_enabled", True)),
         )
 
@@ -1139,12 +1121,7 @@ class Daemon:
     def _drain_queue(self) -> None:
         """Single-consumer worker. Pops one utterance at a time and
         speaks it through completion, so the next event in the queue
-        only starts after the current chunk's afplay returns.
-
-        ``_last_spoken`` is stamped HERE (after a successful play),
-        not at enqueue, so long-press replay says what the user
-        actually heard — not something that was queued and dropped
-        from the cap, or that's still waiting to play."""
+        only starts after the current chunk's afplay returns."""
         while True:
             with self._queue_cv:
                 if not self._queue:
@@ -1157,7 +1134,6 @@ class Daemon:
                 if self._current_cancel is cancel:
                     self._current_cancel = None
                 if not cancel.is_set():
-                    self._last_spoken = text
                     # Log to spoken history. Synth ms is captured in
                     # _speak's _log line; we don't repeat it here —
                     # this record captures the user-facing fact that
@@ -1174,17 +1150,6 @@ class Daemon:
                                 "persona": persona.name if persona else hmeta.get("persona", ""),
                             }
                         )
-
-    def _replay_last(self) -> None:
-        """Long-press replay: 'I missed that, say it again'. Has to
-        preempt — if speech is already playing or queued, we cancel
-        + flush so the replay actually plays *now*, not at the back
-        of the queue."""
-        if not self._last_spoken:
-            return
-        text = self._last_spoken
-        self._cancel_only()
-        self._start_speech(text)
 
     def _cancel_only(self) -> None:
         """Silence: kill the current utterance AND drop everything
@@ -1204,22 +1169,22 @@ class Daemon:
     # doesn't stay parked in the awaiting state forever.
     _RESUME_INTENT_TIMEOUT_S: float = 30.0
 
-    def _toggle_mute(self) -> None:
-        """Tap-hotkey handler: flip the "Pause Heard" flag. While muted,
-        every event is dropped at both ``_speak`` and ``_start_speech``,
-        and the hook subprocess short-circuits via ``client.is_muted()``
-        so a quit-while-muted Heard stays silent on the next agent
-        event. Resume is explicit — only another toggle (menu or
-        hotkey) clears it.
-
-        Routes through ``_do_mute`` / ``_do_unmute`` so the hotkey and
-        socket paths share the resume-intent flow (the menu's Resume
-        click and the hotkey unmute both arm the catch-up prompt
-        when there's buffered narration)."""
+    def _pause_hotkey(self) -> None:
+        """Hotkey handler: mute. Idempotent — pressing the pause
+        hotkey while already paused is a no-op (we don't want a second
+        notify, and the queue is already clear). Two-hotkey model: the
+        continue hotkey is a separate binding."""
         if bool(self.cfg.get("muted")):
-            self._do_unmute(source="hotkey")
-        else:
-            self._do_mute(source="hotkey")
+            return
+        self._do_mute(source="hotkey")
+
+    def _continue_hotkey(self) -> None:
+        """Hotkey handler: unmute. Idempotent — pressing continue
+        while not muted is a no-op (no resume-intent prompt to arm,
+        nothing to clear)."""
+        if not bool(self.cfg.get("muted")):
+            return
+        self._do_unmute(source="hotkey")
 
     def _do_mute(self, *, source: str) -> None:
         """Cancel current speech, clear the speech queue, and persist
@@ -1675,9 +1640,6 @@ class Daemon:
         if cmd == "resume_intent":
             text = (req.get("text") or "").strip()
             self._handle_resume_intent(text)
-            return None
-        if cmd == "replay":
-            self._replay_last()
             return None
         if cmd == "event":
             self._handle_event(req)

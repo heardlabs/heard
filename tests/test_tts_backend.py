@@ -16,7 +16,7 @@ import pytest
 def _quiet_hotkey(monkeypatch):
     """Daemon constructor would otherwise try to register a real global
     hotkey listener — bypass it. We're only exercising _make_tts here."""
-    monkeypatch.setattr("heard.hotkey.start_taphold", lambda *a, **kw: None)
+    
     monkeypatch.setattr("heard.hotkey.start", lambda *a, **kw: None)
     monkeypatch.setattr("heard.accessibility.ensure_trusted", lambda **kw: True)
     yield

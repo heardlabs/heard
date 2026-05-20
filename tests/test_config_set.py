@@ -59,10 +59,12 @@ def test_verbosity_must_be_valid():
         cli._validate("verbosity", "meh")
 
 
-def test_hotkey_threshold_minimum():
-    with pytest.raises(typer.BadParameter):
-        cli._validate("hotkey_taphold_threshold_ms", "50")
-    assert cli._validate("hotkey_taphold_threshold_ms", "400") == 400
+def test_hotkey_pause_passes_through_as_string():
+    """hotkey_pause / hotkey_continue are free-form pynput combo
+    strings; the validator just rejects negatives where it can and
+    passes the rest through verbatim."""
+    assert cli._validate("hotkey_pause", "<shift>+<alt>+.") == "<shift>+<alt>+."
+    assert cli._validate("hotkey_continue", "<cmd>+x") == "<cmd>+x"
 
 
 def test_bool_keys_accept_truthy_strings():

@@ -32,6 +32,38 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 ICON_PATH = ASSETS_DIR / "menubar.png"
 
 
+# pynput-style hotkey strings ("<shift>+<alt>+.") → mac-style glyphs
+# ("⇧⌥.") for the menu hint labels. Keeps the menu compact and reads
+# the same way the OS shows shortcuts in native menus.
+_HOTKEY_GLYPHS = {
+    "<cmd>": "⌘",
+    "<shift>": "⇧",
+    "<alt>": "⌥",
+    "<option>": "⌥",
+    "<ctrl>": "⌃",
+    "<control>": "⌃",
+    "<super>": "⌘",
+    "<win>": "⌘",
+}
+
+
+def _pretty_hotkey(binding: str) -> str:
+    """Format a pynput hotkey string as a compact glyph form. Unknown
+    tokens pass through verbatim so a user-defined named key (e.g.
+    ``<f5>``) still shows something readable."""
+    if not binding:
+        return "—"
+    parts = binding.split("+")
+    out: list[str] = []
+    for raw in parts:
+        token = raw.strip()
+        if not token:
+            continue
+        glyph = _HOTKEY_GLYPHS.get(token.lower())
+        out.append(glyph if glyph is not None else token.strip("<>"))
+    return "".join(out)
+
+
 class HeardApp(rumps.App):
     def __init__(self) -> None:
         # template=True asks macOS to auto-tint the icon to match the
@@ -93,13 +125,14 @@ class HeardApp(rumps.App):
         self.status_item = rumps.MenuItem(self._status_item_key)
         self.status_item.set_callback(None)
 
-        # Silence + Replay labels are filled in live from config in
-        # refresh() — the static "⌘⇧." was misleading because the
-        # default mode is tap-hold on Right Option, not the combo
-        # form. Now the label reads "Silence (tap right_option)" or
-        # "Silence (⌘⇧.)" depending on which mode is active.
-        self.silence_item = rumps.MenuItem("Stop narrating", callback=self.on_silence)
-        self.replay_item = rumps.MenuItem("Replay last", callback=self.on_replay)
+        # Two explicit menu items: Pause + Continue. Labels carry the
+        # hotkey hint (rendered from config so a user who rebinds in
+        # Settings sees the live binding, not a stale default). The
+        # inactive item gets greyed out via set_callback(None) in
+        # refresh() so a click on it is a no-op rather than a confusing
+        # second pause.
+        self.pause_item = rumps.MenuItem("Pause Heard", callback=self.on_pause)
+        self.continue_item = rumps.MenuItem("Continue", callback=self.on_continue)
 
         # Version line — always present. refresh() flips it between
         # "↑ Update to vX.Y.Z →" (clickable, when the daemon reports a
@@ -254,8 +287,8 @@ class HeardApp(rumps.App):
             self.account_item,
             self.version_item,
             None,
-            self.silence_item,
-            self.replay_item,
+            self.pause_item,
+            self.continue_item,
             None,
             self.persona_menu,
             self.speed_menu,
@@ -354,20 +387,19 @@ class HeardApp(rumps.App):
         self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
         self._refresh_offline_voice_items()
 
-        # Hotkey binding labels — earlier the silence item label
-        # hardcoded "⌘⇧." even though the actual default is tap-hold
-        # on Right Option. Pull from live config so the menu reflects
-        # what's actually wired up.
-        silence_hint, replay_hint = self._hotkey_hints(cfg)
-        # "Pause Heard" / "Resume Heard" toggle — wraps the cancel-current
-        # behaviour of the old "Stop narrating" plus an indefinite mute
-        # that survives quit/respawn. Indefinite by design: the user
-        # explicitly resumes when they're ready.
+        # Two explicit menu items, one per action — the inactive one
+        # gets greyed out by clearing its callback so a click on it is
+        # a no-op (rumps renders disabled items dimmed, which is the
+        # affordance we want). Labels carry the live hotkey hint.
+        pause_hint, continue_hint = self._hotkey_hints(cfg)
+        self.pause_item.title = f"Pause Heard  ({pause_hint})"
+        self.continue_item.title = f"Continue  ({continue_hint})"
         if muted:
-            self.silence_item.title = f"Resume Heard  ({silence_hint})"
+            self.pause_item.set_callback(None)
+            self.continue_item.set_callback(self.on_continue)
         else:
-            self.silence_item.title = f"Pause Heard  ({silence_hint})"
-        self.replay_item.title = f"Replay last  ({replay_hint})"
+            self.pause_item.set_callback(self.on_pause)
+            self.continue_item.set_callback(None)
 
         # Update-available callout. Mount under the status row when
         # the daemon's poll has turned up a newer release; remove on
@@ -516,12 +548,12 @@ class HeardApp(rumps.App):
             pass
 
     def _hotkey_hints(self, cfg: dict) -> tuple[str, str]:
-        if cfg.get("hotkey_mode", "taphold") == "taphold":
-            key = cfg.get("hotkey_taphold_key", "right_option")
-            return f"tap {key}", f"hold {key}"
+        """Pretty pause + continue hotkey labels for the menu items.
+        Pulls from live config so a user-rebound hotkey shows up
+        immediately, not the default."""
         return (
-            cfg.get("hotkey_silence", "⌘⇧.") or "—",
-            cfg.get("hotkey_replay", "⌘⇧,") or "—",
+            _pretty_hotkey(cfg.get("hotkey_pause", "⇧⌥.")),
+            _pretty_hotkey(cfg.get("hotkey_continue", "⇧⌥,")),
         )
 
     def _status_line(self, cfg: dict, state: str) -> str:
@@ -585,39 +617,40 @@ class HeardApp(rumps.App):
 
     # --- action callbacks ---------------------------------------------------
 
-    def on_silence(self, _sender) -> None:
-        """The "Pause Heard" / "Resume Heard" toggle. (Variable name
-        kept as ``on_silence`` to minimise diff churn — the displayed
-        label and behaviour are what the user sees.)
+    def on_pause(self, _sender) -> None:
+        """Pause Heard menu item. Idempotent — clicking while already
+        muted is a no-op (refresh has already greyed this item out, so
+        it shouldn't be reachable, but defend against a stale menu)."""
+        try:
+            if client.is_muted():
+                return
+            client.mute(source="menu")
+        except Exception:
+            pass
+        try:
+            self.refresh(None)
+        except Exception:
+            pass
 
-        On resume with a non-empty pending buffer, pop the text-input
-        prompt so the persona can ask "catch you up, or start fresh?"
-        and the user can type (or Wispr) their answer. Empty buffer →
-        silent resume, same as before. The daemon side's awaiting
-        flag stays armed for ``_RESUME_INTENT_TIMEOUT_S`` so a missed
-        click here doesn't park the daemon."""
+    def on_continue(self, _sender) -> None:
+        """Continue menu item. On resume with a non-empty pending
+        buffer, pop the text-input prompt so the persona can ask
+        "catch you up, or start fresh?" and the user can type (or
+        Wispr) their answer. Empty buffer → silent resume. The
+        daemon's awaiting flag stays armed for
+        ``_RESUME_INTENT_TIMEOUT_S`` so a missed click here doesn't
+        park the daemon."""
         try:
             currently_muted = client.is_muted()
         except Exception:
             currently_muted = False
-
         if not currently_muted:
-            # Currently narrating → pause.
-            try:
-                client.mute(source="menu")
-            except Exception:
-                pass
-            try:
-                self.refresh(None)
-            except Exception:
-                pass
             return
 
-        # Currently paused → resume. Read pending count BEFORE
-        # unmuting so we know whether to pop the panel; the status
-        # call is cheap (one socket round-trip) and reading after
-        # unmute is racier because the digest tick could re-pause /
-        # drain inside the gap.
+        # Read pending count BEFORE unmuting so we know whether to
+        # pop the panel; the status call is cheap (one socket
+        # round-trip) and reading after unmute is racier because the
+        # digest tick could re-pause / drain inside the gap.
         pending_count = self._read_pending_count()
         try:
             client.unmute(source="menu")
@@ -680,14 +713,6 @@ class HeardApp(rumps.App):
             return int(status.get("pending_count") or 0)
         except (TypeError, ValueError):
             return 0
-
-    def on_replay(self, _sender) -> None:
-        """Mirror of the long-press hotkey for users who'd rather
-        click than reach for Right Option."""
-        try:
-            client.send({"cmd": "replay"})
-        except Exception:
-            pass
 
     def _mk_persona_cb(self, name: str):
         """Switch to ``name``'s persona — write its frontmatter into the

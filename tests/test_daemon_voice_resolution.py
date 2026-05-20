@@ -15,7 +15,7 @@ from heard import persona as persona_mod
 
 @pytest.fixture(autouse=True)
 def _quiet_hotkey(monkeypatch):
-    monkeypatch.setattr("heard.hotkey.start_taphold", lambda *a, **kw: None)
+    
     monkeypatch.setattr("heard.hotkey.start", lambda *a, **kw: None)
     monkeypatch.setattr("heard.accessibility.ensure_trusted", lambda **kw: True)
     yield

@@ -220,26 +220,30 @@ def ui() -> None:
     ui_mod.run()
 
 
-@app.command()
-def silence() -> None:
-    """Cancel current speech. Daemon stays running so the next response is fast.
+@app.command(name="pause")
+def pause_cmd() -> None:
+    """Pause narration. Persists across daemon respawn — the next
+    agent event won't make a sound until ``heard continue`` (or the
+    menu/hotkey equivalent).
 
-    Default hotkey: ⌘⇧. Configurable via `hotkey_silence`.
+    Default hotkey: ⇧⌥. — configurable via ``hotkey_pause``.
     """
     try:
-        client.send({"cmd": "stop"})
+        client.mute(source="cli")
     except Exception:
         pass
 
 
-@app.command()
-def replay() -> None:
-    """Re-speak the last narration (useful if you stepped away during a call).
+@app.command(name="continue")
+def continue_cmd() -> None:
+    """Resume narration. If there's buffered work from before the
+    pause, the persona will ask whether to catch you up or start
+    fresh via the menu-bar prompt panel.
 
-    Default hotkey: ⌘⇧, Configurable via `hotkey_replay`.
+    Default hotkey: ⇧⌥, — configurable via ``hotkey_continue``.
     """
     try:
-        client.send({"cmd": "replay"})
+        client.unmute(source="cli")
     except Exception:
         pass
 
@@ -671,7 +675,6 @@ def config_get(
 
 
 _VALID_VERBOSITY = ("quiet", "brief", "normal", "verbose", "low", "high")
-_VALID_HOTKEY_MODE = ("taphold", "combo")
 _BOOL_KEYS = (
     "narrate_tools",
     "narrate_tool_results",
@@ -710,14 +713,6 @@ def _validate(key: str, value: str) -> object:
             )
         return v
 
-    if key == "hotkey_mode":
-        v = value.lower()
-        if v not in _VALID_HOTKEY_MODE:
-            raise typer.BadParameter(
-                f"hotkey_mode must be one of {', '.join(_VALID_HOTKEY_MODE)}; got {value!r}."
-            )
-        return v
-
     if key == "speed":
         try:
             f = float(value)
@@ -730,17 +725,13 @@ def _validate(key: str, value: str) -> object:
             raise typer.BadParameter(f"speed out of range; expected 0.5–2.0, got {f}.")
         return f
 
-    if key in ("skip_under_chars", "flush_delay_ms", "hotkey_taphold_threshold_ms"):
+    if key in ("skip_under_chars", "flush_delay_ms"):
         try:
             i = int(value)
         except ValueError:
             raise typer.BadParameter(f"{key} must be an integer; got {value!r}.") from None
         if i < 0:
             raise typer.BadParameter(f"{key} cannot be negative; got {i}.")
-        if key == "hotkey_taphold_threshold_ms" and i < 100:
-            raise typer.BadParameter(
-                f"hotkey_taphold_threshold_ms < 100ms is unusable (it'd trigger on every keypress); got {i}."
-            )
         return i
 
     if key in _BOOL_KEYS:
@@ -760,16 +751,16 @@ def _validate(key: str, value: str) -> object:
             err=True,
         )
 
-    # Free-form string keys (voice, lang, *_api_key, hotkey_silence,
-    # hotkey_replay, hotkey_taphold_key, etc.) just pass through.
+    # Free-form string keys (voice, lang, *_api_key, hotkey_pause,
+    # hotkey_continue, etc.) just pass through.
     return value
 
 
 @config_app.command("set")
 def config_set(key: str, value: str) -> None:
     """Set a config value. Validates known keys (persona, speed,
-    verbosity, hotkey_mode, booleans) and rejects out-of-range values
-    so an accidental ``heard config set speed -2.0`` doesn't silently
+    verbosity, booleans) and rejects out-of-range values so an
+    accidental ``heard config set speed -2.0`` doesn't silently
     break TTS."""
     typed = _validate(key, value)
     config.set_value(key, typed)

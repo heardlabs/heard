@@ -22,7 +22,7 @@ import pytest
 def _quiet_subsystems(monkeypatch):
     """Daemon constructor would otherwise spin global listeners; bypass
     them so we can poke ``_speak`` / ``_start_speech`` directly."""
-    monkeypatch.setattr("heard.hotkey.start_taphold", lambda *a, **kw: None)
+    
     monkeypatch.setattr("heard.hotkey.start", lambda *a, **kw: None)
     monkeypatch.setattr("heard.accessibility.ensure_trusted", lambda **kw: True)
     monkeypatch.setattr("heard.audio_monitor.start", lambda *a, **kw: None)

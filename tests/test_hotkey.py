@@ -10,8 +10,8 @@ from heard import hotkey
 
 def test_default_bindings_constants():
     # Anchors so config defaults don't silently drift.
-    assert hotkey.DEFAULT_BINDING == "<cmd>+<shift>+."
-    assert hotkey.DEFAULT_REPLAY_BINDING == "<cmd>+<shift>+,"
+    assert hotkey.DEFAULT_PAUSE_BINDING == "<shift>+<alt>+."
+    assert hotkey.DEFAULT_CONTINUE_BINDING == "<shift>+<alt>+,"
 
 
 def test_start_returns_none_on_failure(monkeypatch):

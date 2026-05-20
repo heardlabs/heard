@@ -377,7 +377,7 @@ class SettingsController(NSObject):
             _schedule_app_relaunch(
                 "Heard — restarting to activate the hotkey",
                 "Accessibility was just granted. Heard is relaunching so the "
-                "global tap-hold shortcut starts working.",
+                "global pause/continue shortcut starts working.",
             )
 
     # --- panel construction ------------------------------------------------
@@ -668,63 +668,36 @@ class SettingsController(NSObject):
     def _build_shortcuts_panel(self) -> NSView:
         outer, body = self._panel_shell("shortcuts")
 
-        # Mode picker (tap & hold vs combo).
-        mode_seg = _segmented(["Tap & hold", "Key combo"], self, "onHotkeyModeChanged:")
-        mode_row = _setting_row(
-            "Hotkey style",
-            "Tap & hold uses one modifier key. Combo uses ⌘⇧-style shortcuts.",
-            mode_seg,
+        # Pause + Continue combos. One field per action — no toggle,
+        # no tap-hold mode, no menu-item-named alternates. Hotkey
+        # strings use pynput's ``<shift>+<alt>+.`` form; the daemon
+        # validates them on reload.
+        self._add_section(body, "PAUSE & CONTINUE")
+        pause_field = _text_field(placeholder="<shift>+<alt>+.")
+        pause_field.setTarget_(self)
+        pause_field.setAction_("onPauseComboChanged:")
+        pause_status = _label("", size=12, dim=True)
+        pause_row = _field_row(
+            "Pause Heard",
+            "Hotkey to pause narration. Format: <shift>+<alt>+.",
+            pause_field, status=pause_status,
         )
-        self._add_card(body, _card([mode_row]))
-
-        # Tap & hold card.
-        self._add_section(body, "TAP & HOLD")
-        tap_pop = _popup(
-            [
-                "right_option", "left_option",
-                "right_cmd", "right_ctrl",
-                "right_shift", "caps_lock",
-            ],
-            target=self, action="onTapKeyChanged:",
+        continue_field = _text_field(placeholder="<shift>+<alt>+,")
+        continue_field.setTarget_(self)
+        continue_field.setAction_("onContinueComboChanged:")
+        continue_status = _label("", size=12, dim=True)
+        continue_row = _field_row(
+            "Continue",
+            "Hotkey to resume narration. Format: <shift>+<alt>+,",
+            continue_field, status=continue_status,
         )
-        tap_row = _setting_row(
-            "Trigger key",
-            "Tap = silence narration. Hold ≥ 400 ms = replay last.",
-            tap_pop,
-        )
-        tap_group = self._add_card(body, _card([tap_row]))
-
-        # Combo card.
-        self._add_section(body, "KEY COMBO")
-        silence_field = _text_field(placeholder="<cmd>+<shift>+.")
-        silence_field.setTarget_(self)
-        silence_field.setAction_("onSilenceComboChanged:")
-        silence_status = _label("", size=12, dim=True)
-        combo_silence_row = _field_row(
-            "Silence",
-            "Combo for stopping narration mid-sentence. Format: <cmd>+<shift>+.",
-            silence_field, status=silence_status,
-        )
-        replay_field = _text_field(placeholder="<cmd>+<shift>+,")
-        replay_field.setTarget_(self)
-        replay_field.setAction_("onReplayComboChanged:")
-        replay_status = _label("", size=12, dim=True)
-        combo_replay_row = _field_row(
-            "Replay last",
-            "Combo for repeating the last narration. Format: <cmd>+<shift>+,",
-            replay_field, status=replay_status,
-        )
-        combo_group = self._add_card(body, _card([combo_silence_row, combo_replay_row]))
+        self._add_card(body, _card([pause_row, continue_row]))
 
         self._refs["shortcuts"].update({
-            "mode": mode_seg,
-            "tap_pop": tap_pop,
-            "silence_field": silence_field,
-            "replay_field": replay_field,
-            "silence_status": silence_status,
-            "replay_status": replay_status,
-            "tap_group": tap_group,
-            "combo_group": combo_group,
+            "pause_field": pause_field,
+            "continue_field": continue_field,
+            "pause_status": pause_status,
+            "continue_status": continue_status,
         })
         return outer
 
@@ -755,7 +728,7 @@ class SettingsController(NSObject):
         ax_btn = _button("Open Settings", target=self, action="onOpenAXSettings:")
         ax_row = _setting_row(
             ax_status,
-            "Needed for the global tap-hold hotkey to work.",
+            "Needed for the global pause/continue hotkey to work.",
             ax_btn,
         )
         self._add_card(body, _card([ax_row]))
@@ -951,21 +924,15 @@ class SettingsController(NSObject):
 
     def _refresh_shortcuts(self, cfg: dict) -> None:
         r = self._refs["shortcuts"]
-        mode = cfg.get("hotkey_mode", "taphold")
-        r["mode"].setSelectedSegment_(0 if mode == "taphold" else 1)
-        tap_key = cfg.get("hotkey_taphold_key", "right_option")
-        if tap_key in r["tap_pop"].itemTitles():
-            r["tap_pop"].selectItemWithTitle_(tap_key)
-        # Don't clobber a combo field the user is editing.
-        for key, cfgkey in (("silence_field", "hotkey_silence"), ("replay_field", "hotkey_replay")):
-            if r[key].currentEditor() is None:
-                r[key].setStringValue_(cfg.get(cfgkey, "") or "")
-        self._refresh_combo_status(r["silence_field"], r["silence_status"])
-        self._refresh_combo_status(r["replay_field"], r["replay_status"])
-        # Hide the whole inactive group (section header + card).
-        is_tap = mode == "taphold"
-        r["tap_group"].setHidden_(not is_tap)
-        r["combo_group"].setHidden_(is_tap)
+        # Don't clobber a field the user is mid-editing.
+        for field_key, cfg_key in (
+            ("pause_field", "hotkey_pause"),
+            ("continue_field", "hotkey_continue"),
+        ):
+            if r[field_key].currentEditor() is None:
+                r[field_key].setStringValue_(cfg.get(cfg_key, "") or "")
+        self._refresh_combo_status(r["pause_field"], r["pause_status"])
+        self._refresh_combo_status(r["continue_field"], r["continue_status"])
 
     def _refresh_combo_status(self, field, status_label) -> None:
         v = (field.stringValue() or "").strip()
@@ -976,7 +943,9 @@ class SettingsController(NSObject):
             status_label.setStringValue_("✓ Valid.")
             status_label.setTextColor_(_text_color_dim())
         else:
-            status_label.setStringValue_("Invalid — use e.g. <cmd>+<shift>+.")
+            status_label.setStringValue_(
+                "Invalid — use e.g. <shift>+<alt>+."
+            )
             status_label.setTextColor_(_nscolor(_WARN))
 
     def _refresh_advanced(self, cfg: dict, _status: dict) -> None:
@@ -996,7 +965,7 @@ class SettingsController(NSObject):
         except Exception:
             ax_ok = False
         r["ax_status"].setStringValue_(
-            "✓ Accessibility granted" if ax_ok else "● Not granted — tap-hold won't work"
+            "✓ Accessibility granted" if ax_ok else "● Not granted — hotkey won't work"
         )
 
         try:
@@ -1154,38 +1123,29 @@ class SettingsController(NSObject):
             self._save_el_key(f.stringValue())
 
     # Shortcuts.
-    def onHotkeyModeChanged_(self, sender) -> None:
-        mode = "taphold" if int(sender.selectedSegment()) == 0 else "combo"
-        config.set_value("hotkey_mode", mode)
-        _reload_daemon()
-        self._refresh_shortcuts(config.load())
+    def onPauseComboChanged_(self, sender) -> None:
+        self._save_combo("hotkey_pause", sender.stringValue(),
+                         self._refs["shortcuts"]["pause_status"])
 
-    def onTapKeyChanged_(self, sender) -> None:
-        v = sender.titleOfSelectedItem()
-        if v:
-            config.set_value("hotkey_taphold_key", v)
-            _reload_daemon()
-
-    def onSilenceComboChanged_(self, sender) -> None:
-        self._save_combo("hotkey_silence", sender.stringValue(),
-                         self._refs["shortcuts"]["silence_status"])
-
-    def onReplayComboChanged_(self, sender) -> None:
-        self._save_combo("hotkey_replay", sender.stringValue(),
-                         self._refs["shortcuts"]["replay_status"])
+    def onContinueComboChanged_(self, sender) -> None:
+        self._save_combo("hotkey_continue", sender.stringValue(),
+                         self._refs["shortcuts"]["continue_status"])
 
     def _save_combo(self, cfgkey: str, val: str, status_label) -> None:
         val = (val or "").strip()
         if val and not _valid_combo(val):
             # Don't persist an unparseable combo (it'd silently kill the
             # hotkey). Surface the error; leave config untouched.
-            status_label.setStringValue_("Invalid — use e.g. <cmd>+<shift>+.")
+            status_label.setStringValue_(
+                "Invalid — use e.g. <shift>+<alt>+."
+            )
             status_label.setTextColor_(_nscolor(_WARN))
             return
         config.set_value(cfgkey, val)
         _reload_daemon()
+        field_key = "pause_field" if cfgkey == "hotkey_pause" else "continue_field"
         self._refresh_combo_status(
-            self._refs["shortcuts"]["silence_field" if cfgkey == "hotkey_silence" else "replay_field"],
+            self._refs["shortcuts"][field_key],
             status_label,
         )
 
@@ -1967,7 +1927,7 @@ class _OnboardingController(NSObject):
             _schedule_app_relaunch(
                 "Heard — restarting to activate the hotkey",
                 "Accessibility was just granted. Heard is relaunching so the "
-                "global tap-hold shortcut starts working.",
+                "global pause/continue shortcut starts working.",
             )
 
     # --- screens ------------------------------------------------------------
@@ -2220,7 +2180,7 @@ class _OnboardingController(NSObject):
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Grant Accessibility access")
         body = _wizard_body(
-            "Heard needs Accessibility access for the global tap-hold hotkey "
+            "Heard needs Accessibility access for the global pause/continue hotkey "
             "(tap to silence, hold to replay). Click below, find Heard in the list, "
             "and turn it on. macOS will restart Heard once you grant it."
         )

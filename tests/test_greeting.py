@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _quiet_subsystems(monkeypatch):
-    monkeypatch.setattr("heard.hotkey.start_taphold", lambda *a, **kw: None)
+    
     monkeypatch.setattr("heard.hotkey.start", lambda *a, **kw: None)
     monkeypatch.setattr("heard.accessibility.ensure_trusted", lambda **kw: True)
     monkeypatch.setattr("heard.audio_monitor.start", lambda *a, **kw: None)
