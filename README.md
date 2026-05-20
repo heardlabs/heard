@@ -89,7 +89,8 @@ Everyday commands:
 ```bash
 heard preset jarvis              # switch persona
 heard config set verbosity brief # quieter
-heard silence                    # or tap Right Option to interrupt
+heard pause                      # or ⇧⌥. to stop narrating
+heard continue                   # or ⇧⌥, to resume
 heard doctor                     # end-to-end self-test
 ```
 
