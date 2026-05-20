@@ -48,14 +48,7 @@ Paste this into Claude Code, Codex, or any AI coding tool:
 
 ### Manual
 
-Download the latest [`Heard.zip`](https://github.com/heardlabs/heard/releases/latest), drag `Heard.app` into `/Applications`, then **right-click → Open** the first time (unsigned build). Onboarding walks you through voice / API key / hotkey / which agents to wire up.
-
-### CLI
-
-```bash
-pipx install heard           # or: uv tool install heard
-heard install claude-code    # wires the hook
-```
+Download the latest [`Heard.zip`](https://github.com/heardlabs/heard/releases/latest/download/Heard.zip), drag `Heard.app` into `/Applications`, double-click to launch. Onboarding walks you through voice / API key / hotkey / which agents to wire up.
 
 ## What it does
 

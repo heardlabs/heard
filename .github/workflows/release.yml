@@ -299,7 +299,7 @@ jobs:
             2. Unzip
             3. Drag `Heard.app` into `/Applications`
             4. Double-click to launch — the build is signed by Heard Labs and notarized by Apple, so Gatekeeper opens it without warnings
-            5. The onboarding window walks you through four screens: API key (optional, for in-character persona rewrites), voice, the silence/replay hotkey, and which agents to wire up
+            5. The onboarding window walks you through four screens: API key (optional, for in-character persona rewrites), voice, the pause/continue hotkeys, and which agents to wire up
             6. Done — Heard is in the menu bar, hooks installed, ready to narrate
 
             ### Voice — two options
@@ -307,19 +307,12 @@ jobs:
             - **Free local (Kokoro)** — skip the ElevenLabs key field in onboarding. Downloads a ~337 MB voice model on first synth call. Best on Macs with 12 GB+ RAM.
             - **Premium (ElevenLabs)** — paste your `sk_…` key on screen 2 of onboarding. Tiny daemon (~80 MB), pay-per-character (typically pennies a day), best voice quality.
 
-            ### Hotkey
+            ### Hotkeys
 
-            **Right Option** key (right of your spacebar):
-            - **Tap** — silence the current narration
-            - **Long-press** (≥ 400 ms) — replay the last line
+            Two combo hotkeys, both rebindable in Settings → Shortcuts:
+            - **⇧⌥.** (`Shift+Option+.`) — Pause narration
+            - **⇧⌥,** (`Shift+Option+,`) — Continue narration. If anything was buffered while paused, the persona asks whether to catch you up or start fresh.
 
             macOS will ask once for Accessibility access — click Allow.
-
-            ### CLI alternative
-
-            ```bash
-            pipx install heard
-            heard install claude-code
-            ```
 
             See the [README](https://github.com/heardlabs/heard#readme) for full docs and troubleshooting.
