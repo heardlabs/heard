@@ -44,7 +44,7 @@ Bring an [ElevenLabs](https://elevenlabs.io) key for the best voices, or use **K
 
 Paste this into Claude Code, Codex, or any AI coding tool:
 
-> Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
+> Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
 
 ### Manual
 
