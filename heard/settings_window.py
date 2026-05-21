@@ -1321,14 +1321,14 @@ def _reload_daemon() -> None:
 
 
 def _valid_combo(s: str) -> bool:
-    """True if ``s`` parses as a pynput hotkey combo (the format the
-    daemon's GlobalHotKeys listener expects, e.g. ``<cmd>+<shift>+.``)."""
+    """True if ``s`` parses as a hotkey combo string the daemon's
+    NSEvent global monitor will accept (e.g. ``<shift>+<alt>+.``)."""
     s = (s or "").strip()
     if not s:
         return False
     try:
-        from pynput.keyboard import HotKey
-        HotKey.parse(s)
+        from heard import hotkey as _hotkey
+        _hotkey.parse_binding(s)
         return True
     except Exception:
         return False

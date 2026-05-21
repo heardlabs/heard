@@ -1,6 +1,6 @@
 [project]
 name = "heard"
-version = "0.8.7"
+version = "0.8.8"
 description = "A voice companion for your AI coding agents. Heard speaks your agent's replies so you can keep working."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -41,7 +41,6 @@ dependencies = [
     "charset-normalizer>=3.0",
     "idna>=3.0",
     "urllib3>=2.0",
-    "pynput>=1.7",
     "rumps>=0.4",
     # Explicit pyobjc frameworks for the WKWebView onboarding window.
     # rumps brings pyobjc-core but not these — without them, importing
