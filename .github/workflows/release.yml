@@ -250,6 +250,84 @@ jobs:
           # Final Gatekeeper smoke test — should print "accepted".
           spctl --assess --type execute --verbose "$APP"
 
+      - name: Install create-dmg
+        # GitHub's macos-latest runners don't ship with create-dmg
+        # preinstalled; brew has it. ~30 s install on a cold cache.
+        run: brew install create-dmg
+
+      - name: Build Heard.dmg
+        # Produces the standard "drag the app onto Applications" install
+        # experience users see from Discord / Spotify / Notion / etc.
+        # Eliminates the App Translocation footgun — when a user double-
+        # clicks the .app from Downloads, macOS runs it from a randomized
+        # temp folder and hooks break because their PYTHONHOME path
+        # points at /Applications. A DMG forces the install to happen
+        # from /Applications before launch.
+        run: |
+          set -euo pipefail
+          APP="packaging/dist/Heard.app"
+          DMG_OUT="packaging/dist/Heard-${GITHUB_REF_NAME:-dev}.dmg"
+          BG="packaging/dmg-background.png"
+
+          # create-dmg arranges the window: app icon on the left, an
+          # Applications symlink on the right, both ~24 px above the
+          # window's vertical center. 640×400 matches the background
+          # PNG dimensions so the layout doesn't get rescaled.
+          create-dmg \
+            --volname "Heard" \
+            --background "$BG" \
+            --window-pos 200 120 \
+            --window-size 640 400 \
+            --icon-size 96 \
+            --icon "Heard.app" 160 240 \
+            --app-drop-link 480 240 \
+            --hide-extension "Heard.app" \
+            --no-internet-enable \
+            --skip-jenkins \
+            "$DMG_OUT" \
+            "$APP"
+
+          # Also produce the unversioned alias so the homepage button +
+          # latest-download URL never need a version bump.
+          cp "$DMG_OUT" "packaging/dist/Heard.dmg"
+
+      - name: Sign the DMG
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          IDENTITY="Developer ID Application: Jianing Sun ($APPLE_TEAM_ID)"
+          for DMG in packaging/dist/Heard-*.dmg packaging/dist/Heard.dmg; do
+            codesign --force --sign "$IDENTITY" --timestamp "$DMG"
+            codesign --verify --strict --verbose=2 "$DMG"
+          done
+
+      - name: Notarize and staple the DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # We only need to submit the versioned DMG — the unversioned
+          # alias is a byte-identical copy and notarytool would reject
+          # the duplicate. Staple the ticket onto both copies so each
+          # file launches without a network round-trip.
+          VERSIONED="packaging/dist/Heard-${GITHUB_REF_NAME:-dev}.dmg"
+          xcrun notarytool submit "$VERSIONED" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$VERSIONED"
+          xcrun stapler staple "packaging/dist/Heard.dmg"
+          xcrun stapler validate "$VERSIONED"
+          # Gatekeeper smoke test on the DMG (the .app inside is
+          # already separately notarized + stapled from the earlier
+          # step; this checks the outer container).
+          spctl --assess --type open --context context:primary-signature \
+            --verbose "$VERSIONED"
+
       - name: Zip the bundle
         # Build two zips with identical contents:
         #   Heard-vX.Y.Z.zip  → versioned, for archival download
@@ -268,6 +346,8 @@ jobs:
           path: |
             packaging/dist/Heard-*.zip
             packaging/dist/Heard.zip
+            packaging/dist/Heard-*.dmg
+            packaging/dist/Heard.dmg
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
@@ -276,6 +356,8 @@ jobs:
           files: |
             packaging/dist/Heard-*.zip
             packaging/dist/Heard.zip
+            packaging/dist/Heard-*.dmg
+            packaging/dist/Heard.dmg
           body: |
             ### Install with one prompt (lazy mode)
 
@@ -295,12 +377,18 @@ jobs:
 
             ### Install manually (menu bar app)
 
-            1. Download `Heard-${{ github.ref_name }}.zip` below (or the unversioned `Heard.zip`)
-            2. Unzip
-            3. Drag `Heard.app` into `/Applications`
-            4. Double-click to launch — the build is signed by Heard Labs and notarized by Apple, so Gatekeeper opens it without warnings
+            **Recommended — `Heard.dmg`:**
+
+            1. Download `Heard-${{ github.ref_name }}.dmg` below (or the unversioned `Heard.dmg`)
+            2. Double-click the DMG — a window opens with `Heard.app` on the left and an `Applications` shortcut on the right
+            3. Drag `Heard.app` onto `Applications`. Eject the disk image when done.
+            4. Open Heard from `/Applications` (or Launchpad / Spotlight)
             5. The onboarding window walks you through four screens: API key (optional, for in-character persona rewrites), voice, the pause/continue hotkeys, and which agents to wire up
             6. Done — Heard is in the menu bar, hooks installed, ready to narrate
+
+            **Alternative — `Heard.zip`** (use this only if you specifically need an unsigned-style flow; the DMG is more reliable):
+
+            Download the zip, drag `Heard.app` into `/Applications`, then double-click. **Important:** unzipping inside Downloads and double-clicking from there triggers macOS App Translocation — Heard runs from a randomized temp folder and its hooks break. Always move the `.app` to `/Applications` *before* launching it.
 
             ### Voice — two options
 
