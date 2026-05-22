@@ -2180,9 +2180,9 @@ class _OnboardingController(NSObject):
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Grant Accessibility access")
         body = _wizard_body(
-            "Heard needs Accessibility access for the global pause/continue hotkey "
-            "(tap to silence, hold to replay). Click below, find Heard in the list, "
-            "and turn it on. macOS will restart Heard once you grant it."
+            "Heard needs Accessibility access for the global pause/continue "
+            "hotkeys. Click below, find Heard in the list, and turn it on. "
+            "macOS will restart Heard once you grant it."
         )
         open_btn = _button("Open System Settings", target=self, action="onWizOpenAX:", primary=True)
         status = _label("", size=13, bold=True)
