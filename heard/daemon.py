@@ -1412,7 +1412,15 @@ class Daemon:
         persona = self._persona_for(cfg)
         session = self.sessions.touch(session_id, cwd=cwd)
         # Note this event so the router knows the session is active.
-        self.router.note_event(session_id, cwd or "")
+        # ``abs_path`` in ctx (set by templates for Edit / Write /
+        # NotebookEdit) is the load-bearing signal for project
+        # attribution — walks up to .git / package.json / etc. and
+        # promotes the session's repo_name from the cwd-derived weak
+        # name (e.g. "christian" from a home-dir cwd) to the real
+        # project name (e.g. "heard"). See router.note_event for the
+        # tiered confidence rules.
+        path_hint = (ctx.get("abs_path") or None) if isinstance(ctx, dict) else None
+        self.router.note_event(session_id, cwd or "", path_hint=path_hint)
 
         if kind == "tool_pre":
             density = self.sessions.tool_density(session_id)

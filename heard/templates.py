@@ -186,6 +186,12 @@ def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narrati
             text=text,
             ctx={
                 "file": ctx_name,
+                # ``abs_path`` carries the full path so the daemon's
+                # router can attribute this session to the correct
+                # project (walks up the path looking for .git /
+                # package.json / etc.). The basename above stays for
+                # narration text; the full path is for routing only.
+                "abs_path": tool_input.get("file_path") or "",
                 "change_old": (tool_input.get("old_string") or "")[:_CHANGE_SNIPPET_CAP],
                 "change_new": (tool_input.get("new_string") or "")[:_CHANGE_SNIPPET_CAP],
             },
@@ -199,6 +205,7 @@ def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narrati
             text=text,
             ctx={
                 "file": ctx_name,
+                "abs_path": tool_input.get("file_path") or "",
                 "change_new": (tool_input.get("content") or "")[:_CHANGE_SNIPPET_CAP],
             },
         )
@@ -211,6 +218,7 @@ def pre_tool_event(tool_name: str, tool_input: dict[str, Any] | None) -> Narrati
             text=text,
             ctx={
                 "file": ctx_name,
+                "abs_path": tool_input.get("notebook_path") or "",
                 "change_new": (tool_input.get("new_source") or "")[:_CHANGE_SNIPPET_CAP],
             },
         )
