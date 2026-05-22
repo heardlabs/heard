@@ -258,7 +258,8 @@ class Daemon:
         who = (self.persona.name or "Heard").strip().capitalize() or "Heard"
         greeting = (
             f"Hi, I'm {who}. Just letting you know I'm on. "
-            "If you want, you can switch to other voices in the menu bar."
+            "If you want, you can switch to other voices in the menu bar. "
+            "Let's get you set up in 4 easy steps."
         )
         self.cfg["greeted"] = True
         try:
