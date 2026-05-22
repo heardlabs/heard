@@ -286,7 +286,7 @@ jobs:
           # copy raised "Record not found" from Apple's CloudKit.)
           dmgbuild \
             --settings packaging/dmg-settings.py \
-            "Heard" \
+            "Heard Installer" \
             "$DMG_OUT"
 
       - name: Sign the DMG

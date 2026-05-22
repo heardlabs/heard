@@ -17,8 +17,11 @@ import os
 # --- Volume metadata --------------------------------------------------------
 
 # Name that appears at the top of the Finder window when the DMG is
-# mounted and on the Desktop disk icon.
-volume_name = "Heard"
+# mounted and on the Desktop disk icon. "Heard Installer" matches
+# the convention every well-known Mac installer uses (Cursor
+# Installer, Discord Installer, etc.) — sets context that this
+# window is for installation, not for running the app.
+volume_name = "Heard Installer"
 
 # UDZO = standard read-only zlib-compressed disk image. Apple's notary
 # service handles this format natively. UDBZ (bzip2) compresses ~10%
@@ -46,29 +49,30 @@ symlinks = {"Applications": "/Applications"}
 # --- Window styling ---------------------------------------------------------
 
 # Background image rendered behind the icons. Sized to match the
-# window dimensions below (640 × 400) so the orb+wordmark sits in the
-# top third and the bottom half is empty for the icons to land on.
+# window dimensions below so Finder doesn't scale it. Just a thin
+# grey arrow drawn between where the icons land — no logo or other
+# ornament, matching Cursor / Discord / Notion installer styling.
 background = os.environ.get(
     "HEARD_DMG_BG",
     os.path.join("packaging", "dmg-background.png"),
 )
 
-# Window geometry: ((x, y), (width, height)). 640 × 400 matches the
-# background PNG dimensions exactly so Finder doesn't scale it.
-window_rect = ((200, 120), (640, 400))
+# Window geometry: ((x, y), (width, height)). 520 × 360 is a compact
+# installer window — closer to Cursor's proportions than the older
+# 640 × 400 layout, which felt oversized for two icons + an arrow.
+window_rect = ((200, 120), (520, 360))
 
-# Icon size in points. 96 leaves comfortable whitespace around each
-# icon at the 640 × 400 window size without making them feel small.
-icon_size = 96
+# Icon size in points. 72 keeps the icons readable but doesn't make
+# them dominate the window — same ratio as Cursor's installer.
+icon_size = 72
 
 # Where each visible item sits inside the window. Coordinates are
-# relative to the window's content origin (top-left). 160/480 splits
-# the 640-wide window into thirds with each icon centered in its
-# half. 240 puts them ~24 px below vertical center so the logo at
-# the top has room to breathe.
+# relative to the window's content origin (top-left). Icons + arrow
+# share a single horizontal band at y=180; arrow shaft lives on the
+# background PNG between x=230 and x=298 (icons land at 140 and 380).
 icon_locations = {
-    "Heard.app": (160, 240),
-    "Applications": (480, 240),
+    "Heard.app": (140, 180),
+    "Applications": (380, 180),
 }
 
 # Open the DMG in icon view (the default-without-styling fallback is
