@@ -273,6 +273,11 @@ jobs:
           # Applications symlink on the right, both ~24 px above the
           # window's vertical center. 640×400 matches the background
           # PNG dimensions so the layout doesn't get rescaled.
+          # Build only the versioned file here — the unversioned alias
+          # is produced *after* notarization + stapling so it carries
+          # the embedded ticket. (Earlier version cp'd before notary;
+          # CI failed because stapling the never-submitted unversioned
+          # copy raised "Record not found" from Apple's CloudKit.)
           create-dmg \
             --volname "Heard" \
             --background "$BG" \
@@ -287,32 +292,23 @@ jobs:
             "$DMG_OUT" \
             "$APP"
 
-          # Also produce the unversioned alias so the homepage button +
-          # latest-download URL never need a version bump.
-          cp "$DMG_OUT" "packaging/dist/Heard.dmg"
-
       - name: Sign the DMG
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           IDENTITY="Developer ID Application: Jianing Sun ($APPLE_TEAM_ID)"
-          for DMG in packaging/dist/Heard-*.dmg packaging/dist/Heard.dmg; do
-            codesign --force --sign "$IDENTITY" --timestamp "$DMG"
-            codesign --verify --strict --verbose=2 "$DMG"
-          done
+          VERSIONED="packaging/dist/Heard-${GITHUB_REF_NAME:-dev}.dmg"
+          codesign --force --sign "$IDENTITY" --timestamp "$VERSIONED"
+          codesign --verify --strict --verbose=2 "$VERSIONED"
 
-      - name: Notarize and staple the DMG
+      - name: Notarize, staple, and produce unversioned alias
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           set -euo pipefail
-          # We only need to submit the versioned DMG — the unversioned
-          # alias is a byte-identical copy and notarytool would reject
-          # the duplicate. Staple the ticket onto both copies so each
-          # file launches without a network round-trip.
           VERSIONED="packaging/dist/Heard-${GITHUB_REF_NAME:-dev}.dmg"
           xcrun notarytool submit "$VERSIONED" \
             --apple-id "$APPLE_ID" \
@@ -320,13 +316,18 @@ jobs:
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --wait
           xcrun stapler staple "$VERSIONED"
-          xcrun stapler staple "packaging/dist/Heard.dmg"
           xcrun stapler validate "$VERSIONED"
           # Gatekeeper smoke test on the DMG (the .app inside is
           # already separately notarized + stapled from the earlier
           # step; this checks the outer container).
           spctl --assess --type open --context context:primary-signature \
             --verbose "$VERSIONED"
+
+          # Produce the unversioned ``Heard.dmg`` alias now that the
+          # versioned file carries its embedded notary ticket. cp
+          # preserves the ticket since it's part of the .dmg byte
+          # stream — no separate notarytool submission needed.
+          cp "$VERSIONED" "packaging/dist/Heard.dmg"
 
       - name: Zip the bundle
         # Build two zips with identical contents:
