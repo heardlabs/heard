@@ -33,6 +33,7 @@ and calls into it from _handle_event. Delete this file + the daemon's
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -87,6 +88,117 @@ CHANNEL_MAX_PENDING = 5
 # user pin a session that just went idle for a moment.
 SESSION_VISIBLE_S = 600.0
 
+# Files / directories whose presence in a folder marks it as a "real
+# project" (vs. an arbitrary working directory like ~/ or ~/Downloads).
+# The session-to-project inference walks up from each edited file path
+# looking for any of these; the directory containing the first hit is
+# treated as the session's project root.
+_PROJECT_MARKERS = (
+    ".git",
+    "pyproject.toml",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "build.gradle",
+    "build.gradle.kts",
+    "pom.xml",
+    "Gemfile",
+    "composer.json",
+    "Makefile",
+    ".heard.yaml",
+)
+
+# Cache of resolved project roots, keyed by the directory we started
+# the walk from. Walking up the filesystem hits ``os.path.exists`` once
+# per candidate; cheap, but a session firing dozens of events from the
+# same directory shouldn't repeat the same walk forever. Bounded so a
+# fork-bomb of distinct dirs can't grow the cache without limit.
+_PROJECT_ROOT_CACHE: dict[str, str | None] = {}
+_PROJECT_ROOT_CACHE_MAX = 512
+
+
+def _walk_stop_dirs() -> set[str]:
+    """Directories where the project-root walk should stop without
+    matching. We don't want to claim ``~/`` or ``/`` as a project even
+    if some user dropped a .git in their home dir — that'd attribute
+    every session to "home" and defeat the whole point. Resolved once
+    per process; users don't move their home dir mid-session."""
+    stops = {"/", os.path.expanduser("~")}
+    # Realpath defends against symlinked homes (some corp setups put
+    # ~/ on a network drive symlinked into /Users/<name>).
+    try:
+        stops.add(os.path.realpath(os.path.expanduser("~")))
+    except OSError:
+        pass
+    return stops
+
+
+def _find_project_root(path: str) -> str | None:
+    """Walk up from ``path`` looking for a folder that contains any of
+    the project-marker files. Returns the marker-containing folder's
+    absolute path, or ``None`` if we walk all the way to the user's
+    home directory (or root) without finding one.
+
+    A ``path`` that points to a file uses its parent directory as the
+    walk start. A ``path`` that's already a directory is the start
+    itself. Empty / nonexistent paths return ``None``.
+
+    The walk stops at the user's home dir on purpose. We don't want a
+    stray ``~/.git`` to make every session look like one big project,
+    and we don't want random subdirs of ``~`` (Downloads, Desktop, …)
+    inheriting a parent's marker. Hitting home = "no real project".
+    """
+    if not path:
+        return None
+    cached = _PROJECT_ROOT_CACHE.get(path)
+    if cached is not None or path in _PROJECT_ROOT_CACHE:
+        return cached
+
+    try:
+        absolute = os.path.abspath(path)
+    except (OSError, ValueError):
+        return None
+
+    # If the path points to a file (or a missing thing we want to
+    # treat as a file because it has an extension), start from its
+    # parent. Otherwise start from the path itself.
+    if os.path.isdir(absolute):
+        current = absolute
+    else:
+        current = os.path.dirname(absolute)
+
+    stops = _walk_stop_dirs()
+    seen: set[str] = set()
+    result: str | None = None
+    while current and current not in seen and current not in stops:
+        seen.add(current)
+        for marker in _PROJECT_MARKERS:
+            try:
+                if os.path.exists(os.path.join(current, marker)):
+                    result = current
+                    break
+            except OSError:
+                continue
+        if result is not None:
+            break
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+    if len(_PROJECT_ROOT_CACHE) >= _PROJECT_ROOT_CACHE_MAX:
+        _PROJECT_ROOT_CACHE.clear()
+    _PROJECT_ROOT_CACHE[path] = result
+    return result
+
+
+def _clear_project_root_cache() -> None:
+    """Drop every cached project-root lookup. Test-only — production
+    code never invalidates because filesystems rarely lose a .git
+    mid-session, and on the rare cases they do, a daemon restart is
+    cheap."""
+    _PROJECT_ROOT_CACHE.clear()
+
 # Tags that always pierce regardless of mode/focus — the "name across
 # the room" signal. Failures and wait-state questions are events the
 # user must hear even from background agents. ``prompt_intent`` joins
@@ -107,11 +219,34 @@ class Mode(Enum):
     PINNED = "pinned"
 
 
+@dataclass(frozen=True)
+class _RepoInference:
+    """One pass of project attribution: a derived name plus a confidence
+    tier. Higher confidence values overwrite lower ones in
+    ``note_event``; ties leave the existing value untouched. Tiers:
+
+    * 2 — found a project marker (.git, package.json, …) while walking
+      up from either the file path or the cwd. Solid signal.
+    * 1 — cwd basename was usable (cwd was provided and isn't a stop
+      dir like ``~/`` or ``/``). Weak fallback for sessions running
+      outside any recognised project — keeps current behaviour for
+      "random non-project folder" without re-triggering the
+      home-folder-as-project bug.
+    * 0 — nothing usable. Session sits in its own bucket keyed by
+      session id and won't trigger fake SWARM mode by sharing a
+      generic name with another stop-dir session.
+    """
+
+    name: str
+    confidence: int
+
+
 @dataclass
 class SessionInfo:
     session_id: str
     cwd: str = ""
     repo_name: str = ""
+    repo_confidence: int = 0
     last_event: float = 0.0
     # Monotonic counter, bumped on every note_event. Used to break
     # ties when two sessions share a last_event timestamp (back-to-back
@@ -266,27 +401,100 @@ class MultiAgentRouter:
 
     # --- session tracking --------------------------------------------------
 
-    def note_event(self, session_id: str, cwd: str = "") -> None:
-        """Record that ``session_id`` just fired an event. First time
-        we see a session, derive its display name from the cwd
-        basename — same heuristic the SessionStore uses."""
+    def note_event(
+        self,
+        session_id: str,
+        cwd: str = "",
+        path_hint: str | None = None,
+    ) -> None:
+        """Record that ``session_id`` just fired an event.
+
+        Project attribution (sets ``repo_name``, which drives voice
+        routing and SOLO/SWARM grouping):
+
+        1. ``path_hint`` (an edited / read file path) walks up to a
+           project marker → that folder's basename is the project.
+           High-confidence, file-driven inference.
+        2. Else if ``cwd`` itself contains a project marker → cwd
+           basename is the project. Medium-confidence fallback for
+           sessions whose first event has no path (Stop hooks,
+           generic bash commands).
+        3. Else ``repo_name`` stays empty → the project key falls
+           back to the session id, so this session sits in its own
+           bucket and doesn't trigger fake SWARM mode by sharing a
+           generic name like "christian" (the user's home dir).
+
+        Repo-name upgrades: a session created without a strong signal
+        (rule 2 or 3) can be upgraded to rule 1 on a later event that
+        carries a path_hint. Once rule 1 has fired, subsequent events
+        don't downgrade it — the project this session is "really on"
+        doesn't usually change mid-turn.
+        """
         if not session_id:
             return
+        derived = self._infer_repo_name(cwd, path_hint)
         with self._lock:
             info = self._sessions.get(session_id)
             if info is None:
-                repo_name = ""
-                if cwd:
-                    import os
-
-                    repo_name = os.path.basename(cwd.rstrip("/")) or cwd
                 info = SessionInfo(
-                    session_id=session_id, cwd=cwd or "", repo_name=repo_name
+                    session_id=session_id,
+                    cwd=cwd or "",
+                    repo_name=derived.name,
+                    repo_confidence=derived.confidence,
                 )
                 self._sessions[session_id] = info
+            else:
+                # Only upgrade — never overwrite a stronger inference
+                # with a weaker one.
+                if derived.confidence > info.repo_confidence:
+                    info.repo_name = derived.name
+                    info.repo_confidence = derived.confidence
+                # Keep cwd up to date if a later event carries one;
+                # the first event might not have had it (e.g. Stop
+                # hook without a tool_input).
+                if cwd and not info.cwd:
+                    info.cwd = cwd
             self._event_counter += 1
             info.last_event = time.time()
             info.event_seq = self._event_counter
+
+    def _infer_repo_name(
+        self, cwd: str, path_hint: str | None
+    ) -> _RepoInference:
+        """Resolve ``(repo_name, confidence)`` from the available
+        signals. Higher confidence wins on conflict; ties keep the
+        existing value. See ``note_event`` + ``_RepoInference`` for
+        the precedence rules and the rationale for each tier."""
+        # Tier 2: file path walks up to a real project root. This is
+        # the load-bearing case for "Claude launched from home but
+        # editing files inside ~/Desktop/Projects/heard/" — the
+        # path-derived inference beats the home-dir cwd.
+        if path_hint:
+            root = _find_project_root(path_hint)
+            if root:
+                name = os.path.basename(root.rstrip("/")) or root
+                return _RepoInference(name=name, confidence=2)
+        # Tier 2: cwd itself walks up to a real project root.
+        if cwd:
+            root = _find_project_root(cwd)
+            if root:
+                name = os.path.basename(root.rstrip("/")) or root
+                return _RepoInference(name=name, confidence=2)
+        # Tier 1: cwd basename. Backwards compatible with sessions in
+        # non-project folders that still have a meaningful name — but
+        # explicitly skip the stop dirs so home (~/) doesn't get
+        # attributed as a project called e.g. "christian".
+        if cwd:
+            try:
+                resolved = os.path.abspath(cwd)
+            except (OSError, ValueError):
+                resolved = ""
+            if resolved and resolved not in _walk_stop_dirs():
+                name = os.path.basename(cwd.rstrip("/")) or cwd
+                return _RepoInference(name=name, confidence=1)
+        # Tier 0: nothing usable. ``_project_key`` falls back to the
+        # session id and this session sits alone.
+        return _RepoInference(name="", confidence=0)
 
     def _active_locked(self, now: float) -> list[SessionInfo]:
         cutoff = now - SESSION_ACTIVE_S

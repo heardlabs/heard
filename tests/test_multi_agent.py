@@ -542,3 +542,193 @@ def test_clear_pending_returns_count_and_empties_all_sessions():
     # Idempotent: a second call on an already-empty router is fine
     # (the resume flow may call twice via a retry on socket flake).
     assert r.clear_pending() == 0
+
+
+# --- project-marker inference (v0.8.9) -------------------------------------
+
+
+def _make_project(tmp_path, name: str, marker: str = ".git"):
+    """Create a tmp-path subdirectory that looks like a real project to
+    ``_find_project_root`` (has the given marker)."""
+    import os
+    root = tmp_path / name
+    root.mkdir()
+    marker_path = root / marker
+    if marker == ".git":
+        marker_path.mkdir()
+    else:
+        marker_path.write_text("")
+    # Touch a few subdirs so we can exercise the walk-up.
+    (root / "src").mkdir()
+    (root / "tests").mkdir()
+    return os.fspath(root)
+
+
+def test_find_project_root_recognises_dot_git(tmp_path):
+    """The bread-and-butter case: a folder with a ``.git`` subdir is a
+    project."""
+    multi_agent._clear_project_root_cache()
+    project = _make_project(tmp_path, "myproj")
+    found = multi_agent._find_project_root(project + "/src/some.py")
+    assert found == project
+
+
+def test_find_project_root_walks_up_from_file_path(tmp_path):
+    """Walks up multiple levels, not just the immediate parent."""
+    multi_agent._clear_project_root_cache()
+    import os
+    project = _make_project(tmp_path, "deepproj")
+    deep_file = os.path.join(project, "src", "nested", "deeply", "code.py")
+    os.makedirs(os.path.dirname(deep_file))
+    open(deep_file, "w").close()
+    assert multi_agent._find_project_root(deep_file) == project
+
+
+def test_find_project_root_recognises_alternate_markers(tmp_path):
+    """package.json / pyproject.toml / etc. all count, not just .git."""
+    multi_agent._clear_project_root_cache()
+    js = _make_project(tmp_path, "jsproj", marker="package.json")
+    py = _make_project(tmp_path, "pyproj", marker="pyproject.toml")
+    rust = _make_project(tmp_path, "rustproj", marker="Cargo.toml")
+    assert multi_agent._find_project_root(js + "/src/x.ts") == js
+    assert multi_agent._find_project_root(py + "/src/x.py") == py
+    assert multi_agent._find_project_root(rust + "/src/x.rs") == rust
+
+
+def test_find_project_root_returns_none_for_no_marker(tmp_path):
+    """A folder under tmp without any marker isn't a project."""
+    multi_agent._clear_project_root_cache()
+    import os
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "file.txt").write_text("")
+    assert multi_agent._find_project_root(os.fspath(plain / "file.txt")) is None
+
+
+def test_find_project_root_stops_at_home_dir(tmp_path, monkeypatch):
+    """Even if there's a marker in or above the home dir, we don't
+    claim home itself (or anything above) as a project — defends
+    against a stray ``~/.git`` from making every session inherit
+    one big "home" project."""
+    multi_agent._clear_project_root_cache()
+    import os
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    # Put a .git in the fake-home itself — this should be ignored.
+    (fake_home / ".git").mkdir()
+    plain = fake_home / "Downloads"
+    plain.mkdir()
+    (plain / "file.txt").write_text("")
+    monkeypatch.setenv("HOME", os.fspath(fake_home))
+    # _walk_stop_dirs() reads HOME via os.path.expanduser('~').
+    assert multi_agent._find_project_root(os.fspath(plain / "file.txt")) is None
+
+
+def test_find_project_root_handles_empty_and_missing(tmp_path):
+    """Defensive: empty string or a non-existent path returns None
+    rather than raising."""
+    multi_agent._clear_project_root_cache()
+    assert multi_agent._find_project_root("") is None
+    assert multi_agent._find_project_root("/nonexistent/path/to/nothing") is None
+
+
+def test_find_project_root_caches_repeat_lookups(tmp_path):
+    """Same path queried twice doesn't restat the filesystem."""
+    multi_agent._clear_project_root_cache()
+    project = _make_project(tmp_path, "cached")
+    f = project + "/src/x.py"
+    first = multi_agent._find_project_root(f)
+    # Pollute the cache key directly to detect the second call uses it.
+    multi_agent._PROJECT_ROOT_CACHE[f] = "/sentinel/cached"
+    second = multi_agent._find_project_root(f)
+    assert first == project
+    assert second == "/sentinel/cached"
+
+
+def test_note_event_uses_path_hint_to_promote_repo_name(tmp_path):
+    """The load-bearing case: a session running in home dir but
+    editing files inside a real project. Path-hint promotes the
+    session to the real project — no fake-SWARM, no auto voice."""
+    multi_agent._clear_project_root_cache()
+    import os
+    project = _make_project(tmp_path, "heard")
+    r = _new_router()
+    r.note_event(
+        "s1",
+        cwd=os.path.expanduser("~"),  # home — would be tier 0
+        path_hint=os.path.join(project, "src", "module.py"),
+    )
+    info = r._sessions["s1"]
+    assert info.repo_name == "heard"
+    assert info.repo_confidence == 2
+
+
+def test_note_event_falls_back_to_cwd_marker_when_no_path_hint(tmp_path):
+    """If no path_hint but cwd itself contains a marker, that wins
+    too (tier 2)."""
+    multi_agent._clear_project_root_cache()
+    project = _make_project(tmp_path, "withcwdmarker")
+    r = _new_router()
+    r.note_event("s1", cwd=project)
+    info = r._sessions["s1"]
+    assert info.repo_name == "withcwdmarker"
+    assert info.repo_confidence == 2
+
+
+def test_note_event_home_dir_without_path_hint_stays_empty(monkeypatch, tmp_path):
+    """Home dir with no path hint → tier 0, repo_name empty. This is
+    the fix for the 'three voices' bug — sessions in home no longer
+    get attributed to a generic name like 'christian'."""
+    multi_agent._clear_project_root_cache()
+    import os
+    fake_home = tmp_path / "fakehome2"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", os.fspath(fake_home))
+    r = _new_router()
+    r.note_event("s1", cwd=os.fspath(fake_home))
+    info = r._sessions["s1"]
+    assert info.repo_name == ""
+    assert info.repo_confidence == 0
+
+
+def test_note_event_non_home_non_project_cwd_gets_tier_1(tmp_path):
+    """A folder that's neither home nor a project still gets its
+    basename as a weak (tier 1) name. Preserves behaviour for users
+    in random subdirs."""
+    multi_agent._clear_project_root_cache()
+    import os
+    plain = tmp_path / "random-folder"
+    plain.mkdir()
+    r = _new_router()
+    r.note_event("s1", cwd=os.fspath(plain))
+    info = r._sessions["s1"]
+    assert info.repo_name == "random-folder"
+    assert info.repo_confidence == 1
+
+
+def test_note_event_upgrades_repo_on_later_path_hint(tmp_path):
+    """A session created with a tier-1 cwd-derived name can be
+    upgraded to a tier-2 path-derived name when a real file edit
+    happens later. The reverse upgrade is not allowed — a tier-2
+    inference doesn't get downgraded by a later cwd-only event."""
+    multi_agent._clear_project_root_cache()
+    import os
+    plain = tmp_path / "weakname"
+    plain.mkdir()
+    project = _make_project(tmp_path, "strongname")
+    r = _new_router()
+    r.note_event("s1", cwd=os.fspath(plain))
+    assert r._sessions["s1"].repo_name == "weakname"
+    assert r._sessions["s1"].repo_confidence == 1
+    # Later event: edits a file inside a real project.
+    r.note_event(
+        "s1",
+        cwd=os.fspath(plain),
+        path_hint=os.path.join(project, "src", "x.py"),
+    )
+    assert r._sessions["s1"].repo_name == "strongname"
+    assert r._sessions["s1"].repo_confidence == 2
+    # Yet another later event with no path_hint must NOT downgrade.
+    r.note_event("s1", cwd=os.fspath(plain))
+    assert r._sessions["s1"].repo_name == "strongname"
+    assert r._sessions["s1"].repo_confidence == 2
