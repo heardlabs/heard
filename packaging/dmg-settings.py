@@ -57,22 +57,32 @@ background = os.environ.get(
     os.path.join("packaging", "dmg-background.png"),
 )
 
-# Window geometry: ((x, y), (width, height)). 520 × 360 is a compact
-# installer window — closer to Cursor's proportions than the older
-# 640 × 400 layout, which felt oversized for two icons + an arrow.
-window_rect = ((200, 120), (520, 360))
+# Window geometry: ((x, y), (width, height)). 460 × 260 — sized so
+# the icons + arrow fill the visual middle without the v0.8.11
+# 520 × 360 layout's excessive top/bottom whitespace. Icons sit
+# slightly above the vertical center to balance against the label
+# text that appears below them.
+window_rect = ((200, 120), (460, 260))
 
 # Icon size in points. 72 keeps the icons readable but doesn't make
 # them dominate the window — same ratio as Cursor's installer.
 icon_size = 72
 
+# Icon-label font size. Default in dmgbuild is 16, which made the
+# "Heard" / "Applications" labels feel chunky next to 72-px icons.
+# 11 matches Cursor's installer — smaller text reads as a caption
+# rather than a heading and lets the icons themselves carry the eye.
+text_size = 11
+
 # Where each visible item sits inside the window. Coordinates are
 # relative to the window's content origin (top-left). Icons + arrow
-# share a single horizontal band at y=180; arrow shaft lives on the
-# background PNG between x=230 and x=298 (icons land at 140 and 380).
+# share a single horizontal band at y=110; arrow lives on the
+# background PNG from x=210 to x=250 (apex). 130/330 splits the
+# 460-wide window so the gap between icon edges is ~128 px — wide
+# enough for the arrow to sit cleanly without crowding either icon.
 icon_locations = {
-    "Heard.app": (140, 180),
-    "Applications": (380, 180),
+    "Heard.app": (130, 110),
+    "Applications": (330, 110),
 }
 
 # Open the DMG in icon view (the default-without-styling fallback is
