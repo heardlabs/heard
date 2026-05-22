@@ -250,10 +250,16 @@ jobs:
           # Final Gatekeeper smoke test — should print "accepted".
           spctl --assess --type execute --verbose "$APP"
 
-      - name: Install create-dmg
-        # GitHub's macos-latest runners don't ship with create-dmg
-        # preinstalled; brew has it. ~30 s install on a cold cache.
-        run: brew install create-dmg
+      - name: Install dmgbuild
+        # dmgbuild writes the DMG's .DS_Store (window size, icon
+        # positions, background image) directly via macOS plist APIs,
+        # not via AppleScript talking to Finder. That matters because
+        # GitHub Actions runners don't have a logged-in graphical
+        # Finder — AppleScript-based tools (create-dmg, appdmg)
+        # silently fail to apply window styling on CI and ship
+        # default-looking DMGs. dmgbuild writes the same bytes
+        # locally and in CI, no AppleScript required.
+        run: pip install --quiet dmgbuild
 
       - name: Build Heard.dmg
         # Produces the standard "drag the app onto Applications" install
@@ -263,34 +269,25 @@ jobs:
         # temp folder and hooks break because their PYTHONHOME path
         # points at /Applications. A DMG forces the install to happen
         # from /Applications before launch.
+        env:
+          # dmgbuild's settings file reads ``HEARD_APP_PATH`` /
+          # ``HEARD_DMG_BG`` so the file stays portable between local
+          # dev and CI without hardcoding paths.
+          HEARD_APP_PATH: packaging/dist/Heard.app
+          HEARD_DMG_BG: packaging/dmg-background.png
         run: |
           set -euo pipefail
-          APP="packaging/dist/Heard.app"
           DMG_OUT="packaging/dist/Heard-${GITHUB_REF_NAME:-dev}.dmg"
-          BG="packaging/dmg-background.png"
 
-          # create-dmg arranges the window: app icon on the left, an
-          # Applications symlink on the right, both ~24 px above the
-          # window's vertical center. 640×400 matches the background
-          # PNG dimensions so the layout doesn't get rescaled.
           # Build only the versioned file here — the unversioned alias
           # is produced *after* notarization + stapling so it carries
-          # the embedded ticket. (Earlier version cp'd before notary;
-          # CI failed because stapling the never-submitted unversioned
+          # the embedded ticket. (v0.8.10 try 1 cp'd before notary; CI
+          # failed because stapling the never-submitted unversioned
           # copy raised "Record not found" from Apple's CloudKit.)
-          create-dmg \
-            --volname "Heard" \
-            --background "$BG" \
-            --window-pos 200 120 \
-            --window-size 640 400 \
-            --icon-size 96 \
-            --icon "Heard.app" 160 240 \
-            --app-drop-link 480 240 \
-            --hide-extension "Heard.app" \
-            --no-internet-enable \
-            --skip-jenkins \
-            "$DMG_OUT" \
-            "$APP"
+          dmgbuild \
+            --settings packaging/dmg-settings.py \
+            "Heard" \
+            "$DMG_OUT"
 
       - name: Sign the DMG
         env:
