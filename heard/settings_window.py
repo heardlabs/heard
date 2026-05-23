@@ -1937,12 +1937,12 @@ class _OnboardingController(NSObject):
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Welcome to Heard")
         body = _wizard_body(
-            "Coding has always lived inside a window. Heard pulls it out — "
-            "your agents work in the background while I tell you what they're "
-            "doing. Step away from the screen. Run ten worktrees in parallel. "
-            "Hear a failure the second it happens, even when you're somewhere "
-            "else. I'll follow them all — Claude Code, Codex, anything you "
-            "run — so you can free your mindspace for what matters.\n\n"
+            "Coding has always lived inside a window.\n\n"
+            "Heard pulls it out — your agents work in the background while "
+            "I tell you what they're doing.\n\n"
+            "Step away from the screen. Run ten worktrees in parallel. "
+            "Hear a failure the second it happens, even when you're "
+            "somewhere else.\n\n"
             "Let's get you set up."
         )
         stack = _vstack([title, body], spacing=14)
