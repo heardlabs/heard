@@ -629,6 +629,20 @@ class Daemon:
         old_plan = self.cfg.get("heard_plan", "")
         old_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
         self.cfg = config.load()
+        # Reload typically means the user changed plan, pasted a key, or
+        # an admin manually reset their daily counter. Whatever set the
+        # cap-cache flags is no longer authoritative — drop them so the
+        # next request asks the server fresh. Without this, a user who
+        # just upgraded would still see "daily cap reached" until UTC
+        # midnight.
+        if self._managed_capped_at is not None:
+            _log("managed_cap_cache_cleared", reason="config_reload")
+            self._managed_capped_at = None
+        try:
+            if persona_mod._managed_haiku_capped_at is not None:
+                persona_mod._managed_haiku_capped_at = None
+        except Exception:
+            pass
         # Re-evaluate trial expiry after every reload — the user may
         # have set the system clock forward, or the trial may have
         # ended between launch and reload (long-running daemon).
@@ -1006,6 +1020,19 @@ class Daemon:
             synth_ms = int((time.monotonic() - t0) * 1000)
             _log("synth_ok", backend=type(self.tts).__name__, ms=synth_ms, chars=len(chunk))
             self._last_error = None  # successful synth clears the badge
+            # Server just charged us → it's not capping us. If our local
+            # cache thinks we ARE capped (set on a prior 429 that's since
+            # been cleared by an upgrade, manual reset, or UTC rollover),
+            # drop the stale flag now so the next call doesn't re-route
+            # to fallback for no reason.
+            if self._managed_capped_at is not None:
+                _log("managed_cap_cache_cleared", reason="synth_ok_post_429")
+                self._managed_capped_at = None
+            try:
+                if persona_mod._managed_haiku_capped_at is not None:
+                    persona_mod._managed_haiku_capped_at = None
+            except Exception:
+                pass
             if cancel.is_set():
                 path.unlink(missing_ok=True)
                 return
