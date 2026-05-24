@@ -39,17 +39,28 @@ mkdir -p "$FRAMEWORKS"
 
 # Native dylibs that py2app misses: the bundled Python's _ctypes.so
 # and _ssl.so both link against @rpath/<lib>, but their LC_RPATH is
-# only @loader_path/../../, which resolves to
-# Contents/Resources/lib/pythonX.Y/. Without copies at that path the
-# bundle crashes on `import ctypes` / `import ssl` — which the
-# daemon hits early (audio_monitor → ctypes, tts/elevenlabs → ssl),
-# so the menu bar app fails to start.
+# only @loader_path/../../. Those .so files live in
+# Resources/lib/pythonX.Y/lib-dynload/, so ../../ resolves to
+# Resources/lib/ — NOT Resources/lib/pythonX.Y/.
+#
+# Main-app process inherits DYLD_LIBRARY_PATH from py2app's launcher
+# (pointing at Contents/Frameworks/), so the bundled libraries are
+# findable via env there. But subprocesses spawned by the running
+# Python (heard.client.ensure_daemon → python -m heard.daemon) lose
+# DYLD_* — macOS strips those environment variables across exec for
+# security — and fall back to @rpath, which requires the dylibs to
+# physically exist at Resources/lib/<name>.dylib.
+#
+# So we triple-copy: Frameworks/ (env-path lookup, main process),
+# Resources/lib/ (subprocess @rpath lookup), and Resources/lib/pythonX.Y/
+# (historical placement, kept while we verify the move is complete).
 echo "==> patching native dylibs"
 PY_PREFIX=$("$PY" -c "import sys; print(sys.prefix)")
 PY_BASE=$("$PY" -c "import sys; print(sys.base_prefix)")
 PY_VER=$("$PY" -c "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}')")
+RPATH_DIR="$BUNDLE/Contents/Resources/lib"
 CTYPES_DIR="$BUNDLE/Contents/Resources/lib/$PY_VER"
-mkdir -p "$CTYPES_DIR"
+mkdir -p "$RPATH_DIR" "$CTYPES_DIR"
 
 # Names dyld will search for via @rpath. libffi for ctypes; libssl +
 # libcrypto for the ssl module (needed for HTTPS, which every TTS
@@ -75,6 +86,10 @@ for name in "${DYLIBS[@]}"; do
   if [[ ! -f "$FRAMEWORKS/$name" ]]; then
     cp "$src" "$FRAMEWORKS/$name"
     echo "   $name → Frameworks/"
+  fi
+  if [[ ! -f "$RPATH_DIR/$name" ]]; then
+    cp "$src" "$RPATH_DIR/$name"
+    echo "   $name → Resources/lib/   (subprocess @rpath target)"
   fi
   if [[ ! -f "$CTYPES_DIR/$name" ]]; then
     cp "$src" "$CTYPES_DIR/$name"
