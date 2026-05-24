@@ -279,6 +279,13 @@ class HeardApp(rumps.App):
         # greyed-out item that can't be clicked.
         self.signout_item = rumps.MenuItem("Sign out", callback=self.on_signout)
 
+        # Trial-expiry switch. Label + callback are wired in refresh() per
+        # the current plan: trial / expired → "Upgrade to Pro" (clickable);
+        # pro → greyed-out "Pro · active"; not-signed-in → greyed-out
+        # placeholder. Rendered as a header item right under the account
+        # row so expiry is impossible to miss.
+        self.upgrade_item = rumps.MenuItem("Upgrade to Pro", callback=self.on_upgrade)
+
         # NOTE: the "Options" submenu (built above as `options_menu`)
         # is intentionally NOT added to the menu — everything in it now
         # lives in the Settings window. The object is still constructed
@@ -289,6 +296,7 @@ class HeardApp(rumps.App):
         self.menu = [
             self.status_item,
             self.account_item,
+            self.upgrade_item,
             self.version_item,
             None,
             self.pause_item,
@@ -897,6 +905,26 @@ class HeardApp(rumps.App):
             pass
         self.refresh(None)
 
+    # Stripe Payment Link for Pro. Pre-fills the user's email so they
+    # don't retype it. Mirrored in vercel.json:/pro and in the dashboard.
+    _UPGRADE_URL = "https://buy.stripe.com/bJecMYdBFfEW2oe5DG77O00"
+
+    def on_upgrade(self, _sender) -> None:
+        """Open the Stripe Payment Link with the user's email prefilled.
+        Used by the menu-bar Upgrade item when trial is expiring or has
+        expired."""
+        import urllib.parse
+
+        cfg = config.load()
+        email = (cfg.get("heard_email") or "").strip()
+        url = self._UPGRADE_URL
+        if email:
+            url = f"{url}?prefilled_email={urllib.parse.quote(email)}"
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
     # --- account + api-key row builders -----------------------------------
 
     @staticmethod
@@ -916,6 +944,9 @@ class HeardApp(rumps.App):
             self.account_item.set_callback(self.on_signin)
             # Sign-out item greys out when there's nothing to sign out of.
             self.signout_item.set_callback(None)
+            # Nothing to upgrade until we know who the user is.
+            self.upgrade_item.title = "Upgrade to Pro"
+            self.upgrade_item.set_callback(None)
             return
 
         email = (cfg.get("heard_email") or "").strip() or "Signed in"
@@ -924,6 +955,42 @@ class HeardApp(rumps.App):
         # Display-only leaf — no submenu chevron.
         self.account_item.set_callback(None)
         self.signout_item.set_callback(self.on_signout)
+        self._refresh_upgrade_item(plan, cfg)
+
+    def _refresh_upgrade_item(self, plan: str, cfg: dict) -> None:
+        """Per-plan label + clickability for the Upgrade switch.
+
+        - pro: greyed "Pro · active" (display-only).
+        - expired: red-flag "Trial expired — Upgrade to Pro", clickable.
+        - trial in last 5 days: "Upgrade to Pro — N days left", clickable.
+        - trial otherwise: plain "Upgrade to Pro", clickable.
+        """
+        if plan == "pro":
+            self.upgrade_item.title = "Pro · active"
+            self.upgrade_item.set_callback(None)
+            return
+        if plan == "expired":
+            self.upgrade_item.title = "Trial expired — Upgrade to Pro"
+            self.upgrade_item.set_callback(self.on_upgrade)
+            return
+        # trial (or unknown — treat as trial-ish)
+        try:
+            expires_at_ms = int(cfg.get("heard_trial_expires_at") or 0)
+        except (TypeError, ValueError):
+            expires_at_ms = 0
+        if expires_at_ms > 0:
+            import time
+            now_ms = int(time.time() * 1000)
+            if now_ms < expires_at_ms:
+                days_left = max(1, (expires_at_ms - now_ms + 86_399_999) // 86_400_000)
+                if days_left <= 5:
+                    self.upgrade_item.title = (
+                        f"Upgrade to Pro — {days_left} day{'' if days_left == 1 else 's'} left"
+                    )
+                    self.upgrade_item.set_callback(self.on_upgrade)
+                    return
+        self.upgrade_item.title = "Upgrade to Pro"
+        self.upgrade_item.set_callback(self.on_upgrade)
 
     @staticmethod
     def _plan_suffix(plan: str, cfg: dict) -> str:
