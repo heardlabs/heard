@@ -1957,17 +1957,23 @@ class _OnboardingController(NSObject):
         return v
 
     def _screen_signin(self) -> NSView:
-        # Single "Sign in" button — opens heard.dev/signin in the
-        # default browser. All method variation (Google, email OTP)
-        # lives in the browser; on success it deep-links back via
-        # heard://auth?code=... and heard/url_scheme.py finishes here.
-        # Mirrors Cursor's app-side onboarding shape.
+        # Primary path: one "Sign in" button → opens heard.dev/signin in
+        # the default browser. The browser hosts both Google and email
+        # OTP; on success it deep-links back via heard://auth?code=...
+        # and heard/url_scheme.py finishes here.
+        #
+        # Fallback: a small "Have an install code? Paste it" disclosure
+        # below the button reveals a paste field. Same machinery
+        # (heard_api.claim_install_code) — exists for users where the
+        # custom-scheme bounce doesn't fire (corp proxies, browsers that
+        # block heard://, no protocol handler registered, etc).
         v = NSView.alloc().init()
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Sign in for cloud voices")
         body = _wizard_body(
             "Unlocks Heard's managed voices for 30 days — no API key needed. "
-            "(Or skip and use a local voice, or your own ElevenLabs key.)"
+            "Or run the full OSS version yourself: bring your own ElevenLabs "
+            "+ Anthropic keys, or download Kokoro for local TTS."
         )
 
         signin_btn = _button(
@@ -1985,8 +1991,23 @@ class _OnboardingController(NSObject):
         _low_priority_text(status, wrap=True)
         status.setHidden_(True)
 
+        # Install-code fallback. Hidden behind a discrete disclosure
+        # link so the wizard stays one-button by default.
+        ic_disclosure = _link_button(
+            "Have an install code? Paste it", target=self,
+            action="onWizRevealInstallCode:", dim=True,
+        )
+        ic_field = _text_field(placeholder="ABCD-EFGH")
+        ic_field.setTarget_(self)
+        ic_field.setAction_("onWizClaim:")
+        ic_field.setContentHuggingPriority_forOrientation_(1.0, 0)
+        ic_btn = _button("Redeem", target=self, action="onWizClaim:")
+        ic_row = _hstack([ic_field, ic_btn], spacing=8)
+        ic_row.setHidden_(True)
+
         form_stack = _vstack(
-            [signin_btn, hint, _spacer(8), status],
+            [signin_btn, hint, _spacer(8), status,
+             _spacer(6), ic_disclosure, ic_row],
             spacing=8,
         )
 
@@ -2013,10 +2034,12 @@ class _OnboardingController(NSObject):
             body.widthAnchor().constraintLessThanOrEqualToAnchor_(v.widthAnchor()),
         ])
         _pin_widths(outer, [signedin_stack, form_stack])
-        _pin_widths(form_stack, [signin_btn, status])
+        _pin_widths(form_stack, [signin_btn, status, ic_row])
         self._refs = {
             "signin_btn": signin_btn,
             "code_status": status,
+            "ic_field": ic_field, "ic_row": ic_row,
+            "ic_disclosure": ic_disclosure,
             "form_stack": form_stack, "signedin_stack": signedin_stack,
             "signedin_title": signedin_title, "plan_lbl": plan_lbl,
         }
