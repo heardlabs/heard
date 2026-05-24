@@ -38,6 +38,18 @@ def _redirect_stdio_to_log() -> None:
     # launched by Finder/launchctl, which sinks the daemon thread's
     # _log() lines. Point them at daemon.log so events stay greppable
     # — matches what ensure_daemon's subprocess path already does.
+    #
+    # First-launch case: ~/Library/Application Support/heard/ doesn't
+    # exist yet, so opening LOG_PATH would FileNotFoundError and crash
+    # the app boot with a useless "Launch error" py2app dialog.
+    # mkdir -p the parent before opening.
+    try:
+        os.makedirs(os.path.dirname(config_mod.LOG_PATH), exist_ok=True)
+    except Exception:
+        # If mkdir fails (permissions, etc.) we still try to open the
+        # file — the next-best outcome is the open call's clearer
+        # error message, not a silent boot failure.
+        pass
     log = open(config_mod.LOG_PATH, "a", encoding="utf-8", buffering=1)
     sys.stdout = log
     sys.stderr = log
