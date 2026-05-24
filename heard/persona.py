@@ -291,6 +291,12 @@ def list_bundled() -> list[str]:
 # --- Haiku path -------------------------------------------------------------
 
 
+# OpenAI BYOK constants. gpt-4o-mini is the price+latency analogue of
+# Haiku 4.5 — cheap enough that a single user's daily quota stays under
+# a dollar, fast enough to fit inside our 2.5s per-event budget.
+OPENAI_MODEL = "gpt-4o-mini"
+
+
 def _anthropic_key() -> str:
     """Resolve the Anthropic API key. Config wins over env var so the
     user can override per-machine via heard ui without touching the
@@ -300,6 +306,19 @@ def _anthropic_key() -> str:
         from heard import config as _config
 
         cfg_key = (_config.load().get("anthropic_api_key") or "").strip()
+    except Exception:
+        cfg_key = ""
+    return cfg_key or env
+
+
+def _openai_key() -> str:
+    """Resolve the OpenAI API key. Same env-vs-config precedence as
+    `_anthropic_key()`. Empty string when nothing is set."""
+    env = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    try:
+        from heard import config as _config
+
+        cfg_key = (_config.load().get("openai_api_key") or "").strip()
     except Exception:
         cfg_key = ""
     return cfg_key or env
@@ -343,10 +362,13 @@ def _cli_rewrite_available() -> bool:
 
 
 def _haiku_enabled() -> bool:
-    """True if any of the three rewrite signals is available: BYOK
-    Anthropic key, Heard cloud LLM via an active plan, or `claude -p`."""
+    """True if any rewrite signal is available: BYOK Anthropic key,
+    BYOK OpenAI key, Heard cloud LLM via an active plan, or
+    `claude -p`. Name is historical — the function gates the persona
+    LLM rewrite path regardless of which model executes it."""
     return (
         bool(_anthropic_key())
+        or bool(_openai_key())
         or _managed_rewrite_available()
         or _cli_rewrite_available()
     )
@@ -382,13 +404,17 @@ def _haiku_rewrite(
     ctx: dict[str, Any],
     session: dict[str, Any],
 ) -> str | None:
-    """Dispatch a Haiku rewrite. Ladder: BYOK Anthropic key (the user
-    pays their own bill, no Heard cap) → Heard cloud /v1/persona-rewrite
-    proxy (active plan, not capped today) → `claude -p` (OAuth from the
+    """Dispatch a persona rewrite. Ladder: BYOK Anthropic (the user
+    pays their own bill, no Heard cap) → BYOK OpenAI (same, gpt-4o-mini
+    via Chat Completions) → Heard cloud /v1/persona-rewrite proxy
+    (active plan, not capped today) → `claude -p` (OAuth from the
     user's keychain — works as long as Claude Code is installed) →
-    None, so callers fall through to template-only narration."""
+    None, so callers fall through to template-only narration. Function
+    name is historical (was Haiku-only); ladder is now model-agnostic."""
     if _anthropic_key():
         return _byok_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
+    if _openai_key():
+        return _byok_openai_rewrite(persona, event_kind, neutral, tag, ctx, session)
     if _managed_rewrite_available() and not _managed_haiku_capped_today():
         return _managed_haiku_rewrite(persona, event_kind, neutral, tag, ctx, session)
     if _cli_rewrite_available():
@@ -495,6 +521,76 @@ def _byok_haiku_rewrite(
         # network, 5xx) stay silent and just fall through to templates.
         _notify_anthropic_failure(e)
         return None
+
+
+def _byok_openai_rewrite(
+    persona: Persona,
+    event_kind: str,
+    neutral: str,
+    tag: str,
+    ctx: dict[str, Any],
+    session: dict[str, Any],
+) -> str | None:
+    """OpenAI Chat Completions rewrite for users who BYOK OpenAI
+    instead of Anthropic. urllib-based so we don't pull in the openai
+    SDK as a runtime dependency — request shape is small, response
+    parsing is trivial. Persona prompts are model-agnostic (plain
+    English instructions in the MD files), so the same system + user
+    message that drives Haiku works here.
+
+    Silent failure → None so the caller (`_haiku_rewrite`) falls
+    through to managed → CLI → templates. No notify on transient
+    network errors (matches the BYOK Anthropic path); auth + credit
+    failures could grow a notify hook later mirroring
+    `_notify_anthropic_failure`."""
+    import json as _json
+    import ssl as _ssl
+    import urllib.error as _urlerr
+    import urllib.request as _urlreq
+
+    key = _openai_key()
+    if not key:
+        return None
+
+    user_msg = _build_user_message(event_kind, neutral, tag, ctx, session)
+    full_system = _SHARED_NARRATION_RULES + "\n\n" + persona.system_prompt
+    body = {
+        "model": OPENAI_MODEL,
+        "max_tokens": HAIKU_MAX_TOKENS,
+        "messages": [
+            {"role": "system", "content": full_system},
+            {"role": "user", "content": user_msg},
+        ],
+    }
+    try:
+        try:
+            import certifi  # type: ignore
+
+            ssl_ctx = _ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            ssl_ctx = _ssl.create_default_context()
+        req = _urlreq.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=_json.dumps(body).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Heard-daemon/1.0",
+            },
+        )
+        with _urlreq.urlopen(req, timeout=HAIKU_TIMEOUT_S, context=ssl_ctx) as resp:
+            data = _json.loads(resp.read().decode("utf-8") or "{}")
+    except (_urlerr.HTTPError, _urlerr.URLError, TimeoutError, OSError, ValueError):
+        return None
+    # OpenAI: {"choices": [{"message": {"content": "..."}, ...}], ...}
+    choices = data.get("choices") or []
+    if not choices:
+        return None
+    content = ((choices[0] or {}).get("message") or {}).get("content") or ""
+    out = content.strip()
+    return out or None
 
 
 def _managed_haiku_rewrite(

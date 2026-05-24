@@ -91,10 +91,44 @@ def test_summarize_project_returns_none_when_no_llm_available(monkeypatch):
     tag-count summary."""
     p = persona.load("jarvis")
     monkeypatch.setattr(persona, "_anthropic_key", lambda: "")
+    monkeypatch.setattr(persona, "_openai_key", lambda: "")
     monkeypatch.setattr(persona, "_managed_rewrite_available", lambda: False)
     monkeypatch.setattr(persona, "_cli_rewrite_available", lambda: False)
     events = [{"tag": "tool_edit", "neutral": "Editing x.py"}]
     assert persona.summarize_project(p, "api", events, member_count=1) is None
+
+
+def test_haiku_rewrite_picks_openai_when_only_openai_key(monkeypatch):
+    """BYOK OpenAI: with no Anthropic key but a configured OpenAI key,
+    the dispatch ladder routes to _byok_openai_rewrite. Guards against
+    the dispatcher silently falling through to managed/CLI for users
+    who set up Heard with OpenAI only."""
+    p = persona.load("jarvis")
+    monkeypatch.setattr(persona, "_anthropic_key", lambda: "")
+    monkeypatch.setattr(persona, "_openai_key", lambda: "sk-openai-test")
+    # Make sure higher-priority Anthropic isn't reachable and lower-
+    # priority paths would fail loudly if dispatched.
+    monkeypatch.setattr(persona, "_byok_haiku_rewrite", lambda *a, **kw: "WRONG-ANTHROPIC")
+    monkeypatch.setattr(persona, "_managed_rewrite_available", lambda: False)
+    monkeypatch.setattr(persona, "_cli_rewrite_available", lambda: False)
+    monkeypatch.setattr(persona, "_byok_openai_rewrite", lambda *a, **kw: "OPENAI-OUTPUT")
+
+    out = persona._haiku_rewrite(p, "final", "Done.", "final_short", {}, {})
+    assert out == "OPENAI-OUTPUT"
+
+
+def test_haiku_rewrite_prefers_anthropic_over_openai_when_both_set(monkeypatch):
+    """If a user has both keys configured, Anthropic wins — Heard's
+    persona prompts were tuned against Haiku, so it stays the default
+    when both options exist."""
+    p = persona.load("jarvis")
+    monkeypatch.setattr(persona, "_anthropic_key", lambda: "sk-ant-test")
+    monkeypatch.setattr(persona, "_openai_key", lambda: "sk-openai-test")
+    monkeypatch.setattr(persona, "_byok_haiku_rewrite", lambda *a, **kw: "ANTHROPIC-OUTPUT")
+    monkeypatch.setattr(persona, "_byok_openai_rewrite", lambda *a, **kw: "WRONG-OPENAI")
+
+    out = persona._haiku_rewrite(p, "final", "Done.", "final_short", {}, {})
+    assert out == "ANTHROPIC-OUTPUT"
 
 
 def test_summarize_project_uses_byok_anthropic_when_available(monkeypatch):
