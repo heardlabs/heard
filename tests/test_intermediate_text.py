@@ -74,21 +74,31 @@ def test_pre_tool_speaks_intermediate_then_skips_tool_announcement(
         transcript,
         [
             ("user", [{"type": "text", "text": "go"}]),
-            (
-                "assistant",
-                [
-                    {"type": "text", "text": "Doing what I can automatically."},
-                    {"type": "tool_use", "name": "Bash"},
-                ],
-            ),
         ],
     )
     sent: list[dict] = []
     monkeypatch.setattr(client, "send_event", lambda **kw: sent.append(kw))
 
+    sid = "session-A"
+    # Prime session state — first encounter inits at EOF and stays
+    # silent. Subsequent appends to the transcript ARE narrated.
+    spoken.initialize_at_eof(sid, str(transcript))
+
+    # Now Claude writes prose right before its Bash tool call.
+    with open(transcript, "a", encoding="utf-8") as f:
+        f.write(
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "Doing what I can automatically."},
+                    {"type": "tool_use", "name": "Bash"},
+                ]},
+            }) + "\n"
+        )
+
     client.handle_cc_pre_tool(
         {
-            "session_id": "session-A",
+            "session_id": sid,
             "transcript_path": str(transcript),
             "tool_name": "Bash",
             "tool_input": {"command": "ps aux"},
@@ -148,6 +158,85 @@ def test_pre_tool_carries_recent_intent_when_prior_prose_already_spoken(
     assert ctx.get("change_new") == "def prompt(start_step: int = 1):"
 
 
+def test_first_encounter_with_session_does_not_replay_history(tmp_path, monkeypatch):
+    """Regression: fresh install / wiped state used to read the
+    transcript from byte 0 and dump every historical assistant message
+    into the speech queue. First encounter must init at EOF and stay
+    silent until the agent appends NEW content."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        [
+            ("user", [{"type": "text", "text": "go"}]),
+            ("assistant", [{"type": "text", "text": "Old prose one."}]),
+            ("assistant", [{"type": "tool_use", "name": "Bash"}]),
+            ("assistant", [{"type": "text", "text": "Old prose two."}]),
+            ("assistant", [{"type": "tool_use", "name": "Bash"}]),
+            ("assistant", [{"type": "text", "text": "Old final prose."}]),
+        ],
+    )
+    sent: list[dict] = []
+    monkeypatch.setattr(client, "send_event", lambda **kw: sent.append(kw))
+    monkeypatch.setattr("heard.client.time.sleep", lambda _: None)
+
+    sid = "session-fresh"
+    # No prior state — simulate fresh install / wiped sessions/ dir.
+    assert not spoken.has_offset(sid)
+
+    # First hook fires (e.g. PreToolUse). It must NOT narrate any of
+    # the six historical assistant prose blocks — only at most the
+    # tool announcement for the *current* tool call (which represents
+    # a live event, not history).
+    client.handle_cc_pre_tool(
+        {
+            "session_id": sid,
+            "transcript_path": str(transcript),
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+        }
+    )
+    neutrals = [e.get("neutral") for e in sent]
+    for old in ("Old prose one.", "Old prose two.", "Old final prose."):
+        assert old not in neutrals, (
+            f"first encounter replayed historical prose {old!r}: {neutrals}"
+        )
+    # No 'intermediate' kind should have fired — that's the prose-replay
+    # bug we're guarding against.
+    assert all(e.get("kind") != "intermediate" for e in sent), (
+        f"first encounter spoke historical prose as intermediate: {sent}"
+    )
+    # Init should have happened.
+    assert spoken.has_offset(sid)
+    # And all historical assistant texts should be in the dedup set.
+    assert spoken.is_spoken(sid, "Old prose one.")
+    assert spoken.is_spoken(sid, "Old final prose.")
+
+    # Now Claude appends genuinely-new prose. The second hook narrates
+    # it as 'intermediate', not as a tool announcement.
+    sent.clear()
+    with open(transcript, "a", encoding="utf-8") as f:
+        f.write(
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "Brand new prose after install."},
+                    {"type": "tool_use", "name": "Bash"},
+                ]},
+            }) + "\n"
+        )
+    client.handle_cc_pre_tool(
+        {
+            "session_id": sid,
+            "transcript_path": str(transcript),
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+        }
+    )
+    intermediate = [e for e in sent if e["kind"] == "intermediate"]
+    assert len(intermediate) == 1
+    assert "Brand new prose" in intermediate[0]["neutral"]
+
+
 def test_pre_tool_announces_tool_when_no_preceding_prose(tmp_path, monkeypatch):
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
@@ -181,18 +270,30 @@ def test_stop_speaks_remaining_unspoken_text(tmp_path, monkeypatch):
         [
             ("user", [{"type": "text", "text": "go"}]),
             ("assistant", [{"type": "text", "text": "First prose."}]),
-            ("assistant", [{"type": "text", "text": "Final prose."}]),
         ],
     )
     sent: list[dict] = []
     monkeypatch.setattr(client, "send_event", lambda **kw: sent.append(kw))
     monkeypatch.setattr("heard.client.time.sleep", lambda _: None)
 
-    # Pretend the first prose was already spoken in a PreToolUse hook.
-    spoken.mark_spoken("session-C", "First prose.")
+    sid = "session-C"
+    # Pretend the first prose was spoken in a PreToolUse hook — the
+    # session is "known" to us (has an offset) and the first prose
+    # is already in the dedup set.
+    spoken.initialize_at_eof(sid, str(transcript))
+    spoken.mark_spoken(sid, "First prose.")
+
+    # New prose is appended after init.
+    with open(transcript, "a", encoding="utf-8") as f:
+        f.write(
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Final prose."}]},
+            }) + "\n"
+        )
 
     client.handle_cc_stop(
-        {"session_id": "session-C", "transcript_path": str(transcript)}
+        {"session_id": sid, "transcript_path": str(transcript)}
     )
 
     # Only Final prose should fire, marked as final.
@@ -207,14 +308,27 @@ def test_no_duplicate_speech_across_sequential_pre_tool_calls(tmp_path, monkeypa
         transcript,
         [
             ("user", [{"type": "text", "text": "go"}]),
-            ("assistant", [{"type": "text", "text": "Prose one."}]),
         ],
     )
     sent: list[dict] = []
     monkeypatch.setattr(client, "send_event", lambda **kw: sent.append(kw))
 
+    sid = "session-D"
+    # Prime session state — first encounter inits silently at EOF.
+    spoken.initialize_at_eof(sid, str(transcript))
+
+    # New prose written after init — this should fire on the first
+    # PreToolUse but not the subsequent ones.
+    with open(transcript, "a", encoding="utf-8") as f:
+        f.write(
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Prose one."}]},
+            }) + "\n"
+        )
+
     base = {
-        "session_id": "session-D",
+        "session_id": sid,
         "transcript_path": str(transcript),
         "tool_name": "Bash",
         "tool_input": {"command": "ls"},
@@ -242,20 +356,36 @@ def test_ask_user_question_suppresses_prose_and_marks_it_spoken(
         transcript,
         [
             ("user", [{"type": "text", "text": "go"}]),
-            (
-                "assistant",
-                [{"type": "text", "text": "Quick clarifying question first."}],
-            ),
-            ("assistant", [{"type": "tool_use", "name": "AskUserQuestion"}]),
         ],
     )
     sent: list[dict] = []
     monkeypatch.setattr(client, "send_event", lambda **kw: sent.append(kw))
     monkeypatch.setattr("heard.client.time.sleep", lambda _: None)
 
+    sid = "session-Q"
+    spoken.initialize_at_eof(sid, str(transcript))
+    # Claude writes a preface then triggers AskUserQuestion.
+    with open(transcript, "a", encoding="utf-8") as f:
+        f.write(
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "text", "text": "Quick clarifying question first."},
+                ]},
+            }) + "\n"
+        )
+        f.write(
+            json.dumps({
+                "type": "assistant",
+                "message": {"content": [
+                    {"type": "tool_use", "name": "AskUserQuestion"},
+                ]},
+            }) + "\n"
+        )
+
     client.handle_cc_pre_tool(
         {
-            "session_id": "session-Q",
+            "session_id": sid,
             "transcript_path": str(transcript),
             "tool_name": "AskUserQuestion",
             "tool_input": {
@@ -285,8 +415,10 @@ def test_ask_user_question_suppresses_prose_and_marks_it_spoken(
 
 
 def test_stop_falls_back_to_last_text_when_no_unspoken(tmp_path, monkeypatch):
-    """Empty transcript edge case: still produce SOMETHING via the
-    legacy fallback so we never go silent."""
+    """When Stop fires with no fresh prose to dedup-against (the offset
+    is current but the dedup file got truncated / wiped independently),
+    fall back to the last assistant text so we never go silent on
+    edge-case transcripts."""
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
@@ -299,8 +431,14 @@ def test_stop_falls_back_to_last_text_when_no_unspoken(tmp_path, monkeypatch):
     monkeypatch.setattr(client, "send_event", lambda **kw: sent.append(kw))
     monkeypatch.setattr("heard.client.time.sleep", lambda _: None)
 
+    sid = "session-E"
+    # Simulate "offset present, dedup empty" — i.e. we already saw this
+    # session but somehow lost the hash file. The legacy fallback path
+    # is what catches this edge case.
+    spoken.set_offset(sid, transcript.stat().st_size)
+
     client.handle_cc_stop(
-        {"session_id": "session-E", "transcript_path": str(transcript)}
+        {"session_id": sid, "transcript_path": str(transcript)}
     )
     assert len(sent) == 1
     assert sent[0]["kind"] == "final"
@@ -308,6 +446,6 @@ def test_stop_falls_back_to_last_text_when_no_unspoken(tmp_path, monkeypatch):
     # A second Stop on the same session shouldn't re-speak.
     sent.clear()
     client.handle_cc_stop(
-        {"session_id": "session-E", "transcript_path": str(transcript)}
+        {"session_id": sid, "transcript_path": str(transcript)}
     )
     assert sent == []

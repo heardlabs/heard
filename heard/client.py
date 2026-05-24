@@ -501,6 +501,12 @@ def _mark_transcript_prose_spoken(transcript_path: str, sid: str) -> None:
     """Advance the offset and mark all pending assistant prose as spoken
     without sending it. Used to suppress narration we know would land
     too late to be useful."""
+    # First encounter with this session (fresh install / wiped state):
+    # initialise the offset at EOF and seed the dedup set so we don't
+    # replay the entire transcript as "pending prose to suppress."
+    if not spoken.has_offset(sid):
+        spoken.initialize_at_eof(sid, transcript_path)
+        return
     start = spoken.get_offset(sid)
     fresh, end = extract_assistant_texts_from(transcript_path, start)
     if end != start:
@@ -522,6 +528,15 @@ def _speak_unspoken_texts(
     marks them all as ``intermediate`` (used by PreToolUse).
     """
     sid = session["id"]
+    # First encounter with this session (fresh install / wiped state /
+    # never-before-seen session id): there's no .offset file yet.
+    # Without this guard, get_offset() returns 0 and we'd dump every
+    # historical assistant message into the speech queue. Initialise
+    # at EOF + seed dedup hashes from the existing transcript instead,
+    # so only events from "now" forward get narrated.
+    if not spoken.has_offset(sid):
+        spoken.initialize_at_eof(sid, transcript_path)
+        return 0
     # Incremental read: pick up where the prior hook left off so we
     # don't reparse the entire JSONL transcript on every PreToolUse.
     # spoken.filter_unspoken still acts as a hash-based safety net for
