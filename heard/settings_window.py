@@ -1957,6 +1957,11 @@ class _OnboardingController(NSObject):
         return v
 
     def _screen_signin(self) -> NSView:
+        # Single "Sign in" button — opens heard.dev/signin in the
+        # default browser. All method variation (Google, email OTP)
+        # lives in the browser; on success it deep-links back via
+        # heard://auth?code=... and heard/url_scheme.py finishes here.
+        # Mirrors Cursor's app-side onboarding shape.
         v = NSView.alloc().init()
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Sign in for cloud voices")
@@ -1965,59 +1970,28 @@ class _OnboardingController(NSObject):
             "(Or skip and use a local voice, or your own ElevenLabs key.)"
         )
 
-        # --- Primary: Continue with Google. Opens heard.dev/app-auth in
-        #     the browser; the heard:// handoff brings the user straight
-        #     back here signed in (see heard/url_scheme.py). ------------
-        google_btn = _GoogleButton.alloc().initWithTarget_action_(self, "onWizSignInWeb:")
-        google_hint = _label("Opens your browser — you'll come right back.", size=11, dim=True)
-
-        or_div = _or_divider()
-
-        # --- Secondary: email → 6-digit code, all in-app. -------------
-        email_field = _text_field(placeholder="you@example.com")
-        email_field.setTarget_(self)
-        email_field.setAction_("onWizSendCode:")
-        email_field.setContentHuggingPriority_forOrientation_(1.0, 0)
-        send_btn = _button("Email me a code", target=self, action="onWizSendCode:")
-        email_row = _hstack([email_field, send_btn], spacing=8)
-        code_field = _text_field(placeholder="6-digit code")
-        code_field.setTarget_(self)
-        code_field.setAction_("onWizVerifyCode:")
-        code_field.setContentHuggingPriority_forOrientation_(1.0, 0)
-        verify_btn = _button("Sign in", target=self, action="onWizVerifyCode:", primary=True)
-        code_row = _hstack([code_field, verify_btn], spacing=8)
+        signin_btn = _button(
+            "Sign in",
+            target=self,
+            action="onWizSignInWeb:",
+            primary=True,
+        )
+        hint = _label(
+            "Opens your browser — you'll come right back.",
+            size=11,
+            dim=True,
+        )
         status = _label("", size=12, dim=True)
         _low_priority_text(status, wrap=True)
-        status.setHidden_(True)  # collapses until there's something to say
-
-        # --- Install code. Normally the Google handoff carries it back
-        #     automatically (heard://), so this stays tucked behind a
-        #     link — but onWizSignInWeb_ auto-reveals it the moment the
-        #     user kicks off Google, so there's always a place to paste
-        #     the code shown in the browser if the auto-bounce is
-        #     blocked. ------------------------------------------------
-        ic_disclosure = _link_button(
-            "Have an install code from heard.dev?", target=self,
-            action="onWizRevealInstallCode:", dim=False,
-        )
-        ic_field = _text_field(placeholder="ABCD-EFGH")
-        ic_field.setTarget_(self)
-        ic_field.setAction_("onWizClaim:")
-        ic_field.setContentHuggingPriority_forOrientation_(1.0, 0)
-        ic_btn = _button("Redeem", target=self, action="onWizClaim:")
-        ic_row = _hstack([ic_field, ic_btn], spacing=8)
-        ic_row.setHidden_(True)
+        status.setHidden_(True)
 
         form_stack = _vstack(
-            [google_btn, google_hint,
-             _spacer(8), or_div, _spacer(8),
-             email_row, code_row, status,
-             _spacer(6), ic_disclosure, ic_row],
+            [signin_btn, hint, _spacer(8), status],
             spacing=8,
         )
 
-        # --- Signed-in card (shown instead of the form once we have a
-        #     bearer). ------------------------------------------------
+        # --- Signed-in card (shown instead of the button once we have
+        #     a bearer). -----------------------------------------------
         signedin_title = _label("✓ Signed in", size=14, bold=True)
         plan_lbl = _label("", size=12, dim=True)
         switch_link = _link_button(
@@ -2039,13 +2013,10 @@ class _OnboardingController(NSObject):
             body.widthAnchor().constraintLessThanOrEqualToAnchor_(v.widthAnchor()),
         ])
         _pin_widths(outer, [signedin_stack, form_stack])
-        _pin_widths(form_stack, [google_btn, or_div, email_row, code_row, status, ic_row])
-        _equal_widths([send_btn, verify_btn, ic_btn])
+        _pin_widths(form_stack, [signin_btn, status])
         self._refs = {
-            "email_field": email_field, "send_btn": send_btn,
-            "code_field": code_field, "code_row": code_row, "verify_btn": verify_btn,
-            "code_status": status, "ic_field": ic_field, "ic_row": ic_row,
-            "ic_disclosure": ic_disclosure,
+            "signin_btn": signin_btn,
+            "code_status": status,
             "form_stack": form_stack, "signedin_stack": signedin_stack,
             "signedin_title": signedin_title, "plan_lbl": plan_lbl,
         }
@@ -2343,18 +2314,15 @@ class _OnboardingController(NSObject):
         threading.Thread(target=worker, daemon=True).start()
 
     def onWizSignInWeb_(self, _s) -> None:
-        # Hand off to the browser: heard.dev/app-auth runs the Google
-        # OAuth dance, then bounces back via heard://auth?code=… which
-        # heard/url_scheme.py picks up and finishes sign-in here.
-        # Also reveal the install-code field now — if the browser
-        # doesn't auto-bounce (Safari blocks the custom-scheme nav
-        # without a click), the user pastes the code shown on that page.
-        webbrowser.open("https://heard.dev/app-auth")
-        self._signin_ic_revealed = True
+        # Hand off to the browser: heard.dev/signin runs the unified
+        # Google + email-OTP flow, then bounces back via
+        # heard://auth?code=… which heard/url_scheme.py picks up and
+        # finishes sign-in here.
+        webbrowser.open("https://heard.dev/signin?from=app")
         self._enter_signin()
         self._signin_status(
             "Finishing in your browser… if it doesn't pop back here, "
-            "click “Open Heard” on that page — or paste the code from it below ↓"
+            "click “Open Heard” on that page."
         )
 
     def onWizRevealInstallCode_(self, _s) -> None:
