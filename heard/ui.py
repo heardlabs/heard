@@ -173,8 +173,18 @@ class HeardApp(rumps.App):
         # callback dispatch (clicks move the checkmark visually but
         # never invoke the cb). Setting the callback on the
         # parent-resolved item is what makes the click actually fire.
+        # Persona menu is plan-aware: free/expired users see only the
+        # Hobby-tier personas (jarvis, aria). Pro/trial users get all
+        # four. Read plan once at construction; plan changes (upgrade,
+        # trial expiry) take effect after the next daemon restart —
+        # rebuilding rumps menus dynamically is messy and the lifetime
+        # of a single daemon process is short enough that this is fine.
         self.persona_menu = rumps.MenuItem("Persona")
-        for name in list_presets():
+        try:
+            _plan = (config.load().get("heard_plan") or "").strip() or "free"
+        except Exception:
+            _plan = "free"
+        for name in list_presets(plan=_plan):
             self.persona_menu[name] = rumps.MenuItem(name)
             self.persona_menu[name].set_callback(self._mk_persona_cb(name))
 

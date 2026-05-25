@@ -103,7 +103,13 @@ def _pick_voice(current: str) -> str:
 def _pick_persona(current: str) -> str:
     console.print("\n[bold]1. Pick a persona[/bold]")
     console.print("raw = pass-through. jarvis = British, dry, first-person.\n")
-    names = persona_mod.list_bundled()
+    # Plan-aware: free/expired users see Hobby personas only (jarvis,
+    # aria); pro/trial users see all four.
+    try:
+        plan = (config.load().get("heard_plan") or "").strip() or "free"
+    except Exception:
+        plan = "free"
+    names = persona_mod.list_bundled(plan=plan)
     return _prompt_choice("persona", names, default=current if current in names else "raw")
 
 

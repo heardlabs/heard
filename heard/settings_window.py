@@ -540,8 +540,16 @@ class SettingsController(NSObject):
         # segmented control ("Normal / Fast / Hyper"); the underlying
         # config values stay lowercase (handled in the change handlers
         # and in _refresh_voice).
+        # Persona dropdown is plan-aware: Free/expired users see only
+        # Hobby personas (jarvis, aria). Pro/trial users get all four.
+        # Reads plan once on panel build; opening Settings after an
+        # upgrade picks up the new options.
+        try:
+            _plan = (config.load().get("heard_plan") or "").strip() or "free"
+        except Exception:
+            _plan = "free"
         persona_pop = _popup(
-            [p.capitalize() for p in persona_mod.list_bundled()],
+            [p.capitalize() for p in persona_mod.list_bundled(plan=_plan)],
             target=self, action="onPersonaChanged:",
         )
         persona_row = _setting_row(

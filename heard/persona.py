@@ -276,16 +276,32 @@ def load_meta(name: str, config_dir: Path | None = None) -> dict:
     return {}
 
 
-def list_bundled() -> list[str]:
-    """Return persona names available in the bundled directory.
-    Deduped across ``.md`` and ``.yaml`` so a half-migrated tree doesn't
-    show the same name twice."""
+# Personas the marketing page bills as Pro-only (jarvis + aria are
+# Hobby; atlas + friday are the upgrade). Cosmetic gate — the persona
+# files are still bundled in the .app and load() will happily run them
+# if invoked directly. UI listings filter by plan so Free users can't
+# pick Pro personas in the menu / settings / `heard tune` flow.
+_PRO_PERSONAS = frozenset({"atlas", "friday"})
+
+
+def is_pro_persona(name: str) -> bool:
+    return name in _PRO_PERSONAS
+
+
+def list_bundled(plan: str = "pro") -> list[str]:
+    """Return persona names available to the given plan. Pro/trial get
+    the full bundled set; free/expired/unknown get only the personas
+    not gated to Pro (currently {jarvis, aria}). Default plan="pro"
+    preserves the pre-1J behaviour for any caller that doesn't yet
+    pass the user's actual plan."""
     names: set[str] = set()
     for p in BUNDLED_DIR.glob("*.md"):
         names.add(p.stem)
     for p in BUNDLED_DIR.glob("*.yaml"):
         names.add(p.stem)
-    return sorted(names)
+    if plan in ("pro", "trial"):
+        return sorted(names)
+    return sorted(names - _PRO_PERSONAS)
 
 
 # --- Haiku path -------------------------------------------------------------
