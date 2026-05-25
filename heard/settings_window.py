@@ -787,6 +787,23 @@ class SettingsController(NSObject):
         self._add_card(body, _card([restart_row, cfg_row, log_row, gh_row]))
         _equal_widths([restart_btn, cfg_btn, log_btn, gh_btn])
 
+        # 1H — usage telemetry toggle. Default on (set in config.DEFAULTS).
+        # Off → daemon skips the /v1/telemetry/usage POST after BYOK +
+        # local synths. Managed synths are counted server-side and not
+        # affected by this toggle.
+        self._add_section(body, "PRIVACY")
+        telemetry_check = _checkbox(
+            "", target=self, action="onByokTelemetryToggled:"
+        )
+        telemetry_row = _setting_row(
+            "Count BYOK + local narrations on your dashboard",
+            "Reports character counts only — never the text — to your "
+            "Heard dashboard so the heatmap reflects total usage. "
+            "Turn off to keep BYOK + local activity invisible to Heard.",
+            telemetry_check,
+        )
+        self._add_card(body, _card([telemetry_row]))
+
         self._refs["advanced"].update({
             "cc": cc_check,
             "codex": codex_check,
@@ -794,6 +811,7 @@ class SettingsController(NSObject):
             "kokoro_status": kokoro_status,
             "kokoro_dl": kokoro_dl_btn,
             "kokoro_del": kokoro_del_btn,
+            "byok_telemetry": telemetry_check,
         })
         return outer
 
@@ -976,6 +994,11 @@ class SettingsController(NSObject):
             "✓ Accessibility granted" if ax_ok else "● Not granted — hotkey won't work"
         )
 
+        # 1H telemetry checkbox — default on if missing from config.
+        bt = r.get("byok_telemetry")
+        if bt is not None:
+            bt.setState_(1 if cfg.get("byok_telemetry", True) else 0)
+
         try:
             from heard.tts.kokoro import KokoroTTS
             installed = KokoroTTS(config.MODELS_DIR).is_downloaded()
@@ -1106,6 +1129,10 @@ class SettingsController(NSObject):
 
     def onAutoSilenceToggled_(self, sender) -> None:
         config.set_value("auto_silence_on_mic", bool(sender.state()))
+        _reload_daemon()
+
+    def onByokTelemetryToggled_(self, sender) -> None:
+        config.set_value("byok_telemetry", bool(sender.state()))
         _reload_daemon()
 
     def onAgentVoicesModeChanged_(self, sender) -> None:

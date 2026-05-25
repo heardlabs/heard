@@ -102,6 +102,12 @@ DEFAULTS: dict[str, Any] = {
     # Mirrors macOS's orange recording indicator. Set to false to keep
     # narration playing through calls.
     "auto_silence_on_mic": True,
+    # 1H: report chars (never content) to api.heard.dev/v1/telemetry/usage
+    # after every successful BYOK or local synth so the user's dashboard
+    # heatmap reflects real usage. Managed-cloud synths are counted
+    # server-side already and skipped here regardless. Default on with
+    # a one-time disclosure in the dashboard; opt out via this flag.
+    "byok_telemetry": True,
     # Off by default: the call ends, you get back to your terminal,
     # whoever you were on the call with might still be talking and
     # you'd rather not have Heard suddenly resume mid-sentence. Opt

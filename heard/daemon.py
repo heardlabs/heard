@@ -1026,6 +1026,11 @@ class Daemon:
             synth_ms = int((time.monotonic() - t0) * 1000)
             _log("synth_ok", backend=type(self.tts).__name__, ms=synth_ms, chars=len(chunk))
             self._last_error = None  # successful synth clears the badge
+            # 1H: report BYOK/local synth chars to the dashboard so the
+            # heatmap reflects total usage (managed already counted
+            # server-side). Fire-and-forget; no-op for managed/null
+            # backends and when the user has opted out.
+            self._report_telemetry_async(len(chunk))
             # Server just charged us → it's not capping us. If our local
             # cache thinks we ARE capped (set on a prior 429 that's since
             # been cleared by an upgrade, manual reset, or UTC rollover),
@@ -1694,6 +1699,66 @@ class Daemon:
         # default: plain speak (legacy {"text": "..."} path)
         self._start_speech(req.get("text") or "")
         return None
+
+    # Map TTS backend class names → telemetry backend tags. Managed
+    # synths are counted server-side via auth.ts:chargeAndPersist, so
+    # we skip them here to avoid double-counting. NullTTS = nothing
+    # synthesised, also skipped.
+    _TELEMETRY_BACKENDS = {
+        "ElevenLabsTTS": "byok-elevenlabs",
+        "KokoroTTS": "kokoro",
+    }
+
+    def _report_telemetry_async(self, chars: int) -> None:
+        """Fire-and-forget POST /v1/telemetry/usage for BYOK + local
+        synths (1H). Best-effort: any error swallowed silently — the
+        heatmap is observability, not load-bearing. Skipped when (a)
+        config.byok_telemetry is false (user opted out); (b) backend
+        is managed or null (already counted or nothing happened);
+        (c) no heard_token (not signed in)."""
+        if not self.cfg.get("byok_telemetry", True):
+            return
+        backend = self._TELEMETRY_BACKENDS.get(type(self.tts).__name__)
+        if not backend:
+            return
+        token = (self.cfg.get("heard_token") or "").strip()
+        if not token:
+            return
+        base_url = (
+            self.cfg.get("heard_api_base") or "https://api.heard.dev"
+        ).rstrip("/")
+
+        def _post() -> None:
+            import json as _json
+            import ssl as _ssl
+            import urllib.error as _urlerr
+            import urllib.request as _urlreq
+            try:
+                try:
+                    import certifi  # type: ignore
+
+                    ssl_ctx = _ssl.create_default_context(cafile=certifi.where())
+                except ImportError:
+                    ssl_ctx = _ssl.create_default_context()
+                req = _urlreq.Request(
+                    f"{base_url}/v1/telemetry/usage",
+                    data=_json.dumps(
+                        {"chars": chars, "backend": backend}
+                    ).encode("utf-8"),
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "User-Agent": "Heard-daemon/1.0",
+                    },
+                )
+                with _urlreq.urlopen(req, timeout=3.0, context=ssl_ctx):
+                    pass
+            except (_urlerr.HTTPError, _urlerr.URLError, TimeoutError, OSError):
+                pass
+
+        threading.Thread(target=_post, daemon=True).start()
 
     def _refresh_account_usage(self) -> None:
         """Fetch /v1/me with the current heard_token and cache the
