@@ -62,26 +62,30 @@ def _ssl_ctx() -> ssl.SSLContext:
     return ssl.create_default_context()
 
 
-def _post_json(
-    url: str, body: dict, timeout_s: float = DEFAULT_TIMEOUT_S
+def _request_json(
+    method: str,
+    url: str,
+    body: dict | None = None,
+    token: str | None = None,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
 ) -> dict:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            # Cloudflare's bot-fight rules reject the default urllib UA
-            # with a 403 on some routes. Identify as Heard explicitly so
-            # auth requests stay reachable across all routes.
-            "User-Agent": "Heard-cli/1.0",
-        },
-    )
+    """Generic JSON request helper. Used by _post_json (POST), _get_json
+    (GET), and 3B's DELETE /v1/devices/:id. Same HTTPError → HeardApiError
+    mapping so callers get a uniform error model."""
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Heard-cli/1.0",
+    }
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout_s, context=_ssl_ctx()) as resp:
-            data = resp.read().decode("utf-8")
-        return json.loads(data) if data else {}
+            text = resp.read().decode("utf-8")
+        return json.loads(text) if text else {}
     except urllib.error.HTTPError as e:
         reason = ""
         detail = ""
@@ -96,12 +100,42 @@ def _post_json(
         raise HeardApiError(0, "network_unreachable", str(e)) from e
 
 
+def _post_json(
+    url: str, body: dict, timeout_s: float = DEFAULT_TIMEOUT_S
+) -> dict:
+    return _request_json("POST", url, body=body, timeout_s=timeout_s)
+
+
+def _get_json(
+    url: str, token: str | None = None, timeout_s: float = DEFAULT_TIMEOUT_S
+) -> dict:
+    return _request_json("GET", url, token=token, timeout_s=timeout_s)
+
+
 def request_code(email: str, base_url: str = DEFAULT_BASE_URL) -> None:
     """Trigger a 6-digit code email. Raises ``HeardApiError`` on
     invalid email, send failure, or network issue."""
     payload = _post_json(f"{base_url.rstrip('/')}/v1/auth/request", {"email": email})
     if not payload.get("ok"):
         raise HeardApiError(500, "unexpected_response", json.dumps(payload)[:200])
+
+
+def _local_device_name() -> str:
+    """Best-effort hostname for the new device_session row (3A). Uses
+    socket.gethostname() — typically "<user>'s MacBook Pro" or similar
+    on macOS. Falls back to "Mac" if anything goes wrong, so the
+    Connected Macs panel always has something readable."""
+    try:
+        import socket
+
+        name = (socket.gethostname() or "").strip()
+        # Strip the trailing ".local" macOS appends so the dashboard
+        # shows "Christian's MacBook Pro" not the FQDN-ish form.
+        if name.lower().endswith(".local"):
+            name = name[: -len(".local")]
+        return name or "Mac"
+    except Exception:
+        return "Mac"
 
 
 def verify_code(
@@ -111,7 +145,8 @@ def verify_code(
     ``HeardApiError(401, 'wrong_code')`` on bad code,
     ``HeardApiError(401, 'code_expired')`` on expiry, etc."""
     payload = _post_json(
-        f"{base_url.rstrip('/')}/v1/auth/verify", {"email": email, "code": code}
+        f"{base_url.rstrip('/')}/v1/auth/verify",
+        {"email": email, "code": code, "device_name": _local_device_name()},
     )
     token = (payload.get("token") or "").strip()
     if not token:
@@ -136,10 +171,11 @@ def claim_install_code(
     code: str, base_url: str = DEFAULT_BASE_URL
 ) -> TokenInfo:
     """Exchange a single-use install code (minted by heard.dev's
-    /signup web flow) for a fresh Heard bearer + plan info. The
-    server rotates the bound account's token_hash on success, so any
-    other device still on the old bearer gets logged out — same
-    behaviour as a returning email-verify.
+    /signin web flow) for a fresh Heard bearer + plan info. 3A: the
+    server now INSERTS a new device_session per claim — other Macs
+    already signed in keep their own sessions (no silent kick).
+    Other devices can be revoked from the dashboard's Connected Macs
+    panel.
 
     Raises ``HeardApiError(400, 'invalid_request')`` on shape failures,
     ``HeardApiError(410, 'code_expired'|'code_expired_or_unknown')`` on
@@ -151,7 +187,8 @@ def claim_install_code(
             400, "invalid_request", "code must canonicalize to 8 chars"
         )
     payload = _post_json(
-        f"{base_url.rstrip('/')}/v1/auth/claim", {"code": canonical}
+        f"{base_url.rstrip('/')}/v1/auth/claim",
+        {"code": canonical, "device_name": _local_device_name()},
     )
     token = (payload.get("token") or "").strip()
     if not token:
@@ -162,4 +199,56 @@ def claim_install_code(
         email=str(payload.get("email") or ""),
         trial_expires_at=int(payload.get("trial_expires_at") or 0),
         returning=False,
+    )
+
+
+# 3B device list / revoke. Used by Settings → Account to render the
+# Connected Macs panel + revoke individual sessions. Same Bearer-auth
+# shape as the synth path.
+
+@dataclass
+class DeviceInfo:
+    id: str
+    device_name: str | None
+    device_kind: str
+    user_agent: str | None
+    created_at: int     # epoch ms
+    last_seen_at: int   # epoch ms
+
+
+def list_devices(
+    token: str, base_url: str = DEFAULT_BASE_URL
+) -> tuple[list[DeviceInfo], str | None]:
+    """GET /v1/devices for the bearer's account. Returns
+    (devices, current_session_id) — current_session_id is the row tied
+    to this bearer so the UI can render a "This Mac" marker."""
+    payload = _get_json(f"{base_url.rstrip('/')}/v1/devices", token=token)
+    rows = payload.get("devices") or []
+    devices = [
+        DeviceInfo(
+            id=str(r.get("id") or ""),
+            device_name=(r.get("device_name") or None),
+            device_kind=str(r.get("device_kind") or "desktop"),
+            user_agent=(r.get("user_agent") or None),
+            created_at=int(r.get("created_at") or 0),
+            last_seen_at=int(r.get("last_seen_at") or 0),
+        )
+        for r in rows
+        if isinstance(r, dict) and r.get("id")
+    ]
+    current = payload.get("current_session_id") or None
+    return devices, (str(current) if current else None)
+
+
+def revoke_device(
+    token: str, session_id: str, base_url: str = DEFAULT_BASE_URL
+) -> None:
+    """DELETE /v1/devices/:id. Raises HeardApiError on 404 / network
+    failure. Revoking the current session is allowed (server doesn't
+    block it) — the daemon's next /v1/synth will 401 with
+    `device_revoked` and the existing sign-out flow runs."""
+    _request_json(
+        "DELETE",
+        f"{base_url.rstrip('/')}/v1/devices/{session_id}",
+        token=token,
     )

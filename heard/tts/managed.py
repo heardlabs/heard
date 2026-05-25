@@ -85,6 +85,11 @@ def _clamp_speed(speed: float) -> float:
 
 
 def _reason_for_status(status: int) -> str:
+    """Fallback reason when the body has no 'error' field. The body
+    reason (e.g. 'unknown_token', 'device_revoked', 'trial_expired',
+    'daily_cap_exceeded') is preferred when present — see the caller
+    in synth_to_file. 3B added 'device_revoked' as a body-only reason
+    distinct from 'unknown_token'."""
     if status == 401:
         return "token_unknown"
     if status == 402:

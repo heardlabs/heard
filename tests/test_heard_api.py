@@ -125,7 +125,11 @@ def test_verify_code_returns_token_info_on_success(monkeypatch):
     assert info.returning is False
 
     body = json.loads(calls[0].data.decode("utf-8"))
-    assert body == {"email": "user@example.com", "code": "123456"}
+    assert body.get("email") == "user@example.com"
+    assert body.get("code") == "123456"
+    # 3A added device_name to the verify request — value is whatever
+    # socket.gethostname() returned, just confirm it's a non-empty string.
+    assert isinstance(body.get("device_name"), str) and body["device_name"]
 
 
 def test_verify_code_returning_user_flag(monkeypatch):

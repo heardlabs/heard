@@ -925,11 +925,33 @@ class Daemon:
                                 kind="cloud_daily_cap_pro",
                             )
                 elif e.status == 401:
-                    notify.notify(
-                        "Heard sign-in expired",
-                        "Run `heard signup` in your terminal to sign in again.",
-                        kind="cloud_token_unknown",
-                    )
+                    # 3B: server distinguishes device_revoked (this Mac
+                    # was kicked from the dashboard) from token_unknown
+                    # (unrecognised hash). Show the right copy so the
+                    # user can act, and clear the dead token so the
+                    # daemon stops re-trying with it on every event.
+                    reason = getattr(e, "reason", "") or ""
+                    if reason == "device_revoked":
+                        notify.notify(
+                            "Heard signed out on this Mac",
+                            "Revoked from your dashboard. Sign in again to use cloud voices.",
+                            kind="cloud_device_revoked",
+                        )
+                    else:
+                        notify.notify(
+                            "Heard sign-in expired",
+                            "Run `heard signup` in your terminal to sign in again.",
+                            kind="cloud_token_unknown",
+                        )
+                    # Token is dead either way — clear it so future
+                    # events don't keep retrying. Reload picks the
+                    # next-best TTS backend (BYOK or local).
+                    try:
+                        for k in ("heard_token", "heard_plan", "heard_email"):
+                            config.set_value(k, "")
+                        self._reload_config()
+                    except Exception:
+                        pass
                 else:
                     notify.notify(
                         "Heard cloud voices unreachable",

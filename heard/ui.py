@@ -610,6 +610,7 @@ class HeardApp(rumps.App):
                 "daily_cap_exceeded": "Daily cloud limit reached — back tomorrow",
                 "trial_expired": "Trial ended — switching to local voices",
                 "token_unknown": "Sign-in expired — sign in again",
+                "device_revoked": "This Mac was signed out from your dashboard — sign in to keep narrating",
                 "no_token": "Cloud voices not signed in",
                 "network_unreachable": "Cloud unreachable",
                 "proxy_error": "Cloud voices unreachable",
