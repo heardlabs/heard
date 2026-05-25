@@ -133,6 +133,12 @@ class Daemon:
         # the "out of credits → fall back to BYOK / local" path; clears
         # itself at the next UTC midnight via _managed_capped_today().
         self._managed_capped_at: float | None = None
+        # Cached /v1/me snapshot for the menu-bar usage indicator (6C).
+        # Refreshed on a 5-min thread + on demand at daemon start. None
+        # means "haven't fetched yet" — menu bar shows nothing instead
+        # of "0 / 100K" until the first poll completes.
+        self._account_usage: dict | None = None
+        self._account_usage_at: float = 0.0
         self.tts = self._make_tts()
         self.sessions = SessionStore()
         # Multi-agent router. Decides per-event whether to speak,
@@ -1609,6 +1615,10 @@ class Daemon:
                 "narrate_tools": bool(self.cfg.get("narrate_tools", True)),
                 "muted": bool(self.cfg.get("muted", False)),
                 "last_error": self._last_error,
+                # /v1/me snapshot for the menu-bar usage indicator (6C).
+                # Polled every 5 min in the background; None until first
+                # successful fetch.
+                "account_usage": self._account_usage,
                 # Real-time activity hint for the menu bar header.
                 "speaking": speaking,
                 "queued": queued,
@@ -1685,6 +1695,67 @@ class Daemon:
         self._start_speech(req.get("text") or "")
         return None
 
+    def _refresh_account_usage(self) -> None:
+        """Fetch /v1/me with the current heard_token and cache the
+        response on self._account_usage. Best-effort: a network error
+        or missing token leaves the cache unchanged so the menu bar
+        keeps showing the last good value (or nothing). Used by the
+        menu-bar usage indicator (6C). No retries — the next 5-minute
+        tick will try again."""
+        import json as _json
+        import ssl as _ssl
+        import time as _time
+        import urllib.error as _urlerr
+        import urllib.request as _urlreq
+
+        token = (self.cfg.get("heard_token") or "").strip()
+        if not token:
+            self._account_usage = None
+            return
+        base_url = (self.cfg.get("heard_api_base") or "https://api.heard.dev").rstrip("/")
+        try:
+            try:
+                import certifi  # type: ignore
+
+                ssl_ctx = _ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                ssl_ctx = _ssl.create_default_context()
+            req = _urlreq.Request(
+                f"{base_url}/v1/me",
+                method="GET",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "User-Agent": "Heard-daemon/1.0",
+                },
+            )
+            with _urlreq.urlopen(req, timeout=5.0, context=ssl_ctx) as resp:
+                data = _json.loads(resp.read().decode("utf-8") or "{}")
+            if isinstance(data, dict):
+                self._account_usage = data
+                self._account_usage_at = _time.time()
+        except (_urlerr.HTTPError, _urlerr.URLError, TimeoutError, OSError, ValueError):
+            # Stay quiet; menu bar shows the previous value (or nothing).
+            return
+
+    def _start_account_usage_poll(self) -> None:
+        """Kick off a 5-minute /v1/me refresh thread. First fetch fires
+        ~3 seconds after the daemon comes up so the menu bar has data
+        on the first user interaction. Daemonised so a daemon shutdown
+        doesn't wait for the sleep."""
+        def _loop() -> None:
+            import time as _time
+
+            _time.sleep(3.0)
+            while True:
+                try:
+                    self._refresh_account_usage()
+                except Exception:
+                    pass
+                _time.sleep(300.0)
+
+        threading.Thread(target=_loop, daemon=True).start()
+
     def serve(self) -> None:
         sock_path = str(config.SOCKET_PATH)
         try:
@@ -1697,6 +1768,7 @@ class Daemon:
         srv.listen(4)
         config.PID_PATH.write_text(str(os.getpid()))
         print(f"heard daemon ready at {sock_path}", flush=True)
+        self._start_account_usage_poll()
 
         def shutdown(*_):
             try:

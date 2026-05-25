@@ -296,6 +296,12 @@ class HeardApp(rumps.App):
         # row so expiry is impossible to miss.
         self.upgrade_item = rumps.MenuItem("Upgrade to Pro", callback=self.on_upgrade)
 
+        # Managed-cloud usage indicator (6C). Reads /v1/me snapshot from
+        # the daemon's status payload. Hidden (empty title, no callback)
+        # when not signed in or no data yet. Shows "X / Y today" for
+        # trial / "X / Y this month" for pro. Display-only.
+        self.usage_item = rumps.MenuItem("", callback=None)
+
         # NOTE: the "Options" submenu (built above as `options_menu`)
         # is intentionally NOT added to the menu — everything in it now
         # lives in the Settings window. The object is still constructed
@@ -307,6 +313,7 @@ class HeardApp(rumps.App):
             self.status_item,
             self.account_item,
             self.upgrade_item,
+            self.usage_item,
             self.version_item,
             None,
             self.pause_item,
@@ -334,6 +341,7 @@ class HeardApp(rumps.App):
 
         self._refresh_account_row(cfg)
         self._refresh_api_key_labels(cfg, status or {})
+        self._refresh_usage_item(cfg, status or {})
 
         # First-launch onboarding: open the Settings window (it shows the
         # welcome checklist) the first time, once the daemon's up. The
@@ -1028,6 +1036,46 @@ class HeardApp(rumps.App):
         if days_left == 1:
             return "trial (1 day left)"
         return f"trial ({days_left} days left)"
+
+    @staticmethod
+    def _fmt_chars(n: int) -> str:
+        try:
+            v = int(n)
+        except (TypeError, ValueError):
+            return "0"
+        if v >= 1_000_000:
+            return f"{v / 1_000_000:.1f}M"
+        if v >= 1_000:
+            return f"{v / 1_000:.1f}K"
+        return str(v)
+
+    def _refresh_usage_item(self, cfg: dict, status: dict) -> None:
+        """Update the managed-cloud usage line from the daemon's cached
+        /v1/me snapshot. Hidden (empty title) when no token, no data
+        yet, or on the expired plan (the upgrade row is the only thing
+        worth showing in that state). Window word matches the plan —
+        'today' for trial, 'this month' for pro."""
+        usage = status.get("account_usage") if isinstance(status, dict) else None
+        token = (cfg.get("heard_token") or "").strip()
+        if not token or not isinstance(usage, dict):
+            self.usage_item.title = ""
+            self.usage_item.set_callback(None)
+            return
+        plan = (usage.get("plan") or "").strip()
+        if plan == "expired":
+            self.usage_item.title = ""
+            self.usage_item.set_callback(None)
+            return
+        used = usage.get("usage_today_chars") or 0
+        cap = usage.get("daily_cap") or 0
+        window = "this month" if plan == "pro" else "today"
+        if cap > 0:
+            self.usage_item.title = (
+                f"{self._fmt_chars(used)} / {self._fmt_chars(cap)} {window}"
+            )
+        else:
+            self.usage_item.title = f"{self._fmt_chars(used)} {window}"
+        self.usage_item.set_callback(None)
 
     def _refresh_api_key_labels(self, cfg: dict, status: dict) -> None:
         # Active-path row — rendered from the daemon's reported backend
