@@ -22,10 +22,12 @@ from heard import config, persona
 _PRESETABLE_KEYS = ("voice", "speed", "verbosity", "narrate_tools", "lang")
 
 
-def list_bundled() -> list[str]:
+def list_bundled(plan: str = "pro") -> list[str]:
     """Names of personas available as presets — same listing as
-    ``heard.persona.list_bundled``, deduped across .md/.yaml."""
-    return persona.list_bundled()
+    ``heard.persona.list_bundled``, deduped across .md/.yaml. The
+    ``plan`` kwarg is forwarded so plan-gated persona listings (1J)
+    work through the shim too — the menu bar imports through here."""
+    return persona.list_bundled(plan=plan)
 
 
 def load(name: str) -> dict:
