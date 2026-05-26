@@ -142,10 +142,36 @@ def _wait_for_daemon(timeout_s: float) -> bool:
 
 
 def ensure_daemon() -> bool:
-    """Spawn the daemon if no live one exists. Multi-process safe:
-    serialized through a file lock so concurrent hooks can't race into
-    spawning N daemons. Refuses to spawn under memory pressure.
-    """
+    """Return True iff a live daemon is reachable on the socket.
+
+    Pre-v0.9.5 this function spawned a headless ``python -m heard.daemon``
+    subprocess when no daemon was listening — the idea was that a hook
+    fired by Claude Code / Codex would transparently boot Heard if the
+    user hadn't opened the menu-bar app yet. In practice that meant a
+    silent install ("dragged Heard.dmg → /Applications, never
+    double-clicked Heard.app") could mint an anonymous trial, run the
+    first-launch greeting, and start narrating every tool event the
+    moment claude-code touched the system. The user never opened the
+    app; Jarvis spoke "out of nowhere."
+
+    New rule (v0.9.5): the daemon only exists as the in-process thread
+    of the menu-bar app. The hook is best-effort — it delivers events
+    when Heard is open, silently noops when it isn't. To get narration,
+    the user opens ``Heard.app``; to stop it, they quit from the menu
+    bar. No headless mode."""
+    return is_daemon_alive()
+
+
+def start_headless_daemon() -> bool:
+    """Explicitly spawn the daemon as a standalone ``python -m heard.daemon``
+    subprocess if no live one exists. Returns True iff a daemon is
+    reachable on the socket after the call.
+
+    Used only by interactive CLI commands (e.g. ``heard tune``) where
+    the user is actively invoking Heard from a terminal and needs a
+    daemon to talk to. The hook path no longer spawns automatically —
+    that path uses ``ensure_daemon()`` which never spawns. See the
+    v0.9.5 commit + ensure_daemon's docstring for the rationale."""
     if is_daemon_alive():
         return True
 

@@ -1371,9 +1371,13 @@ def _refresh_existing_hooks() -> None:
 
 
 def run() -> None:
-    # Ensure a daemon exists so refresh() isn't stuck on "stopped".
+    # `heard ui` CLI path — user explicitly typed the command to launch
+    # the menu bar from a terminal. Spawning a headless daemon is OK
+    # here (matches the v0.9.5 rule "only narrate when the user actively
+    # invoked Heard"). The hook path uses ensure_daemon() instead, which
+    # never spawns.
     try:
-        client.ensure_daemon()
+        client.start_headless_daemon()
     except Exception as e:
         print(f"could not start daemon: {e}", file=sys.stderr)
     _refresh_existing_hooks()

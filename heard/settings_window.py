@@ -21,6 +21,7 @@ from typing import Any
 import objc
 from AppKit import (
     NSApp,
+    NSApplication,
     NSAttributedString,
     NSBackingStoreBuffered,
     NSButton,
@@ -1298,7 +1299,10 @@ class SettingsController(NSObject):
         except Exception:
             pass
         try:
-            client.ensure_daemon()
+            # User explicitly clicked Restart Daemon — spawning is OK,
+            # this isn't the auto-spawn-from-hook case the v0.9.5 rule
+            # is meant to block.
+            client.start_headless_daemon()
         except Exception:
             pass
         self._refresh_all()
@@ -1547,8 +1551,17 @@ def _ensure_edit_menu() -> None:
     """LSUIElement apps have no main menu by default — paste/copy/cut
     Cmd-shortcuts get swallowed because the responder chain has nowhere
     to route them. Install a minimal hidden Edit menu so text fields
-    behave normally. Idempotent."""
-    if NSApp.mainMenu() is not None:
+    behave normally. Idempotent.
+
+    Uses ``NSApplication.sharedApplication()`` rather than the
+    module-level ``NSApp`` because PyObjC's ``NSApp`` symbol resolves
+    to ``None`` until ``sharedApplication()`` has been called at least
+    once in the current process. The wizard can be invoked from paths
+    (URL scheme, hook-triggered relaunch) that race that initialization,
+    and the resulting ``'NoneType' object has no attribute 'mainMenu'``
+    crash silently swallows the entire onboarding window."""
+    app = NSApplication.sharedApplication()
+    if app.mainMenu() is not None:
         return
     main_menu = NSMenu.alloc().init()
     edit_top = NSMenuItem.alloc().init()
@@ -1562,7 +1575,7 @@ def _ensure_edit_menu() -> None:
     ):
         edit_menu.addItemWithTitle_action_keyEquivalent_(title, selector, key)
     edit_top.setSubmenu_(edit_menu)
-    NSApp.setMainMenu_(main_menu)
+    app.setMainMenu_(main_menu)
 
 
 # ===========================================================================

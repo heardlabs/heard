@@ -84,7 +84,12 @@ def _pick_voice(current: str) -> str:
         chosen_label = _prompt_choice("voice", labels, default=chosen_label)
         voice_value = label_to_value[chosen_label]
         if typer.confirm(f"Play a sample of {chosen_label}?", default=True):
-            client.ensure_daemon()
+            # ``heard tune`` is interactive CLI — the user is explicitly
+            # asking us to play a sample, so spawning a headless daemon
+            # here is consistent with the v0.9.5 "only narrate when the
+            # user invoked Heard" rule. The hook path, by contrast,
+            # uses ensure_daemon() which never spawns.
+            client.start_headless_daemon()
             # Order matters: write config FIRST, then reload daemon,
             # then speak. The previous order (reload → set_value →
             # speak) reloaded with the OLD voice and then played the
