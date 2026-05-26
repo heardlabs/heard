@@ -428,7 +428,7 @@ def _improve_build_prompt(records: list[dict]) -> str:
     return f"""\
 You are helping me improve the spoken output of Heard, a voice companion that
 narrates AI coding agents. You're running inside the heard repo
-(`~/Desktop/Projects/heard`). Its `CLAUDE.md` is already loaded with the
+(`~/Desktop/Projects/heard/heard`). Its `CLAUDE.md` is already loaded with the
 architecture map and conventions — follow them (`encoding="utf-8"` on file IO,
 commit-per-logical-step, `Co-Authored-By: Claude Opus 4.7 (1M context)`
 trailer).
