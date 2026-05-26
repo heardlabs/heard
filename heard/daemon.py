@@ -28,6 +28,7 @@ from heard import (
     accessibility,
     audio_monitor,
     config,
+    heard_api,
     history,
     hotkey,
     notify,
@@ -140,6 +141,20 @@ class Daemon:
         self._account_usage: dict | None = None
         self._account_usage_at: float = 0.0
         self.tts = self._make_tts()
+        # Anonymous-trial first-launch path. If we booted to NullTTS
+        # because the user has no token AND no BYOK key, fire the
+        # device-bound /v1/auth/anonymous endpoint in a background
+        # thread. Success persists token+plan+expiry+is_anonymous to
+        # config and reloads — _make_tts then picks ManagedTTS on the
+        # next pass, and the menu bar's greeting plays out. Failure
+        # (offline, server down) retries with backoff a few times and
+        # gives up silently — the user stays on NullTTS but the wizard
+        # still works and a later reload (e.g. on sign-in) will pick
+        # up a real backend. Skipped if any heard token / BYOK key is
+        # already set, or if the user has been signed out (heard_plan
+        # = "expired" or "signed_out") so we don't re-create anon
+        # state on a deliberate sign-out.
+        self._maybe_start_anon_trial()
         self.sessions = SessionStore()
         # Multi-agent router. Decides per-event whether to speak,
         # drop, or defer to a digest summary, based on how many
@@ -618,6 +633,98 @@ class Daemon:
         if kokoro.is_downloaded():
             return kokoro
         return NullTTS()
+
+    def _maybe_start_anon_trial(self) -> None:
+        """Kick off the first-launch anonymous trial fetch if we have
+        no voice configured. Idempotent across re-launches via the
+        ``heard_anon_trial_used`` config flag — once set we never
+        re-fetch, so deliberately signing out doesn't silently mint a
+        new trial. The flag is set on success AND on 402 trial_expired
+        (the device already burned its anon trial). Network errors do
+        NOT set the flag — the next launch retries.
+
+        The fetch itself runs on a background thread so daemon boot
+        stays snappy; the user briefly sees NullTTS until the reload
+        re-picks ManagedTTS."""
+        if (self.cfg.get("elevenlabs_api_key") or "").strip():
+            return
+        if (self.cfg.get("heard_token") or "").strip():
+            return
+        if self.cfg.get("heard_anon_trial_used"):
+            return
+        threading.Thread(
+            target=self._anon_trial_fetch, daemon=True, name="anon-trial"
+        ).start()
+
+    def _anon_trial_fetch(self) -> None:
+        """Background worker for ``_maybe_start_anon_trial``. See its
+        docstring for the policy."""
+        device_id = heard_api.load_or_create_device_id(config.DATA_DIR)
+        base_url = (
+            self.cfg.get("heard_api_base") or "https://api.heard.dev"
+        )
+        backoff_s = 2.0
+        for attempt in range(5):
+            try:
+                info = heard_api.request_anon_trial(
+                    device_id, base_url=base_url
+                )
+            except heard_api.HeardApiError as e:
+                if e.status == 402:
+                    _log("anon_trial_already_burned", reason=e.reason)
+                    try:
+                        config.set_value("heard_anon_trial_used", True)
+                    except Exception:
+                        pass
+                    return
+                if e.status == 0:
+                    _log(
+                        "anon_trial_retry",
+                        attempt=attempt,
+                        reason=e.reason,
+                    )
+                    time.sleep(backoff_s)
+                    backoff_s = min(backoff_s * 2, 30.0)
+                    continue
+                _log(
+                    "anon_trial_failed",
+                    status=e.status,
+                    reason=e.reason,
+                )
+                return
+            except Exception as e:  # noqa: BLE001
+                _log("anon_trial_unexpected", err=str(e))
+                return
+
+            # Success. Persist the three config keys ManagedTTS + the
+            # menu bar's plan UI care about, then reload so _make_tts
+            # re-picks. heard_anon_trial_used is the gate that keeps
+            # us from re-trialing across reinstalls on the same device
+            # (the server enforces this anyway via accounts.device_id;
+            # the local flag is just faster than a round-trip 402).
+            try:
+                config.set_value("heard_token", info.token)
+                config.set_value("heard_plan", info.plan)
+                config.set_value(
+                    "heard_trial_expires_at", info.trial_expires_at
+                )
+                config.set_value("heard_is_anonymous", info.is_anonymous)
+                config.set_value("heard_anon_trial_used", True)
+            except Exception as e:  # noqa: BLE001
+                _log("anon_trial_persist_failed", err=str(e))
+                return
+            _log(
+                "anon_trial_minted",
+                plan=info.plan,
+                expires_at=info.trial_expires_at,
+            )
+            try:
+                self._reload_config()
+            except Exception as e:  # noqa: BLE001
+                _log("anon_trial_reload_failed", err=str(e))
+            return
+
+        _log("anon_trial_gave_up")
 
     def _hotkey_signature(self, cfg: dict) -> tuple:
         """Snapshot of every config value that affects hotkey wiring.

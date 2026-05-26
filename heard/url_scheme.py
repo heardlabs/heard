@@ -115,6 +115,12 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
     if email:
         config.set_value("heard_email", email)
     config.set_value("heard_trial_expires_at", int(trial_expires_at or 0))
+    # Sign-in always produces a verified account — clear the anonymous
+    # flag so the menu bar drops the "Sign in to extend" affordance.
+    # heard_anon_trial_used stays True so we never reach back to the
+    # anon endpoint on this device after a deliberate sign-out.
+    config.set_value("heard_is_anonymous", False)
+    config.set_value("heard_anon_trial_used", True)
     _reload_and_selftest()
     _bring_onboarding_forward_signed_in(email or "your account")
 
@@ -122,7 +128,10 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
 def _claim_and_apply(code: str) -> None:
     """Background worker: exchange an install code for a bearer."""
     try:
-        info = heard_api.claim_install_code(code)
+        info = heard_api.claim_install_code(
+            code,
+            prior_device_id=heard_api.load_or_create_device_id(config.DATA_DIR),
+        )
     except heard_api.HeardApiError as e:
         msg = {
             "code_expired": "That sign-in link expired — try Continue with Google again.",

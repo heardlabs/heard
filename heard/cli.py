@@ -572,7 +572,11 @@ def signup(email: str | None = typer.Option(None, help="Skip the prompt and use 
         raise typer.Exit(1)
 
     try:
-        info = heard_api.verify_code(email, code)
+        info = heard_api.verify_code(
+            email,
+            code,
+            prior_device_id=heard_api.load_or_create_device_id(config.DATA_DIR),
+        )
     except heard_api.HeardApiError as e:
         # Surface the specific reason — wrong_code, code_expired, too_many_attempts
         # all read better than a generic "verify failed".
@@ -582,6 +586,12 @@ def signup(email: str | None = typer.Option(None, help="Skip the prompt and use 
     config.set_value("heard_token", info.token)
     config.set_value("heard_plan", info.plan)
     config.set_value("heard_trial_expires_at", info.trial_expires_at)
+    # Sign-in produces a verified account; clear the anonymous flag so
+    # the menu bar drops "Sign in to extend" affordances, and pin the
+    # used-flag so the daemon never re-fires the anon-trial endpoint
+    # after a future sign-out.
+    config.set_value("heard_is_anonymous", False)
+    config.set_value("heard_anon_trial_used", True)
 
     if info.returning:
         typer.echo(f"Welcome back. You're on the {info.plan} plan.")

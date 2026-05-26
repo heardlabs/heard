@@ -23,7 +23,9 @@ import re
 import ssl
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 try:
     import certifi  # type: ignore
@@ -41,6 +43,12 @@ class TokenInfo:
     email: str
     trial_expires_at: int
     returning: bool
+    # True iff this token was minted by /v1/auth/anonymous (anon-trial
+    # flow). Lets the wizard / menu show "Sign in to extend your trial"
+    # instead of acting like the user has a verified account. Defaults
+    # to False so existing callers (verify_code, claim_install_code)
+    # don't need to touch this field.
+    is_anonymous: bool = False
 
 
 class HeardApiError(RuntimeError):
@@ -120,6 +128,87 @@ def request_code(email: str, base_url: str = DEFAULT_BASE_URL) -> None:
         raise HeardApiError(500, "unexpected_response", json.dumps(payload)[:200])
 
 
+# ---------------------------------------------------------------------
+# Anonymous trial (device-bound, 7-day, 5K chars/day)
+# ---------------------------------------------------------------------
+#
+# The desktop app's first-launch path: mint a Heard token without
+# asking the user for an email. Server enforces per-device idempotency
+# via accounts.device_id (unique-when-not-null), so re-launching with
+# the same device.id always returns the same trial — re-running the
+# endpoint isn't a way to multiply the cap. Sign-in via the normal
+# verify_code / claim_install_code paths sends the same device_id as
+# prior_device_id so the server can delete the anon row.
+
+def _device_id_path(data_dir: Path) -> Path:
+    """Where the device's anon-trial identity lives. One file under the
+    daemon's state dir. Lives next to daemon.sock / daemon.log because
+    it's daemon-runtime state — `rm -rf` the state dir and the user
+    gets a fresh device, exactly the abuse-bounded contract the server
+    expects (and the partial-unique device_id index enforces)."""
+    return data_dir / "device.id"
+
+
+def load_or_create_device_id(data_dir: Path) -> str:
+    """Return a stable per-machine device id, creating it (UUID4) on
+    first call. Idempotent: subsequent calls return the same value.
+    Safe to call from multiple threads — the file write is small
+    enough to be atomic on macOS APFS.
+
+    The id isn't tied to hardware (no IOPlatformUUID, no MAC), so a
+    determined user can rotate by deleting `device.id`. That's by
+    design — the abuse mitigation is the (tight cap × short trial)
+    product, not unforgeable identity. If we later want stronger
+    binding, mirror this value into the macOS Keychain so a state-dir
+    wipe doesn't reset it (deferred; see PRD).
+    """
+    p = _device_id_path(data_dir)
+    try:
+        existing = p.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except FileNotFoundError:
+        pass
+    except OSError:
+        # Corrupt / unreadable file — overwrite with a fresh one rather
+        # than crashing the boot path.
+        pass
+    new_id = str(uuid.uuid4())
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(new_id, encoding="utf-8")
+    return new_id
+
+
+def request_anon_trial(
+    device_id: str, base_url: str = DEFAULT_BASE_URL
+) -> TokenInfo:
+    """Mint an anonymous trial token bound to ``device_id``. Same
+    device_id always returns the same trial (idempotent on the server
+    side). Returns a TokenInfo with is_anonymous=True.
+
+    Raises ``HeardApiError(400, 'invalid_request')`` on a malformed
+    device_id, ``HeardApiError(402, 'trial_expired')`` when the device
+    has already burned its 7-day anon trial (must sign in to extend),
+    ``HeardApiError(0, 'network_unreachable')`` on network failure —
+    callers should treat the network case as a retry candidate, not a
+    hard failure (see daemon boot path)."""
+    payload = _post_json(
+        f"{base_url.rstrip('/')}/v1/auth/anonymous",
+        {"device_id": device_id},
+    )
+    token = (payload.get("token") or "").strip()
+    if not token:
+        raise HeardApiError(500, "missing_token", json.dumps(payload)[:200])
+    return TokenInfo(
+        token=token,
+        plan=str(payload.get("plan") or "trial"),
+        email="",  # anon accounts have a synthetic placeholder; never surface
+        trial_expires_at=int(payload.get("trial_expires_at") or 0),
+        returning=False,
+        is_anonymous=bool(payload.get("is_anonymous", True)),
+    )
+
+
 def _local_device_name() -> str:
     """Best-effort hostname for the new device_session row (3A). Uses
     socket.gethostname() — typically "<user>'s MacBook Pro" or similar
@@ -139,14 +228,24 @@ def _local_device_name() -> str:
 
 
 def verify_code(
-    email: str, code: str, base_url: str = DEFAULT_BASE_URL
+    email: str,
+    code: str,
+    base_url: str = DEFAULT_BASE_URL,
+    prior_device_id: str | None = None,
 ) -> TokenInfo:
     """Exchange a 6-digit code for a Heard token. Raises
     ``HeardApiError(401, 'wrong_code')`` on bad code,
-    ``HeardApiError(401, 'code_expired')`` on expiry, etc."""
+    ``HeardApiError(401, 'code_expired')`` on expiry, etc.
+
+    ``prior_device_id``: if provided, signals the server to delete any
+    anonymous trial account this device was running before creating
+    the verified account. No-op if the device never ran an anon trial."""
+    body = {"email": email, "code": code, "device_name": _local_device_name()}
+    if prior_device_id:
+        body["prior_device_id"] = prior_device_id
     payload = _post_json(
         f"{base_url.rstrip('/')}/v1/auth/verify",
-        {"email": email, "code": code, "device_name": _local_device_name()},
+        body,
     )
     token = (payload.get("token") or "").strip()
     if not token:
@@ -168,7 +267,9 @@ _INSTALL_CODE_RE = re.compile(r"[^A-HJ-NP-Z2-9]")
 
 
 def claim_install_code(
-    code: str, base_url: str = DEFAULT_BASE_URL
+    code: str,
+    base_url: str = DEFAULT_BASE_URL,
+    prior_device_id: str | None = None,
 ) -> TokenInfo:
     """Exchange a single-use install code (minted by heard.dev's
     /signin web flow) for a fresh Heard bearer + plan info. 3A: the
@@ -176,6 +277,12 @@ def claim_install_code(
     already signed in keep their own sessions (no silent kick).
     Other devices can be revoked from the dashboard's Connected Macs
     panel.
+
+    ``prior_device_id``: if provided, signals the server to delete any
+    anonymous trial account this device was running before creating
+    the verified session. The OAuth bridge happens on the web (no
+    device id known there), so claim time is the canonical merge
+    moment for OAuth users.
 
     Raises ``HeardApiError(400, 'invalid_request')`` on shape failures,
     ``HeardApiError(410, 'code_expired'|'code_expired_or_unknown')`` on
@@ -186,9 +293,12 @@ def claim_install_code(
         raise HeardApiError(
             400, "invalid_request", "code must canonicalize to 8 chars"
         )
+    body = {"code": canonical, "device_name": _local_device_name()}
+    if prior_device_id:
+        body["prior_device_id"] = prior_device_id
     payload = _post_json(
         f"{base_url.rstrip('/')}/v1/auth/claim",
-        {"code": canonical, "device_name": _local_device_name()},
+        body,
     )
     token = (payload.get("token") or "").strip()
     if not token:

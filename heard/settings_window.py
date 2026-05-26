@@ -1059,7 +1059,10 @@ class SettingsController(NSObject):
 
         def worker() -> None:
             try:
-                info = heard_api.claim_install_code(code)
+                info = heard_api.claim_install_code(
+                    code,
+                    prior_device_id=heard_api.load_or_create_device_id(config.DATA_DIR),
+                )
             except heard_api.HeardApiError as e:
                 msg = {
                     "code_expired": "That code has expired.",
@@ -1079,6 +1082,11 @@ class SettingsController(NSObject):
                 config.set_value("heard_plan", info.plan)
                 config.set_value("heard_email", info.email)
                 config.set_value("heard_trial_expires_at", int(info.trial_expires_at or 0))
+                # Sign-in produces a verified account; clear the anon
+                # flag and pin used-flag so a future sign-out doesn't
+                # silently mint a new anon trial on this device.
+                config.set_value("heard_is_anonymous", False)
+                config.set_value("heard_anon_trial_used", True)
                 config.set_value("onboarded", True)
                 field.setStringValue_("")
                 status_label.setStringValue_("✓ Signed in.")
@@ -1978,7 +1986,9 @@ class _OnboardingController(NSObject):
             "Step away from the screen. Run ten worktrees in parallel. "
             "Hear a failure the second it happens, even when you're "
             "somewhere else.\n\n"
-            "Let's get you set up."
+            "Your free 7-day trial is already starting — sign in on the "
+            "next step to extend it to 30 days and keep your settings "
+            "across devices."
         )
         stack = _vstack([title, body], spacing=14)
         v.addSubview_(stack)
@@ -2004,11 +2014,14 @@ class _OnboardingController(NSObject):
         # block heard://, no protocol handler registered, etc).
         v = NSView.alloc().init()
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
-        title = _wizard_title("Sign in for cloud voices")
+        title = _wizard_title("Extend your trial")
         body = _wizard_body(
-            "Unlocks Heard's managed voices for 30 days — no API key needed. "
-            "Or run the full OSS version yourself: bring your own ElevenLabs "
-            "+ Anthropic keys, or download Kokoro for local TTS."
+            "Your 7-day anonymous trial is active — voice is working "
+            "right now. Sign in to extend to 30 days, sync your settings "
+            "across Macs, and unlock a higher daily cap.\n\n"
+            "Prefer to bring your own keys? Skip sign-in and paste an "
+            "ElevenLabs / Anthropic key in Settings, or download Kokoro "
+            "for fully local TTS."
         )
 
         signin_btn = _button(
@@ -2341,7 +2354,11 @@ class _OnboardingController(NSObject):
 
         def worker() -> None:
             try:
-                info = heard_api.verify_code(email, code)
+                info = heard_api.verify_code(
+                    email,
+                    code,
+                    prior_device_id=heard_api.load_or_create_device_id(config.DATA_DIR),
+                )
             except heard_api.HeardApiError as e:
                 msg = {
                     "wrong_code": "That code is wrong — check it and try again.",
@@ -2359,6 +2376,11 @@ class _OnboardingController(NSObject):
                 config.set_value("heard_plan", info.plan)
                 config.set_value("heard_email", info.email)
                 config.set_value("heard_trial_expires_at", int(info.trial_expires_at or 0))
+                # Sign-in produces a verified account; clear the anon
+                # flag and pin used-flag so a future sign-out doesn't
+                # silently mint a new anon trial on this device.
+                config.set_value("heard_is_anonymous", False)
+                config.set_value("heard_anon_trial_used", True)
                 cf.setStringValue_("")
                 self._signin_code_sent = False
                 self._signin_show_form = False
@@ -2412,7 +2434,10 @@ class _OnboardingController(NSObject):
 
         def worker() -> None:
             try:
-                info = heard_api.claim_install_code(code)
+                info = heard_api.claim_install_code(
+                    code,
+                    prior_device_id=heard_api.load_or_create_device_id(config.DATA_DIR),
+                )
             except heard_api.HeardApiError as e:
                 msg = {
                     "code_expired": "That code has expired.",
@@ -2432,6 +2457,11 @@ class _OnboardingController(NSObject):
                 config.set_value("heard_plan", info.plan)
                 config.set_value("heard_email", info.email)
                 config.set_value("heard_trial_expires_at", int(info.trial_expires_at or 0))
+                # Sign-in produces a verified account; clear the anon
+                # flag and pin used-flag so a future sign-out doesn't
+                # silently mint a new anon trial on this device.
+                config.set_value("heard_is_anonymous", False)
+                config.set_value("heard_anon_trial_used", True)
                 field.setStringValue_("")
                 self._signin_code_sent = False
                 self._signin_show_form = False

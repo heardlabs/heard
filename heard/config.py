@@ -95,6 +95,17 @@ DEFAULTS: dict[str, Any] = {
     # row ("yk@example.com · trial") so the user can confirm which
     # account is active without opening Settings. Saved on /v1/auth/verify.
     "heard_email": "",
+    # True iff the active heard_token was minted by /v1/auth/anonymous
+    # (device-bound 7-day trial). Sign-in flips this to False. The
+    # menu bar uses it to flip account-row copy: anon shows "Sign in
+    # to extend your trial" instead of an email.
+    "heard_is_anonymous": False,
+    # Sticky flag set as soon as this device has talked to
+    # /v1/auth/anonymous (success OR 402 trial_expired) — gates the
+    # daemon's first-launch anon-trial fetch so deliberately signing
+    # out doesn't silently mint a fresh trial. Cleared only by wiping
+    # the config dir, which is also what resets device.id.
+    "heard_anon_trial_used": False,
     # Override for local dev / staging — never set in production.
     "heard_api_base": "https://api.heard.dev",
     # Auto-silence Heard whenever any app starts recording from the mic
