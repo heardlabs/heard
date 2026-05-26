@@ -1981,14 +1981,7 @@ class _OnboardingController(NSObject):
         title = _wizard_title("Welcome to Heard")
         body = _wizard_body(
             "Coding has always lived inside a window.\n\n"
-            "Heard pulls it out — your agents work in the background while "
-            "I tell you what they're doing.\n\n"
-            "Step away from the screen. Run ten worktrees in parallel. "
-            "Hear a failure the second it happens, even when you're "
-            "somewhere else.\n\n"
-            "Your free 7-day trial is already starting — sign in on the "
-            "next step to extend it to 30 days and keep your settings "
-            "across devices."
+            "Heard pulls it out."
         )
         stack = _vstack([title, body], spacing=14)
         v.addSubview_(stack)
@@ -2016,12 +2009,8 @@ class _OnboardingController(NSObject):
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Extend your trial")
         body = _wizard_body(
-            "Your 7-day anonymous trial is active — voice is working "
-            "right now. Sign in to extend to 30 days, sync your settings "
-            "across Macs, and unlock a higher daily cap.\n\n"
-            "Prefer to bring your own keys? Skip sign-in and paste an "
-            "ElevenLabs / Anthropic key in Settings, or download Kokoro "
-            "for fully local TTS."
+            "Voice is working right now on a 7-day trial. Sign in to "
+            "extend to 30 days and sync your settings across Macs."
         )
 
         signin_btn = _button(
@@ -2130,7 +2119,14 @@ class _OnboardingController(NSObject):
         r = self._refs
         fs, ss = r.get("form_stack"), r.get("signedin_stack")
         token = (cfg.get("heard_token") or "").strip()
-        if token and not self._signin_show_form:
+        # Anonymous-trial tokens are real bearers but the wizard should
+        # still show the sign-in form — the whole point of the step is
+        # to convert anon → verified. Without this gate the "Extend
+        # your trial" screen reads as "✓ Signed in" the moment the
+        # daemon's anon-trial fetch lands, which silently swallows the
+        # entire sign-up flow for fresh installs.
+        is_anon = bool(cfg.get("heard_is_anonymous"))
+        if token and not is_anon and not self._signin_show_form:
             if fs is not None:
                 fs.setHidden_(True)
             if ss is not None:
@@ -2218,7 +2214,13 @@ class _OnboardingController(NSObject):
     # already shows enabled in the list (ad-hoc-signed builds: TCC
     # binds the grant to the binary's cdhash, which changes every
     # release, so the old grant no longer applies to the new binary).
-    _AX_STALE_HINT_AFTER_S = 15.0
+    # Stale-TCC hint timing. The "Heard is in the list but the toggle
+    # doesn't bind" case is by far the most common failure mode on a
+    # reinstall (TCC's entry is bound to the previous binary's
+    # designated requirement). Surfacing the recovery button after
+    # 2 s means the user isn't staring at "Not granted yet — waiting…"
+    # wondering if the app is broken.
+    _AX_STALE_HINT_AFTER_S = 2.0
 
     def _screen_ax(self) -> NSView:
         import time
@@ -2501,20 +2503,12 @@ class _OnboardingController(NSObject):
         )
 
     def onWizFixStaleAX_(self, _s) -> None:
-        """Escape hatch for the ad-hoc-signing TCC bug. ``tccutil reset``
-        drops the stale Accessibility entry so a re-grant binds to the
-        *current* binary's code signature; then reopen the pane so the
-        user can toggle it back on."""
-        import subprocess
+        """Escape hatch for the stale-TCC-after-reinstall bug. The
+        accessibility module's ``reset_tcc`` drops the stale entry so
+        a re-grant binds to the *current* binary's code signature; we
+        then reopen the pane so the user can toggle it back on."""
         import time
-        try:
-            # Bundle id matches packaging/setup.py's APP_BUNDLE_ID.
-            subprocess.run(
-                ["tccutil", "reset", "Accessibility", "dev.heard.menubar"],
-                check=False, timeout=10,
-            )
-        except Exception as e:
-            print(f"tccutil reset failed: {e}", file=sys.stderr)
+        accessibility.reset_tcc()
         # Restart the stale-hint clock — give the fresh grant a window.
         self._ax_screen_entered_at = time.monotonic()
         r = self._refs
