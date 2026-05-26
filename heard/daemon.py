@@ -652,6 +652,14 @@ class Daemon:
             return
         if self.cfg.get("heard_anon_trial_used"):
             return
+        # Tests instantiate Daemon() many times in parallel; under pytest
+        # they monkeypatch CONFIG_DIR but not CONFIG_PATH, so this
+        # thread's config.set_value writes race the test's setUp and
+        # corrupt the runner's real config.yaml. Skip the fetch when
+        # pytest is the caller — its `PYTEST_CURRENT_TEST` env is the
+        # canonical "we're running under pytest" signal.
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return
         threading.Thread(
             target=self._anon_trial_fetch, daemon=True, name="anon-trial"
         ).start()
