@@ -1793,11 +1793,17 @@ class _OnboardingController(NSObject):
         self._agents_defaulted = False
         self._ax_screen_entered_at = 0.0
         # (key, build_fn, enter_fn_or_None)
+        # The AX-grant step used to live here but the stale-TCC failure
+        # mode kept stranding users on a "Not granted yet — waiting…"
+        # screen even after they toggled Heard on in System Settings.
+        # The hotkey now sets up from Settings → Shortcuts at the user's
+        # leisure; the accessibility module's TrustWatcher still picks
+        # up the grant whenever it lands and re-inits pynput. Onboarding
+        # ends after agents so the user gets to a working app fast.
         self._screens = [
             ("welcome", self._screen_welcome, None),
             ("signin", self._screen_signin, self._enter_signin),
             ("agents", self._screen_agents, self._enter_agents),
-            ("ax", self._screen_ax, self._enter_ax),
         ]
         return self
 
@@ -1882,20 +1888,17 @@ class _OnboardingController(NSObject):
         win.setDelegate_(self._window_delegate)
         self._window = win
 
-        # Tick to refresh live state on the sign-in / agents / AX screens.
+        # Tick to refresh live state on the sign-in / agents screens.
         self._refresh_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             1.5, self, "onTick:", None, True
         )
-        # AX-grant watcher → relaunch the app (pynput is dead in-process
-        # after a runtime grant).
-        try:
-            self._ax_was_trusted = accessibility.is_trusted()
-        except Exception:
-            self._ax_was_trusted = False
-        try:
-            self._ax_observer = accessibility.subscribe(lambda: _on_main(self._on_ax_changed))
-        except Exception:
-            self._ax_observer = None
+        # AX-grant watching used to live here to advance the wizard's
+        # accessibility step. The step is gone — the user finishes
+        # onboarding without granting AX, and grants it later from
+        # Settings → Shortcuts if they want hotkeys. The regular
+        # SettingsController has its own AX observer that handles the
+        # post-grant relaunch (see _ensure_ax_observer ~line 350), so
+        # the wizard no longer needs to subscribe.
 
     # --- navigation ---------------------------------------------------------
 
@@ -1994,7 +1997,9 @@ class _OnboardingController(NSObject):
         title = _wizard_title("Welcome to Heard")
         body = _wizard_body(
             "Coding has always lived inside a window.\n\n"
-            "Heard pulls it out."
+            "Heard pulls it out — so you can step away from the "
+            "screen without losing track of what's happening.\n\n"
+            "Let's get you set up. Three quick steps."
         )
         stack = _vstack([title, body], spacing=14)
         v.addSubview_(stack)
