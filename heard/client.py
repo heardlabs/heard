@@ -407,6 +407,36 @@ def speak(text: str) -> None:
     _send_with_retry({"text": text})
 
 
+def feedback(text: str, source: str = "cli") -> None:
+    """Send preference feedback to the daemon. Attached to the daemon's
+    most-recent utterance and appended to history.jsonl as a
+    type="feedback" record. Best-effort; silently drops if the daemon
+    isn't reachable."""
+    if not is_daemon_alive():
+        return
+    try:
+        send({"cmd": "feedback", "text": text or "", "source": source})
+    except Exception:
+        pass
+
+
+def report_defect(category: str, note: str = "", source: str = "cli") -> None:
+    """Send a defect report to the daemon. Routed to defect_reports.jsonl
+    with tech_context (backend, voice, persona, mic state, etc.) auto-
+    attached. Best-effort."""
+    if not is_daemon_alive():
+        return
+    try:
+        send({
+            "cmd": "report_defect",
+            "category": category or "",
+            "note": note or "",
+            "source": source,
+        })
+    except Exception:
+        pass
+
+
 def send_event(
     kind: str,
     neutral: str,

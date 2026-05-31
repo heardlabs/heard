@@ -1433,7 +1433,8 @@ def _self_test_managed_async() -> None:
             msg = str(e)
             if "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
                 notify("Heard — TLS handshake failed",
-                       "Run `heard doctor` from a terminal to see what's wrong.",
+                       "Couldn't reach Heard cloud over HTTPS. Check your "
+                       "network connection or proxy settings.",
                        kind="onboarding_managed_test_ssl")
             else:
                 notify("Heard — voice service couldn't be reached", msg[:120],

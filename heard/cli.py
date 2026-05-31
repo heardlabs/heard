@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import typer
 
-from heard import client, config, heard_api, history, onboarding, service
+from heard import client, config, defects, heard_api, history, onboarding, service
 from heard.adapters import ADAPTERS
 from heard.presets import list_bundled as list_presets
 from heard.presets import load as load_preset
@@ -16,7 +16,7 @@ from heard.tts.elevenlabs import _VOICE_ALIASES, ElevenLabsTTS
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Heard — speak your agent's replies.")
 config_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Manage configuration.")
 service_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Manage the LaunchAgent.")
-app.add_typer(config_app, name="config")
+app.add_typer(config_app, name="config", hidden=True)
 app.add_typer(service_app, name="service")
 
 
@@ -25,12 +25,11 @@ def say(text: str) -> None:
     """[Diagnostic] Speak TEXT through Heard (starts the daemon if
     needed). Skips persona Haiku rewriting — goes straight to TTS in
     the current voice. Hidden from `heard --help` because real users
-    get narration via the agent hook; `heard doctor` is the supported
-    end-to-end check."""
+    get narration via the agent hook."""
     client.speak(text)
 
 
-@app.command()
+@app.command(hidden=True)
 def voices(
     all_: bool = typer.Option(
         False,
@@ -111,7 +110,7 @@ def uninstall(agent: str) -> None:
     typer.echo(f"Removed hook for {agent}.")
 
 
-@app.command()
+@app.command(hidden=True)
 def status() -> None:
     """Show daemon + install status."""
     alive = "alive" if client.is_daemon_alive() else "stopped"
@@ -122,19 +121,7 @@ def status() -> None:
         typer.echo(f"{name:<14}{installed}")
 
 
-@app.command()
-def doctor() -> None:
-    """End-to-end self-test: ping daemon, synth a real utterance,
-    play it. Reports PASS/FAIL per step with the actual error so a
-    bad SSL handshake or missing key surfaces here instead of in the
-    daemon log."""
-    from heard import doctor as doctor_mod
-
-    ok = doctor_mod.run()
-    raise typer.Exit(0 if ok else 1)
-
-
-@app.command()
+@app.command(hidden=True)
 def daemon(
     debug: bool = typer.Option(
         False,
@@ -179,7 +166,7 @@ def run(ctx: typer.Context) -> None:
     raise typer.Exit(code)
 
 
-@app.command()
+@app.command(hidden=True)
 def preset(name: str | None = typer.Argument(None)) -> None:
     """Apply a bundled preset (jarvis, ambient, silent, chatty) to the global config.
 
@@ -204,7 +191,7 @@ def preset(name: str | None = typer.Argument(None)) -> None:
         typer.echo(f"  {k} = {v}")
 
 
-@app.command()
+@app.command(hidden=True)
 def tune() -> None:
     """Interactively pick voice, persona, and verbosity. Plays voice samples."""
     from heard import tune as tune_mod
@@ -212,7 +199,7 @@ def tune() -> None:
     tune_mod.run()
 
 
-@app.command()
+@app.command(hidden=True)
 def ui() -> None:
     """Launch the menu bar app. Blocks until you pick Quit from the menu."""
     from heard import ui as ui_mod
@@ -220,7 +207,7 @@ def ui() -> None:
     ui_mod.run()
 
 
-@app.command(name="pause")
+@app.command(name="pause", hidden=True)
 def pause_cmd() -> None:
     """Pause narration. Persists across daemon respawn — the next
     agent event won't make a sound until ``heard continue`` (or the
@@ -234,7 +221,7 @@ def pause_cmd() -> None:
         pass
 
 
-@app.command(name="continue")
+@app.command(name="continue", hidden=True)
 def continue_cmd() -> None:
     """Resume narration. If there's buffered work from before the
     pause, the persona will ask whether to catch you up or start
@@ -248,7 +235,7 @@ def continue_cmd() -> None:
         pass
 
 
-@app.command(name="history")
+@app.command(name="history", hidden=True)
 def history_cmd(
     n: int = typer.Option(50, "-n", "--limit", help="How many entries to show (default 50)."),
     since: str | None = typer.Option(
@@ -540,7 +527,7 @@ def _improve_done(keep: bool = False) -> None:
             pass
 
 
-@app.command()
+@app.command(hidden=True)
 def signup(email: str | None = typer.Option(None, help="Skip the prompt and use this email.")) -> None:
     """Start a free trial of Heard cloud voices.
 
@@ -613,7 +600,7 @@ def signup(email: str | None = typer.Option(None, help="Skip the prompt and use 
         pass
 
 
-@app.command(name="signout")
+@app.command(name="signout", hidden=True)
 def signout() -> None:
     """Forget the saved Heard token. Daemon will fall back to BYOK
     ElevenLabs key (if set) or local Kokoro on next reload."""
@@ -627,7 +614,7 @@ def signout() -> None:
     typer.echo("Signed out. Token cleared.")
 
 
-@app.command()
+@app.command(hidden=True)
 def stop() -> None:
     """Cancel current speech AND shut down the daemon."""
     try:
@@ -640,6 +627,51 @@ def stop() -> None:
             subprocess.run(["kill", str(pid)], check=False)
         except Exception:
             pass
+
+
+@app.command(name="feedback", hidden=True)
+def feedback_cmd(
+    text: str = typer.Argument(..., help="Preference feedback about the most recent utterance."),
+) -> None:
+    """[Internal] Record preference feedback for the most recently
+    spoken utterance. Hidden from `heard --help` — the user-facing
+    surface lives in the menu bar (thumbs / Quick feedback). This
+    command exists so Claude Code can capture feedback on the user's
+    behalf and so future tooling can drive it programmatically.
+
+    Stored inline in history.jsonl as a sibling type="feedback" record
+    pointing at the most-recent utterance's id. Distillation (Phase 4)
+    reads it to propose preference deltas."""
+    from heard import client as _client
+    _client.feedback(text, source="cli")
+
+
+@app.command(name="report-defect", hidden=True)
+def report_defect_cmd(
+    category: str = typer.Argument(
+        ...,
+        help=f"One of: {', '.join(defects.CATEGORIES)}. Unknown categories are coerced to 'other'.",
+    ),
+    note: str = typer.Option("", "--note", "-n", help="Free-text comment about the defect."),
+) -> None:
+    """[Internal] Report a defect about the most recently spoken
+    utterance. Hidden from `heard --help` — user-facing surface is
+    the menu bar's "Report defect" Quick-feedback branch. This
+    command exists for Claude Code to file reports on the user's
+    behalf when diagnosing issues, and for future tooling.
+
+    Routed to defect_reports.jsonl (separate from history.jsonl per
+    the preference-vs-defect split — see architecture-v2.md). The
+    daemon auto-attaches tech_context (backend, voice, persona,
+    mic state, last_error) at write time."""
+    from heard import client as _client
+    if not defects.is_valid_category(category):
+        typer.echo(
+            f"warning: '{category}' isn't a known category — recorded as 'other'. "
+            f"Valid: {', '.join(defects.CATEGORIES)}",
+            err=True,
+        )
+    _client.report_defect(category, note=note, source="cli")
 
 
 _SECRET_KEY_SUFFIXES = ("_api_key", "_token", "_secret")

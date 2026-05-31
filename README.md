@@ -84,15 +84,7 @@ Heard auto-detects 2+ concurrent sessions and shifts mode.
 
 Four verbosity profiles (`quiet` → `brief` → `normal` → `verbose`), tunable globally or per-repo via `.heard.yaml`. Failures and wait-state questions always pierce.
 
-Everyday commands:
-
-```bash
-heard preset jarvis              # switch persona
-heard config set verbosity brief # quieter
-heard pause                      # or ⇧⌥. to stop narrating
-heard continue                   # or ⇧⌥, to resume
-heard doctor                     # end-to-end self-test
-```
+Switch personas, change verbosity, pause/resume — all from the menu bar. Hotkeys: ⇧⌥. to pause, ⇧⌥, to resume.
 
 ## FAQ
 

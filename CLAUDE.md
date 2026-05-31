@@ -33,9 +33,15 @@ history.append (after successful play)
 
 ## Module map
 
+**This table is the canonical "what's in the codebase" reference for
+every Claude Code session opened in this repo.** When you add a module
+or meaningfully change one's role, update the row in the same change.
+Letting it drift creates a doc-vs-code mismatch that's worse than
+having no doc — future sessions trust this table.
+
 | File | Responsibility |
 |---|---|
-| `heard/daemon.py` | Long-running daemon. Owns the speech queue, hotkey listener, audio monitor, multi-agent router instance, history append, periodic digest timer. Also reads `config.silenced` on every event so "Pause Heard" (indefinite mute) survives quit + respawn. |
+| `heard/daemon.py` | Long-running daemon. Owns the speech queue, hotkey listener, audio monitor, multi-agent router instance, history append, periodic digest timer. Also reads `config.silenced` on every event so "Pause Heard" (indefinite mute) survives quit + respawn. **Utterance tracking:** `_last_utterance_id` (UUID minted per speak request, stamped onto history record + retained so feedback can attach), `_last_utterance_finished_at` (monotonic seconds, lets `_record_implicit_feedback` decide if a pause/mic event falls within the correlation window), `_implicit_signals_recorded` (dedup set keyed by `(utterance_id, source)`, cleared on new utterance). **Implicit signal capture (Phase 2 step 3):** `_record_implicit_feedback(source, kind, defect_category)` wired into three points — after `proc.wait()` in `_speak` fires `afplay_nonzero` defects when afplay exits non-zero without us killing it, `_on_mic_active` fires `mic_collide` defect when speaking, `_do_mute` fires `pause_<source>` preference signal for user-initiated mutes. `IMPLICIT_WINDOW_S=5.0` gates preference correlation. Socket commands dispatched in `_handle()`: `ping`, `status`, `pin`, `unpin`, `reload`, `request_accessibility`, `stop`, `mute`, `unmute`, `resume_intent`, `feedback` (Phase 2 — writes preference via `history.append_feedback`), `report_defect` (Phase 2 — writes via `defects.append` with auto-attached tech_context: backend, voice, speed, persona, mic state, last_error), `event`. |
 | `heard/client.py` | Hook-side helpers: spawn the daemon if needed, send events / status / pin commands over the Unix socket. Six `handle_cc_*` / `handle_codex_*` event handlers (CC ↔ Codex pairs are near-duplicates — collapse candidate; the post-tool pair is byte-identical). |
 | `heard/hook.py` | Entry-point invoked by the agent's hook command. Routes to `client.handle_cc_*` / `client.handle_codex_*`. |
 | `heard/wrapper.py` | `heard run <cmd> [args...]` — universal terminal wrapper. Spawns an agent, tees its stdout, and synthesizes events for agents without a native hook surface. |
@@ -50,11 +56,12 @@ history.append (after successful play)
 | `heard/templates.py` | Per-tool narration templates. `_bash_tag_and_text` extracts intent from shell verbs (grep → search, ls → list, etc.). `_first_token` handles `cd && grep` compound commands. |
 | `heard/markdown.py` | Strips MD before TTS. Handles fenced + indented code, blockquotes, tables → comma-separated cells, links, bold/italic/strike. |
 | `heard/spoken.py` | Per-CC-session dedup of already-narrated assistant text. `flock`'d read-modify-write on `<session>.json`. Sibling `.offset` file caches transcript byte offset for incremental reads. |
-| `heard/history.py` | Spoken-history JSONL log. Append-only, checkpoint-based pruning. flock pattern duplicated from `spoken.py` — factor candidate. |
+| `heard/history.py` | Spoken-history JSONL log. Append-only, checkpoint-based pruning. flock pattern duplicated from `spoken.py` — factor candidate. Each utterance record carries an `id` (`new_utterance_id()`) so later feedback can attach. Preference feedback lands as sibling `type="feedback"` records via `append_feedback(utterance_id, source, text, kind)` — clean append-only, no in-place rewrites. Defect reports go to `defects.py` (sidecar), NOT here — preference and defect channels are deliberately separated per architecture-v2.md "Diagnostic Sidecar". |
+| `heard/defects.py` | Defect-report sidecar log (`defect_reports.jsonl`). Closed category enum (`murmured / cut_off / wrong_voice / weird_pause / wrong_persona / other_audio / other`); unknown categories coerce to `other` so a buggy caller can't poison the log. Each record carries `id` (telemetry dedup), `ts`, `category`, `source` (`cli` / `menu` / `voice` / `auto`), `note`, `utterance_id` (pointer back into history.jsonl), and `tech_context` (backend, voice, speed, persona, mic state — caller assembles). Best-effort writes, 10MB rotation. No network. Aggregate maintainer telemetry upload is a future Phase 5 worker; today the file is local-only. |
 | `heard/tts/elevenlabs.py` + `tts/kokoro.py` + `tts/managed.py` + `tts/null.py` | TTS backends. Selector order in `Daemon._make_tts`: signed-in Heard token (≠expired) → `ManagedTTS` (proxies api.heard.dev); else BYOK `elevenlabs_api_key` → `ElevenLabsTTS`; else if the Kokoro model is *already downloaded* → `KokoroTTS`; else `NullTTS` (no audio + a one-time "add a voice" nudge from `_speak`). Kokoro is **opt-in only** — never auto-downloaded; the user pulls it via Options → Download voice. All real backends expose `synth_to_file(text, voice, speed, lang, path)` + `AUDIO_EXT` + `MAX_NATIVE_SPEED`. |
 | `heard/url_scheme.py` | `heard://` Apple-Event handler (registered from `ui.run`). Only answers `heard://auth?code=…` (or `?token=…`) — the tail of the web Google sign-in handoff: claims the install code for a bearer, writes config, reloads the daemon, brings the onboarding window forward signed-in. `CFBundleURLTypes` lives in `packaging/setup.py`. |
 | `heard/heard_api.py` | Client for `api.heard.dev`. Auth endpoints (install-code → bearer, refresh, signout) + plan/usage status. ManagedTTS and the managed Haiku path read the bearer from here. |
-| `heard/audio_monitor.py` | CoreAudio polling for "any app capturing the mic" → auto-silence. Optional resume callback for `auto_resume_on_mic_release`. |
+| `heard/audio_monitor.py` | CoreAudio polling for "any app capturing the mic" → auto-silence. Optional resume callback for `auto_resume_on_mic_release`. `DEBOUNCE_POLLS=4` (~1.25s sustained mic before silencing) — filters notification-class blips (Slack opening for voice-memo preview, browser tabs probing mic on camera-permission requests) that previously cut Heard off mid-sentence. Real calls + Wispr/dictation behavior unchanged. |
 | `heard/hotkey.py` + `accessibility.py` | pynput tap-hold listener. Daemon polls Accessibility trust every 5 s and re-inits on the False→True transition. |
 | `heard/ui.py` | rumps menu bar. Persona / Speed / Verbosity submenus, Active agents (multi-agent router state), Options, "Pause Heard" / "Resume Heard" toggle, status header (`On · Persona · Profile`, `Paused` when muted, `● Speaking` when active, `⚠ <kind>` on error). |
 | `heard/settings_widgets.py` | Native NSToolbar widget primitives: theme constants, fonts, `_PillButton`, `_GhostPopUp`, `_GhostSegment`, `_CardView`, `_setting_row`, `_field_row`, `_card`, etc. Extracted from `settings_window.py` in #13 so the controller file is just controllers + delegates. |
@@ -63,8 +70,7 @@ history.append (after successful play)
 | `heard/service.py` | macOS LaunchAgent integration. Writes `~/Library/LaunchAgents/dev.heard.daemon.plist` and runs `launchctl load/unload`. Wraps the py2app frozen Python with `PYTHONHOME` in the plist. |
 | `heard/updater.py` | In-app updater. Polls GitHub releases; resolves the running app's version from `Info.plist` as a backstop for the stringly version in `heard/__init__.py`. |
 | `heard/tune.py` | `heard tune` — interactive walk through voice / persona / verbosity for CLI users. |
-| `heard/doctor.py` | End-to-end self-test. Live ElevenLabs synth, Anthropic Haiku ping, accessibility check, hook-python check, LaunchAgent-python check. |
-| `heard/cli.py` | Typer CLI: `install`, `uninstall`, `demo`, `tune`, `voices`, `say`, `silence`, `replay`, `history`, `improve`, `doctor`, `config get/set`, `service install/uninstall`, `signup`, `signout`, `stop`. |
+| `heard/cli.py` | Typer CLI. Heard's user-facing surface is the menu bar, not the terminal — most commands are `hidden=True` (still functional, just absent from `heard --help`) so the CLI exists for maintainer + Claude Code debugging, not as a product surface. **Visible** in `--help`: `install`, `uninstall`, `run`, `service install/uninstall`. **Hidden but functional**: `voices`, `status`, `daemon`, `preset`, `tune`, `ui`, `pause`, `continue`, `history`, `signup`, `signout`, `stop`, `config get/set`, `say`, `improve`, `feedback`, `report-defect`. When adding a new command, default to `hidden=True` unless it's clearly install-time / non-hook-agent / LaunchAgent infrastructure. |
 | `packaging/setup.py` + `build-app.sh` + `app_entry.py` | py2app build. Bundles certifi, charset_normalizer, idna, urllib3, libssl/libcrypto/libffi (the frozen Python's @rpath quirks). `app_entry.py` sets `SSL_CERT_FILE` before any HTTPS-using import. |
 
 ## Hot-patch workflow
@@ -79,7 +85,7 @@ rm -f ~/Library/Application\ Support/heard/daemon.sock ~/Library/Application\ Su
 open /Applications/Heard.app
 ```
 
-Daemon is back in ~3 s. Run `heard doctor` from the venv to verify.
+Daemon is back in ~3 s. Tail `~/Library/Application Support/heard/daemon.log` to verify it came up cleanly.
 
 ## Release workflow
 
@@ -121,7 +127,20 @@ internal context in this file or anywhere else tracked.
 
 ## When in doubt
 
-- Run `heard doctor` to see end-to-end pipeline status.
-- Tail `~/Library/Application Support/heard/daemon.log` for structured events.
-- `heard history -n 20` to see what just got spoken.
-- `heard config get` (API keys redacted by default).
+Diagnostic files in `~/Library/Application Support/heard/`:
+
+- `daemon.log` — structured event stream (10MB rotation).
+- `history.jsonl` — every utterance Heard spoke. Each record has a
+  unique `id`. Sibling `type="feedback"` records reference utterances
+  via `ref: <utterance_id>` for preference feedback (Phase 2).
+- `defect_reports.jsonl` — sidecar for defect reports. Closed
+  category enum; each record carries `tech_context` (backend, voice,
+  speed, persona, mic state, last_error) auto-attached at capture.
+- `config.yaml` — current settings (or use the menu-bar settings UI).
+
+Internal CLI commands (`heard status`, `heard history`, `heard config
+get`, `heard feedback`, `heard report-defect`, etc.) exist and are
+fully functional, but hidden from `--help` since the user-facing
+product surface is the menu bar. Invoke them yourself when diagnosing
+or capturing feedback on the user's behalf — they're not part of the
+public product surface.

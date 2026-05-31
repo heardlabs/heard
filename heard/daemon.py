@@ -28,6 +28,7 @@ from heard import (
     accessibility,
     audio_monitor,
     config,
+    defects,
     heard_api,
     history,
     hotkey,
@@ -166,6 +167,23 @@ class Daemon:
         self._current_proc: subprocess.Popen | None = None
         self._current_cancel: threading.Event | None = None
         self._last_error: dict | None = None
+        # Most-recent utterance ID. Stamped onto the history record at
+        # speak time and remembered here so a later `heard feedback` /
+        # `heard report-defect` invocation can attach to the utterance
+        # the user just reacted to. Reset to None only when the daemon
+        # restarts — feedback can land seconds or minutes after the
+        # utterance played.
+        self._last_utterance_id: str | None = None
+        # When did the most-recent utterance finish playing (monotonic
+        # seconds)? Used by the implicit-signal capture to decide
+        # whether a pause or mic event happened close enough to the
+        # utterance to count as user reaction.
+        self._last_utterance_finished_at: float | None = None
+        # Dedup set for implicit signals: (utterance_id, source) tuples
+        # we've already recorded. Cleared whenever a new utterance is
+        # stamped — keeps the set bounded and the semantics simple
+        # (only dedup within a single utterance).
+        self._implicit_signals_recorded: set[tuple[str, str]] = set()
         self._hotkey_listener: object | None = None
         self._audio_monitor: audio_monitor.AudioMonitor | None = None
         # Transient "mic capture in progress" flag, flipped by the
@@ -510,9 +528,18 @@ class Daemon:
         if self._mic_release_timer is not None:
             self._mic_release_timer.cancel()
             self._mic_release_timer = None
+        # Capture this BEFORE _cancel_only clears _current_cancel —
+        # otherwise we can't tell whether mic activation interrupted
+        # speech in flight (a cutoff defect) or arrived between
+        # utterances (just routine suppression).
+        was_speaking = self._current_cancel is not None
         self._mic_active = True
         self._cancel_only()
         _log("mic_active")
+        if was_speaking:
+            self._record_implicit_feedback(
+                "mic_collide", kind="defect", defect_category="cut_off",
+            )
 
     def _on_mic_released(self) -> None:
         """Mic released — defer the suppression-clear by
@@ -1137,7 +1164,9 @@ class Daemon:
                         self._record_error("ssl", msg)
                         notify.notify(
                             "Heard — TLS verification failed",
-                            "The HTTPS handshake to ElevenLabs failed. Run `heard doctor`.",
+                            "The HTTPS handshake to ElevenLabs failed. "
+                            "Check your network connection or your account from "
+                            "Heard's menu bar.",
                             kind="ssl",
                         )
                     else:
@@ -1154,7 +1183,7 @@ class Daemon:
                 self._record_error("synth_generic", str(e))
                 notify.notify(
                     "Heard — couldn't generate audio",
-                    "Run `heard doctor` for details.",
+                    f"{type(self.tts).__name__} failed: {str(e)[:140]}",
                     kind="synth_generic",
                 )
                 _log("synth_failed", backend=type(self.tts).__name__, err=str(e))
@@ -1206,10 +1235,118 @@ class Daemon:
                 )
                 proc = self._current_proc
             proc.wait()
+            killed_by_us = cancel.is_set()
+            return_code = proc.returncode
             with self._lock:
                 if self._current_proc is proc:
                     self._current_proc = None
+                # Stamp the finish so a subsequent pause/mic event
+                # knows whether to attribute itself to this utterance.
+                self._last_utterance_finished_at = time.monotonic()
             path.unlink(missing_ok=True)
+            # Abnormal exit: afplay exited non-zero AND we didn't kill
+            # it. That's an audio-pipeline failure on its own — fire
+            # an implicit cutoff defect so the sidecar sees it.
+            if return_code != 0 and not killed_by_us:
+                self._record_implicit_feedback(
+                    "afplay_nonzero", kind="defect", defect_category="cut_off",
+                )
+
+    # Window (seconds) within which a user reaction (pause hotkey, mic
+    # activation) is treated as correlated with the most-recent
+    # utterance. Outside this window we treat the event as unrelated
+    # and skip capture — silence shouldn't pollute the preference log.
+    IMPLICIT_WINDOW_S: float = 5.0
+
+    def _record_implicit_feedback(
+        self,
+        source: str,
+        *,
+        kind: str = "preference",
+        defect_category: str = "cut_off",
+    ) -> None:
+        """Implicit signal capture (Phase 2 step 3).
+
+        Routes one observable user/system event into either the
+        preference log (history.jsonl as a sibling type="feedback"
+        record) or the defect sidecar (defect_reports.jsonl with
+        tech_context attached) — based on `kind` provided by the
+        caller (classification happens at capture, not later).
+
+        Args:
+            source: short label for what fired ("mic_collide",
+                "pause_hotkey", "afplay_nonzero", etc.). Goes into the
+                feedback record's `source` field.
+            kind: "preference" (default) or "defect".
+            defect_category: when kind="defect", which category enum
+                to write. Defaults to "cut_off" since most current
+                implicit-defect signals indicate playback cutoff.
+
+        Behavior:
+            * No-op if there's no recent utterance to attach to.
+            * Dedup per (utterance_id, source) — a held pause hotkey
+              or repeated mic flap won't spam the log for the same
+              utterance.
+            * Preferences are gated on the IMPLICIT_WINDOW_S window
+              (currently playing OR finished within window); defects
+              fire any time there's a current utterance to attach to.
+
+        Best-effort: silently drops on any write failure. The daemon
+        must never fail to speak because logging implicit feedback
+        failed.
+        """
+        utt_id = self._last_utterance_id
+        if not utt_id:
+            return
+
+        dedup_key = (utt_id, source)
+        if dedup_key in self._implicit_signals_recorded:
+            return
+
+        if kind == "defect":
+            tech_context = {
+                "backend": type(self.tts).__name__,
+                "voice": self.cfg.get("voice", ""),
+                "speed": self.cfg.get("speed", 1.0),
+                "persona": self.persona.name if self.persona else "",
+                "mic_active": bool(self._mic_active),
+                "muted": bool(self.cfg.get("muted", False)),
+                "last_error": self._last_error,
+            }
+            try:
+                defects.append(
+                    category=defect_category,
+                    source=source,
+                    note=f"auto-captured implicit signal: {source}",
+                    utterance_id=utt_id,
+                    tech_context=tech_context,
+                )
+            except Exception:
+                return
+            self._implicit_signals_recorded.add(dedup_key)
+            _log("implicit_defect", source=source, category=defect_category)
+            return
+
+        # Preference branch: gate on the correlation window.
+        currently_playing = self._current_cancel is not None
+        finished_at = self._last_utterance_finished_at
+        in_window = currently_playing or (
+            finished_at is not None
+            and (time.monotonic() - finished_at) <= self.IMPLICIT_WINDOW_S
+        )
+        if not in_window:
+            return
+        try:
+            history.append_feedback(
+                utterance_id=utt_id,
+                source=source,
+                text=f"implicit_{source}",
+                kind="implicit",
+            )
+        except Exception:
+            return
+        self._implicit_signals_recorded.add(dedup_key)
+        _log("implicit_preference", source=source)
 
     def _kill_current(self) -> None:
         """Must hold self._lock before calling. Hard-kills afplay so the
@@ -1317,9 +1454,16 @@ class Daemon:
                     # meta dict the caller passed and adds run-time
                     # values (the actual voice used, the spoken text).
                     if hmeta:
+                        utterance_id = history.new_utterance_id()
+                        self._last_utterance_id = utterance_id
+                        # Fresh dedup slate for implicit signals — a
+                        # mic-collide on utterance A doesn't suppress
+                        # the same signal on utterance B.
+                        self._implicit_signals_recorded.clear()
                         history.append(
                             {
                                 **hmeta,
+                                "id": utterance_id,
                                 "session_id": session_id or hmeta.get("session_id") or "",
                                 "spoken": text,
                                 "voice": voice_override or self._voice(cfg, persona),
@@ -1367,7 +1511,22 @@ class Daemon:
         ``muted=true``. Used by the socket ``mute`` cmd, the hotkey
         handler, and the "Pause Heard" menu item — same behaviour
         regardless of entry point."""
+        # Capture this BEFORE _cancel_only clears _current_cancel — we
+        # need it to decide whether to fire an implicit signal.
+        was_speaking = self._current_cancel is not None
         self._cancel_only()
+        # User-initiated mute (hotkey, menu, socket) correlates with
+        # the most-recent utterance as a preference signal: "didn't
+        # want what I was hearing." Either mid-utterance or shortly
+        # after counts. See _record_implicit_feedback for the window.
+        if source in ("hotkey", "menu", "socket"):
+            self._record_implicit_feedback(
+                f"pause_{source}", kind="preference",
+            )
+        # Quiet the unused-variable warning — we may want to branch on
+        # was_speaking later (e.g., to flag mid-utterance pauses as a
+        # stronger preference signal than post-utterance pauses).
+        del was_speaking
         self.cfg["muted"] = True
         try:
             config.set_value("muted", True)
@@ -1828,6 +1987,57 @@ class Daemon:
         if cmd == "resume_intent":
             text = (req.get("text") or "").strip()
             self._handle_resume_intent(text)
+            return None
+        if cmd == "feedback":
+            # Preference feedback channel. Attaches to the most-recent
+            # utterance the daemon spoke. Stored inline in history.jsonl
+            # as a sibling line with type="feedback" so distillation
+            # (Phase 4) can filter cleanly. See architecture-v2.md
+            # "Preference vs. defect" for why this stays distinct from
+            # the defect channel below.
+            text = (req.get("text") or "").strip()
+            if text:
+                history.append_feedback(
+                    utterance_id=self._last_utterance_id or "",
+                    source=(req.get("source") or "cli"),
+                    text=text,
+                    kind="explicit",
+                )
+                _log(
+                    "feedback_recorded",
+                    source=(req.get("source") or "cli"),
+                    has_ref=bool(self._last_utterance_id),
+                )
+            return None
+        if cmd == "report_defect":
+            # Defect channel — sidecar. Goes to defect_reports.jsonl,
+            # not history.jsonl. Auto-attaches tech_context so the
+            # report is actionable without follow-up. See architecture-v2.md
+            # "Diagnostic Sidecar" for the framing.
+            category = (req.get("category") or "").strip()
+            note = (req.get("note") or "").strip()
+            tech_context = {
+                "backend": type(self.tts).__name__,
+                "voice": self.cfg.get("voice", ""),
+                "speed": self.cfg.get("speed", 1.0),
+                "persona": self.persona.name if self.persona else "",
+                "mic_active": bool(self._mic_active),
+                "muted": bool(self.cfg.get("muted", False)),
+                "last_error": self._last_error,
+            }
+            defects.append(
+                category=category,
+                source=(req.get("source") or "cli"),
+                note=note,
+                utterance_id=self._last_utterance_id,
+                tech_context=tech_context,
+            )
+            _log(
+                "defect_recorded",
+                category=category if defects.is_valid_category(category) else "other",
+                source=(req.get("source") or "cli"),
+                has_ref=bool(self._last_utterance_id),
+            )
             return None
         if cmd == "event":
             self._handle_event(req)

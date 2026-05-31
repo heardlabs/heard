@@ -31,10 +31,50 @@ import fcntl
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 from heard import config
+
+
+def new_utterance_id() -> str:
+    """Stable random ID for one spoken utterance. The daemon mints
+    one on every speak request, stamps it into the history record's
+    ``id`` field, and remembers it as the most-recent utterance so a
+    later ``heard feedback`` / ``heard report-defect`` invocation can
+    point at the utterance it's about.
+
+    Feedback records are appended to the SAME history.jsonl as
+    sibling lines with ``{"type": "feedback", "ref": <utterance_id>,
+    ...}`` — clean append-only, no in-place rewrites of utterance
+    records needed. Defects go to a separate ``defect_reports.jsonl``
+    (see ``defects.py``) to keep the preference and defect flows
+    cleanly separated."""
+    return uuid.uuid4().hex
+
+
+def append_feedback(
+    *,
+    utterance_id: str,
+    source: str,
+    text: str,
+    kind: str = "explicit",
+) -> None:
+    """Append a feedback record pointing at an utterance. Stored
+    inline in history.jsonl as a sibling line with ``type =
+    "feedback"`` so readers can filter cleanly.
+
+    Best-effort: silently drops on write failure. See ``append``."""
+    append(
+        {
+            "type": "feedback",
+            "ref": utterance_id,
+            "kind": kind,
+            "source": source,
+            "text": text,
+        }
+    )
 
 # Safety-net rotation. The intended pattern is ``heard improve``
 # pruning consumed entries on every run, so the log stays small.

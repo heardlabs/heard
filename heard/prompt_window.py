@@ -65,9 +65,8 @@ def ask(
     behavior just works without any extra plumbing on our side.
     """
     # Imported lazily — PyObjC is heavy on import and we don't want
-    # `import heard.prompt_window` from a CLI command (heard doctor,
-    # heard config get, etc.) to pull in AppKit just to register a
-    # symbol.
+    # `import heard.prompt_window` from a CLI command (e.g.
+    # `heard config get`) to pull in AppKit just to register a symbol.
     from AppKit import (  # noqa: PLC0415
         NSAlert,
         NSAlertFirstButtonReturn,

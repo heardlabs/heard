@@ -111,3 +111,54 @@ def test_no_history_file_returns_empty():
     assert records == []
     assert end == 0
     assert history.iter_all() == []
+
+
+# --- Phase 2: utterance IDs + feedback records ---------------------
+
+
+def test_new_utterance_id_is_unique():
+    """Daemon mints one ID per speak request; collisions would break
+    feedback attribution."""
+    assert history.new_utterance_id() != history.new_utterance_id()
+
+
+def test_append_feedback_writes_sibling_record():
+    """Feedback lives inline in history.jsonl as a sibling line with
+    type='feedback' pointing at the utterance's id. Append-only — no
+    in-place rewrites of the utterance record."""
+    utt_id = history.new_utterance_id()
+    history.append({"id": utt_id, "spoken": "hello world"})
+    history.append_feedback(
+        utterance_id=utt_id,
+        source="cli",
+        text="talk less about bash",
+    )
+
+    rows = history.iter_all()
+    assert len(rows) == 2
+    utterance, feedback = rows
+    assert utterance["id"] == utt_id
+    assert "type" not in utterance  # plain utterance records have no type field
+    assert feedback["type"] == "feedback"
+    assert feedback["ref"] == utt_id
+    assert feedback["source"] == "cli"
+    assert feedback["text"] == "talk less about bash"
+    assert feedback["kind"] == "explicit"
+
+
+def test_append_feedback_carries_ts():
+    history.append_feedback(utterance_id="x", source="cli", text="t")
+    rows = history.iter_all()
+    assert "ts" in rows[0]
+
+
+def test_implicit_feedback_kind_can_be_overridden():
+    """Phase 2 step 3 will write implicit signals (pauses, mic, skips)
+    with kind='implicit' so distillation can weigh them differently
+    from explicit feedback."""
+    history.append_feedback(
+        utterance_id="x", source="pause", text="pause_within_5s", kind="implicit"
+    )
+    rows = history.iter_all()
+    assert rows[0]["kind"] == "implicit"
+    assert rows[0]["source"] == "pause"
