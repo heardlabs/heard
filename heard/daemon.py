@@ -42,6 +42,9 @@ from heard import (
 )
 from heard import multi_agent as multi_agent_mod
 from heard import persona as persona_mod
+from heard import (
+    working_memory as working_memory_mod,
+)
 from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
 from heard.tts.managed import ManagedError
@@ -173,6 +176,12 @@ class Daemon:
         # and never makes decisions — see agent_state.py module
         # docstring for the boundary rule.
         self.agent_states = agent_state_mod.AgentStateRegistry()
+        # Layer 3 — Working Memory. Short rolling prose summary
+        # carried in every harness call. Compression runs async on a
+        # background thread (~30s tick), never in the hot path.
+        # Started in start_hotkey path so the daemon ready-up code
+        # has finished by the time the first compression fires.
+        self.working_memory = working_memory_mod.WorkingMemoryManager()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
@@ -236,6 +245,15 @@ class Daemon:
         self._queue_max = 5
         self._start_hotkey()
         self._start_audio_monitor()
+        # Layer 3 — Working Memory compressor thread. Idle-loops on
+        # a ~5s wait, calls maybe_compress() which gates on the
+        # COMPRESS_TICK_S + new-event threshold. persona_provider is
+        # a callable so persona switches mid-session pick up
+        # automatically on the next compression.
+        self.working_memory.start(
+            agent_states=self.agent_states,
+            persona_provider=lambda: self.persona,
+        )
         # We deliberately do NOT subscribe to AX trust-state changes
         # from the daemon. Re-initialising pynput in-process after a
         # mid-lifetime grant crashes on macOS 14.6+ — pynput's worker
@@ -1765,6 +1783,13 @@ class Daemon:
             # Best-effort — Layer 2 must never break the speech path.
             pass
 
+        # Layer 3 — Working Memory observation (hot path is just a
+        # buffer append; the LLM compression runs async on a tick).
+        try:
+            self.working_memory.observe(req)
+        except Exception:
+            pass
+
         cfg = config.load(cwd=cwd)
         persona = self._persona_for(cfg)
         session = self.sessions.touch(session_id, cwd=cwd)
@@ -1795,7 +1820,7 @@ class Daemon:
                     cfg=cfg,
                     persona=persona,
                     agent_states=self.agent_states,
-                    working_memory="",  # Phase 3 step 7 will fill in
+                    working_memory=self.working_memory.snapshot(),
                 )
             except Exception:
                 decision = None
@@ -2265,6 +2290,10 @@ class Daemon:
         self._start_account_usage_poll()
 
         def shutdown(*_):
+            try:
+                self.working_memory.stop()
+            except Exception:
+                pass
             try:
                 os.unlink(sock_path)
             except FileNotFoundError:
