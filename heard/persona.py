@@ -520,14 +520,35 @@ def _byok_haiku_rewrite(
 
     user_msg = _build_user_message(event_kind, neutral, tag, ctx, session)
     full_system = _SHARED_NARRATION_RULES + "\n\n" + persona.system_prompt
+    # Mark the system block for prompt caching — same shape the managed
+    # proxy in heard-api/src/llm.ts uses. No-op today (Haiku's min
+    # cacheable block is 2048 tokens and the persona-only prompt sits
+    # below that), but the v2 harness will push system content past
+    # the threshold (persona + working memory excerpt + prefs +
+    # cross-persona rules) and caching becomes a real cost/latency
+    # win. Setting this up now avoids a retrofit when Phase 3 step 6
+    # lands.
     try:
         msg = client.messages.create(
             model=HAIKU_MODEL,
             max_tokens=HAIKU_MAX_TOKENS,
-            system=full_system,
+            system=[
+                {
+                    "type": "text",
+                    "text": full_system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": user_msg}],
             timeout=HAIKU_TIMEOUT_S,
         )
+        # Observability: log cache hit/miss tokens so we can see
+        # whether caching is actually firing during step 6's A/B. The
+        # Anthropic Messages API returns usage.cache_read_input_tokens
+        # and usage.cache_creation_input_tokens; both are 0 on a miss
+        # AND when the block is below the model's min size, so a flat
+        # zero here just means "no cache" (either condition).
+        _log_haiku_cache_usage(msg, path="byok")
         parts = [b.text for b in msg.content if getattr(b, "type", "") == "text"]
         out = " ".join(p.strip() for p in parts if p).strip()
         return out or None
@@ -537,6 +558,39 @@ def _byok_haiku_rewrite(
         # network, 5xx) stay silent and just fall through to templates.
         _notify_anthropic_failure(e)
         return None
+
+
+def _log_haiku_cache_usage(msg: Any, *, path: str) -> None:
+    """Best-effort observability for prompt-cache hit rate. Reads
+    `usage.cache_read_input_tokens` and `usage.cache_creation_input_tokens`
+    from a successful Messages API response (BYOK or managed) and
+    emits a structured daemon-log line. Silent on any error — the
+    speech path must not break if the response shape changes."""
+    try:
+        from heard.daemon import _log  # noqa: PLC0415
+
+        usage = getattr(msg, "usage", None) or {}
+        if not isinstance(usage, dict):
+            usage = {
+                "input_tokens": getattr(usage, "input_tokens", 0),
+                "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0),
+                "cache_creation_input_tokens": getattr(
+                    usage, "cache_creation_input_tokens", 0
+                ),
+            }
+        input_tokens = usage.get("input_tokens", 0) or 0
+        cache_read = usage.get("cache_read_input_tokens", 0) or 0
+        cache_write = usage.get("cache_creation_input_tokens", 0) or 0
+        if input_tokens or cache_read or cache_write:
+            _log(
+                "haiku_cache",
+                path=path,
+                input=input_tokens,
+                cache_read=cache_read,
+                cache_write=cache_write,
+            )
+    except Exception:
+        pass
 
 
 def _byok_openai_rewrite(
@@ -670,6 +724,19 @@ def _managed_haiku_rewrite(
         with _urlreq.urlopen(req, timeout=HAIKU_TIMEOUT_S, context=ssl_ctx) as resp:
             data = _json.loads(resp.read().decode("utf-8") or "{}")
         # Anthropic Messages response: {"content": [{"type":"text","text":"..."}]}
+        # Cache observability — the heard-api proxy preserves the
+        # upstream `usage` block, so the same helper used for the BYOK
+        # path works here too. The managed proxy already sets
+        # cache_control on the system block (heard-api/src/llm.ts), so
+        # this gives us a real read-vs-write breakdown once the harness
+        # prompt grows past the 2048-token threshold.
+        try:
+            _log_haiku_cache_usage(
+                type("_Resp", (), {"usage": data.get("usage") or {}})(),
+                path="managed",
+            )
+        except Exception:
+            pass
         parts = [
             b.get("text", "")
             for b in data.get("content", [])
