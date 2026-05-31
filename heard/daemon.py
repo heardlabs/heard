@@ -36,6 +36,9 @@ from heard import (
     updater,
     verbosity,
 )
+from heard import (
+    agent_state as agent_state_mod,
+)
 from heard import multi_agent as multi_agent_mod
 from heard import persona as persona_mod
 from heard.session import SessionStore
@@ -162,6 +165,13 @@ class Daemon:
         # sessions are active. Single-session use case is unchanged
         # (router falls through to "speak" on every event).
         self.router = multi_agent_mod.MultiAgentRouter()
+        # Layer 2 — Agent State (the "scoreboard"). Per-agent facts +
+        # cheap heuristic hints, updated on every event. Read by
+        # `heard status` for human inspection today; will be read by
+        # the harness (Layer 5) when that lands. Never calls an LLM
+        # and never makes decisions — see agent_state.py module
+        # docstring for the boundary rule.
+        self.agent_states = agent_state_mod.AgentStateRegistry()
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
@@ -1743,6 +1753,17 @@ class Daemon:
         session_id = sess_payload.get("id") or "default"
         cwd = sess_payload.get("cwd")
 
+        # Layer 2 — Agent State observation. Always-on, deterministic,
+        # never calls an LLM. Done unconditionally before any verbosity
+        # / digest gating below: the scoreboard reflects what the
+        # agent did, not what we chose to narrate. Safe to call with
+        # any event shape; the registry handles malformed payloads.
+        try:
+            self.agent_states.observe(req)
+        except Exception:
+            # Best-effort — Layer 2 must never break the speech path.
+            pass
+
         cfg = config.load(cwd=cwd)
         persona = self._persona_for(cfg)
         session = self.sessions.touch(session_id, cwd=cwd)
@@ -1928,6 +1949,10 @@ class Daemon:
                 # which one is pinned / focus.
                 "active_sessions": self.router.list_active(),
                 "router_mode": self.router.mode().value,
+                # Layer 2 — per-agent scoreboard. Read by `heard status`
+                # for inspection today; will be read by the harness
+                # (Layer 5) on every meaningful event when that lands.
+                "agent_states": self.agent_states.summary(),
                 # Resume-from-pause UX: the UI needs to know whether
                 # the pending-narration buffer has anything in it so
                 # it can decide between (a) silent resume on click vs

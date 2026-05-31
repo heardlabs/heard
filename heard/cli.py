@@ -112,13 +112,44 @@ def uninstall(agent: str) -> None:
 
 @app.command(hidden=True)
 def status() -> None:
-    """Show daemon + install status."""
+    """Show daemon + install status, plus the Layer 2 Agent State
+    scoreboard for any active agents. Hidden from `heard --help`
+    since users live in the menu bar; intended for K. / Claude Code
+    debugging."""
     alive = "alive" if client.is_daemon_alive() else "stopped"
     typer.echo(f"daemon:       {alive} (socket: {config.SOCKET_PATH})")
     typer.echo(f"service:      {'installed' if service.is_installed() else 'not installed'}")
     for name, adapter in ADAPTERS.items():
         installed = "installed" if adapter.is_installed() else "not installed"
         typer.echo(f"{name:<14}{installed}")
+
+    # Agent State scoreboard (Layer 2). Only printed when the daemon
+    # is up and at least one agent is active. The daemon already
+    # filters to active agents in its `summary()` so a finished but
+    # not-yet-evicted agent doesn't clutter the panel.
+    if client.is_daemon_alive():
+        try:
+            payload = client.get_status() or {}
+        except Exception:
+            payload = {}
+        agent_panel = payload.get("agent_states") or []
+        if agent_panel:
+            typer.echo("")
+            typer.echo("agents (Layer 2 scoreboard):")
+            for a in agent_panel:
+                repo = a.get("repo_name") or "(no repo)"
+                sid_short = (a.get("id") or "")[:8]
+                tool = a.get("current_tool") or a.get("last_tool") or "-"
+                shape = a.get("response_shape_hint", "-")
+                salience = a.get("salience_hint", "-")
+                idle = a.get("idle_seconds", 0)
+                errs = a.get("error_count", 0)
+                touched = a.get("files_touched_count", 0)
+                typer.echo(
+                    f"  {repo:<14} sid={sid_short}  tool={tool:<14}"
+                    f"  shape={shape:<18} salience={salience:<16}"
+                    f"  idle={idle:>5.1f}s  errs={errs}  files={touched}"
+                )
 
 
 @app.command(hidden=True)
