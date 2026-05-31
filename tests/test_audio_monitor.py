@@ -163,7 +163,7 @@ def test_monitor_callback_exception_does_not_kill_thread():
             raise RuntimeError("first call boom")
         second_fire.set()
 
-    mon = audio_monitor.AudioMonitor(on_recording_started=_boom, poll_interval_s=0.005)
+    mon = audio_monitor.AudioMonitor(on_recording_started=_boom, poll_interval_s=0.005, debounce_polls=0)
     mon._ca = fake
     mon.start()
     # Wait up to 5s for the second fire — plenty of head-room for any

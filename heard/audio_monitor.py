@@ -50,10 +50,17 @@ _kAudioObjectPropertyElementMain = 0
 
 POLL_INTERVAL_S = 0.25
 # Number of consecutive "running" reads before we trust it. With a 0.25 s
-# poll, this means the mic must be held for ~0.25–0.5 s before we silence.
-# Debounce stays at 1 so transient blips (Siri waking, system services)
-# don't trigger a phantom silence.
-DEBOUNCE_POLLS = 1
+# poll, we need (DEBOUNCE_POLLS + 1) polls — at 4 that's ~1.25 s of
+# sustained mic activity before we silence. Filters the bug zone of
+# medium-length blips: Slack opening for a voice-memo preview, browser
+# tabs probing mic when camera permission is requested, app launches
+# that briefly initialize audio devices. All of those used to cut Heard
+# off mid-sentence with the previous DEBOUNCE_POLLS=1 (~500 ms trigger).
+# Real calls and Wispr/dictation are unaffected — they hold the mic for
+# multiple seconds, well past the 1.25 s threshold. Wispr users will
+# hear ~1 s of overlap before silence, which is vastly better than the
+# previous behavior of getting cut off mid-word.
+DEBOUNCE_POLLS = 4
 
 _FRAMEWORK_PATH = "/System/Library/Frameworks/CoreAudio.framework/CoreAudio"
 
