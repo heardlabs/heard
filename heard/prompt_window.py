@@ -27,6 +27,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Defect-report dialog — paired (canonical slug, user-facing label).
+# Slugs MUST stay in sync with `heard.defects.CATEGORIES` so the daemon
+# accepts whatever the dialog submits; a test in
+# tests/test_prompt_window_categories.py asserts this. User-facing
+# labels are intentionally written in user-experience language ("Got
+# cut off mid-sentence") rather than the bare slugs ("cut_off") so the
+# popup is scannable for a non-technical user under stress (something
+# just broke; they want to file and move on).
+_DEFECT_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("murmured", "Sound was wrong / murmured"),
+    ("cut_off", "Got cut off mid-sentence"),
+    ("wrong_voice", "Wrong voice"),
+    ("weird_pause", "Weird pause / pacing"),
+    ("wrong_persona", "Wrong persona / tone"),
+    ("other_audio", "Other audio problem"),
+    ("other", "Something else"),
+)
+
 
 @dataclass(frozen=True)
 class PromptResult:
@@ -107,3 +125,100 @@ def ask(
     text = (field.stringValue() or "").strip()
     submitted = response == NSAlertFirstButtonReturn
     return PromptResult(submitted=submitted, text=text if submitted else "")
+
+
+@dataclass(frozen=True)
+class DefectResult:
+    """Outcome of an ``ask_defect_report`` call.
+
+    ``submitted`` is True when the user pressed Send / Enter; False on
+    Cancel / Esc / window close. ``category`` is the canonical slug
+    (e.g. ``"murmured"``) the daemon will accept; ``note`` is the
+    user's optional comment, stripped (empty string on cancel)."""
+
+    submitted: bool
+    category: str
+    note: str
+
+
+def ask_defect_report(*, default_category: str = "other") -> DefectResult:
+    """Open the "Report a problem" dialog — category picker + optional
+    note field. Blocks the calling thread until the user submits or
+    cancels. Must be called from the main thread (rumps callbacks
+    already run there).
+
+    The dialog is intentionally tiny: one popup, one short text field,
+    Send / Cancel. The full diagnostic payload (TTS backend, voice,
+    speed, persona, mic state, last error) is attached on the daemon
+    side at the moment the defect is recorded — the user doesn't fill
+    any of that in. See `daemon._handle()`'s `report_defect` branch
+    and the architecture-v2 "Diagnostic Sidecar" section.
+    """
+    # Lazy AppKit import — see top-of-module rationale.
+    from AppKit import (  # noqa: PLC0415
+        NSAlert,
+        NSAlertFirstButtonReturn,
+        NSMakeRect,
+        NSPopUpButton,
+        NSStackView,
+        NSTextField,
+        NSUserInterfaceLayoutOrientationVertical,
+    )
+
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_("Report a problem")
+    alert.setInformativeText_(
+        "What went wrong? Heard will attach diagnostic info "
+        "automatically — you don't need to include backend, voice, or "
+        "version details."
+    )
+    alert.addButtonWithTitle_("Send report")
+    alert.addButtonWithTitle_("Cancel")
+
+    width = 360.0
+
+    # Category picker.
+    popup = NSPopUpButton.alloc().initWithFrame_(NSMakeRect(0, 0, width, 26))
+    default_idx = 0
+    for i, (slug, label) in enumerate(_DEFECT_CATEGORIES):
+        popup.addItemWithTitle_(label)
+        if slug == default_category:
+            default_idx = i
+    popup.selectItemAtIndex_(default_idx)
+
+    # Optional note.
+    note_field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, width, 22))
+    try:
+        note_field.setPlaceholderString_("Optional note — context, what you were doing")
+    except AttributeError:
+        pass
+
+    # Stack them vertically. NSStackView handles spacing + alignment
+    # without having to manually position child views.
+    stack = NSStackView.alloc().initWithFrame_(NSMakeRect(0, 0, width, 62))
+    stack.setOrientation_(NSUserInterfaceLayoutOrientationVertical)
+    stack.setSpacing_(8.0)
+    stack.addArrangedSubview_(popup)
+    stack.addArrangedSubview_(note_field)
+    alert.setAccessoryView_(stack)
+
+    # Focus the popup so keyboard nav works immediately. (Tab moves to
+    # the note field; Enter submits from either.)
+    try:
+        alert.window().setInitialFirstResponder_(popup)
+    except Exception:
+        pass
+
+    response = alert.runModal()
+    submitted = response == NSAlertFirstButtonReturn
+    selected_idx = popup.indexOfSelectedItem()
+    if 0 <= selected_idx < len(_DEFECT_CATEGORIES):
+        category = _DEFECT_CATEGORIES[selected_idx][0]
+    else:
+        category = default_category
+    note = (note_field.stringValue() or "").strip()
+    return DefectResult(
+        submitted=submitted,
+        category=category,
+        note=note if submitted else "",
+    )

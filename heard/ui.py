@@ -24,7 +24,7 @@ from pathlib import Path
 
 import rumps
 
-from heard import client, config, updater
+from heard import client, config, notify, updater
 from heard import verbosity as verbosity_mod
 from heard.presets import list_bundled as list_presets
 
@@ -273,6 +273,15 @@ class HeardApp(rumps.App):
             "Settings…", callback=self.on_open_settings, key=","
         )
 
+        # "Report a problem…" — the ONLY user-facing feedback surface
+        # (Heard is an ambient utility, not a productivity SaaS — no
+        # thumbs / rating prompts in the menu; see memory
+        # `heard-product-surface-ambient-utility`). Opens a small
+        # category-picker dialog; daemon auto-attaches tech_context.
+        self.report_problem_item = rumps.MenuItem(
+            "Report a problem…", callback=self.on_report_problem
+        )
+
         options_menu = rumps.MenuItem("Options")
         options_menu["Auto-silence on call"] = self.auto_silence_item
         options_menu["API keys"] = self.api_keys_menu
@@ -324,6 +333,7 @@ class HeardApp(rumps.App):
             self.verbosity_menu,
             self.active_sessions_menu,
             None,
+            self.report_problem_item,
             self.settings_item,
             None,
             rumps.MenuItem("Quit Heard", callback=self.on_quit),
@@ -923,6 +933,31 @@ class HeardApp(rumps.App):
         except Exception:
             pass
         self.refresh(None)
+
+    def on_report_problem(self, _sender) -> None:
+        """Open the "Report a problem" dialog and, if submitted, route
+        the report through the daemon's ``report_defect`` socket cmd.
+        The daemon auto-attaches tech_context (backend, voice, speed,
+        persona, mic state, last_error) at write time — the user only
+        picks a category and (optionally) types a short note.
+
+        Acknowledged via macOS notification so the user knows the
+        report was filed; otherwise the act feels weightless and they
+        may file the same problem twice."""
+        try:
+            from heard import prompt_window  # noqa: PLC0415
+            result = prompt_window.ask_defect_report()
+        except Exception as e:
+            print(f"defect-report dialog unavailable: {e}", file=sys.stderr)
+            return
+        if not result.submitted:
+            return
+        client.report_defect(result.category, note=result.note, source="menu")
+        notify.notify(
+            "Heard — thanks for the report",
+            "Filed with diagnostic info attached. We read these.",
+            kind="report_defect_ack",
+        )
 
     # Stripe Payment Link for Pro. Pre-fills the user's email so they
     # don't retype it. Mirrored in vercel.json:/pro and in the dashboard.
