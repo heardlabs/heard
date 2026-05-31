@@ -412,6 +412,143 @@ def _get_client():
     return _client or None
 
 
+def call_with_prompt(
+    system_text: str,
+    user_msg: str,
+    *,
+    max_tokens: int | None = None,
+    timeout_s: float | None = None,
+    log_path_label: str = "harness",
+) -> str | None:
+    """Call Haiku with an arbitrary (system, user) prompt pair.
+
+    Used by Layer 5 (the harness) so it doesn't have to know about the
+    BYOK / managed / CLI dispatch ladder, and so prompt caching +
+    observability are wired the same way as the existing rewrite path.
+
+    Ladder for the prototype: BYOK Anthropic → managed proxy. OpenAI
+    BYOK and the `claude -p` CLI fallback are *deliberately omitted*
+    here — the harness prototype is the make-or-break A/B and we want
+    a deterministic call path. Once the harness ships for keeps, those
+    fallbacks can be added (or this helper can fold into
+    `_haiku_rewrite`'s ladder).
+
+    System block is wrapped with `cache_control: {ephemeral}` on both
+    paths (matches what `_byok_haiku_rewrite` and heard-api do today).
+    Cache hit/miss tokens are logged via `_log_haiku_cache_usage`
+    under the supplied `log_path_label`.
+
+    Returns the response text, or None on every-path failure.
+    """
+    if max_tokens is None:
+        max_tokens = HAIKU_MAX_TOKENS
+    if timeout_s is None:
+        timeout_s = HAIKU_TIMEOUT_S
+
+    # 1) BYOK Anthropic — direct SDK call.
+    if _anthropic_key():
+        client = _get_client()
+        if client is not None:
+            try:
+                msg = client.messages.create(
+                    model=HAIKU_MODEL,
+                    max_tokens=max_tokens,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system_text,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    messages=[{"role": "user", "content": user_msg}],
+                    timeout=timeout_s,
+                )
+                _log_haiku_cache_usage(msg, path=f"{log_path_label}:byok")
+                parts = [
+                    b.text
+                    for b in msg.content
+                    if getattr(b, "type", "") == "text"
+                ]
+                out = " ".join(p.strip() for p in parts if p).strip()
+                return out or None
+            except Exception as e:
+                _notify_anthropic_failure(e)
+                # Don't fall through — BYOK key was set explicitly, so
+                # silently switching to managed would mask "your key is
+                # broken" failures. Matches `_haiku_rewrite`'s pattern.
+                return None
+
+    # 2) Managed proxy — heard-api /v1/persona-rewrite.
+    if _managed_rewrite_available() and not _managed_haiku_capped_today():
+        import json as _json
+        import ssl as _ssl
+        import urllib.error as _urlerr
+        import urllib.request as _urlreq
+
+        try:
+            from heard import config as _config
+
+            cfg = _config.load()
+        except Exception:
+            return None
+        token = (cfg.get("heard_token") or "").strip()
+        if not token:
+            return None
+        base_url = (cfg.get("heard_api_base") or "https://api.heard.dev").rstrip("/")
+        body = {
+            "system": system_text,
+            "messages": [{"role": "user", "content": user_msg}],
+            "model": HAIKU_MODEL,
+            "max_tokens": max_tokens,
+        }
+        try:
+            try:
+                import certifi  # type: ignore
+
+                ssl_ctx = _ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                ssl_ctx = _ssl.create_default_context()
+            req = _urlreq.Request(
+                f"{base_url}/v1/persona-rewrite",
+                data=_json.dumps(body).encode("utf-8"),
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "User-Agent": "Heard-daemon/1.0",
+                },
+            )
+            with _urlreq.urlopen(req, timeout=timeout_s, context=ssl_ctx) as resp:
+                data = _json.loads(resp.read().decode("utf-8") or "{}")
+            try:
+                _log_haiku_cache_usage(
+                    type("_Resp", (), {"usage": data.get("usage") or {}})(),
+                    path=f"{log_path_label}:managed",
+                )
+            except Exception:
+                pass
+            parts = [
+                b.get("text", "")
+                for b in data.get("content", [])
+                if b.get("type") == "text"
+            ]
+            out = " ".join(p.strip() for p in parts if p).strip()
+            return out or None
+        except _urlerr.HTTPError as e:
+            if getattr(e, "code", None) == 429:
+                global _managed_haiku_capped_at
+                import time
+
+                _managed_haiku_capped_at = time.time() * 1000.0
+            _notify_managed_http_failure(e)
+            return None
+        except (_urlerr.URLError, TimeoutError, OSError, ValueError):
+            return None
+
+    return None
+
+
 def _haiku_rewrite(
     persona: Persona,
     event_kind: str,

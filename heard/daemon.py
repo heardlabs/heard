@@ -29,6 +29,7 @@ from heard import (
     audio_monitor,
     config,
     defects,
+    harness,
     heard_api,
     history,
     hotkey,
@@ -1777,6 +1778,62 @@ class Daemon:
         # tiered confidence rules.
         path_hint = (ctx.get("abs_path") or None) if isinstance(ctx, dict) else None
         self.router.note_event(session_id, cwd or "", path_hint=path_hint)
+
+        # --- Layer 5 — Harness NARRATE prototype (Phase 3 step 6). ---
+        # Driven by cfg["harness_enabled"]; off by default → zero impact
+        # on the v1 path. When on, the harness gets first shot at every
+        # incoming event. Three outcomes:
+        #   - None              → fall through to v1 (safety net)
+        #   - speak=False       → harness chose silence; suppress
+        #   - speak=True        → enqueue harness.text directly
+        # This is the make-or-break A/B for the v2 architecture; see
+        # plan file Phase 3 step 6 for the kill criteria.
+        if harness.is_enabled(cfg):
+            try:
+                decision = harness.narrate(
+                    req,
+                    cfg=cfg,
+                    persona=persona,
+                    agent_states=self.agent_states,
+                    working_memory="",  # Phase 3 step 7 will fill in
+                )
+            except Exception:
+                decision = None
+            if decision is not None:
+                if not decision.speak:
+                    _log("event_drop", kind=kind, tag=tag, reason="harness_skip")
+                    return
+                # Harness produced text — bypass the v1 verbosity /
+                # multi_agent / persona-rewrite path entirely.
+                _log(
+                    "event_speak",
+                    kind=kind,
+                    tag=tag,
+                    persona=persona.name,
+                    chars=len(decision.text),
+                    via="harness",
+                    scope=decision.scope,
+                )
+                info = self.router._sessions.get(session_id)  # noqa: SLF001
+                history_meta = {
+                    "kind": kind,
+                    "tag": tag,
+                    "neutral": neutral,
+                    "profile": cfg.get("verbosity", "normal"),
+                    "repo_name": getattr(info, "repo_name", "") or "",
+                    "cwd": cwd or "",
+                    "via": "harness",
+                }
+                self._start_speech(
+                    decision.text,
+                    cfg=cfg,
+                    persona=persona,
+                    session_id=session_id,
+                    history_meta=history_meta,
+                )
+                return
+            _log("event_harness_punt", kind=kind, tag=tag)
+        # --- end harness path; fall through to v1 below ---
 
         if kind == "tool_pre":
             density = self.sessions.tool_density(session_id)
