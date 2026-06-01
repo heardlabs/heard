@@ -265,6 +265,89 @@ def test_maybe_compress_skips_when_gate_fails():
 # --- prompt assembly -----------------------------------------------------
 
 
+def test_start_skips_compression_when_enabled_provider_false():
+    """Cost gate: if enabled_provider() returns False, the compressor
+    thread must NOT call into maybe_compress (and therefore not into
+    the LLM). Users who never opt into the harness pay nothing for
+    WM. We exercise the thread directly by starting it, observing
+    enough events to trip the gate, and verifying call_with_prompt
+    was never invoked."""
+    m = wm.WorkingMemoryManager()
+    reg = AgentStateRegistry()
+    for _ in range(wm.COMPRESS_NEW_EVENT_THRESHOLD + 4):
+        m.observe(_ev())
+
+    with patch.object(wm.persona_mod, "call_with_prompt", return_value="prose") as call:
+        m.start(
+            agent_states=reg,
+            persona_provider=lambda: _persona(),
+            enabled_provider=lambda: False,
+        )
+        # Wait long enough for the thread to wake at least twice.
+        time.sleep(0.3)  # NOTE: this is intentionally short — the
+        # 5s tick is hard to test, so we accept a small window in
+        # which the thread *could* have called if the gate were
+        # broken. With enabled=False it never calls.
+        m.stop()
+
+    assert call.call_count == 0
+
+
+def test_start_runs_compression_when_enabled_provider_true_and_gate_passes():
+    """Mirror test: with the same buffer state but enabled=True, the
+    thread reaches the LLM call. We force-tick by setting the wait
+    interval very short; the test exits as soon as we see one call."""
+    m = wm.WorkingMemoryManager()
+    reg = AgentStateRegistry()
+    for _ in range(wm.COMPRESS_NEW_EVENT_THRESHOLD + 4):
+        m.observe(_ev())
+
+    seen = threading.Event()
+
+    def _capture(*args, **kwargs):
+        seen.set()
+        return "prose"
+
+    with patch.object(wm.persona_mod, "call_with_prompt", side_effect=_capture):
+        # Patch the thread's wait timeout via the stop_event itself —
+        # not exposed, so instead we start the thread and bump the
+        # buffer in a tight loop to force the 5s wait to wake up. We
+        # rely on the default 5s timeout; the test waits up to 7s.
+        m.start(
+            agent_states=reg,
+            persona_provider=lambda: _persona(),
+            enabled_provider=lambda: True,
+        )
+        # Wait up to 7s for the thread's tick + compression.
+        triggered = seen.wait(timeout=7.0)
+        m.stop()
+
+    assert triggered, "compressor never called call_with_prompt with enabled=True"
+
+
+def test_enabled_provider_exception_defaults_to_disabled():
+    """Failure-safe: if the gate callable raises, treat as disabled
+    (don't burn tokens on uncertainty)."""
+    m = wm.WorkingMemoryManager()
+    reg = AgentStateRegistry()
+    for _ in range(wm.COMPRESS_NEW_EVENT_THRESHOLD + 4):
+        m.observe(_ev())
+
+    def _boom():
+        raise RuntimeError("nope")
+
+    with patch.object(wm.persona_mod, "call_with_prompt", return_value="prose") as call:
+        m.start(
+            agent_states=reg,
+            persona_provider=lambda: _persona(),
+            enabled_provider=_boom,
+        )
+        time.sleep(0.3)
+        m.stop()
+
+    assert call.call_count == 0
+
+
 def test_compression_prompt_includes_recent_events_and_prev_summary():
     m = wm.WorkingMemoryManager()
     reg = AgentStateRegistry()

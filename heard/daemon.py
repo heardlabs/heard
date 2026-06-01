@@ -253,6 +253,11 @@ class Daemon:
         self.working_memory.start(
             agent_states=self.agent_states,
             persona_provider=lambda: self.persona,
+            # Cost gate: WM compressor only fires Haiku calls when the
+            # user has opted into the harness path. Users who never set
+            # the flag pay nothing for WM. Re-evaluated every tick so
+            # flipping the flag mid-session just works.
+            enabled_provider=lambda: harness.is_enabled(config.load()),
         )
         # We deliberately do NOT subscribe to AX trust-state changes
         # from the daemon. Re-initialising pynput in-process after a

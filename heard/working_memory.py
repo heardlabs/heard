@@ -322,21 +322,45 @@ class WorkingMemoryManager:
         *,
         agent_states: AgentStateRegistry,
         persona_provider,
+        enabled_provider=None,
     ) -> None:
-        """Spawn the background compressor thread. `persona_provider`
-        is a zero-arg callable returning the currently-active persona
-        (so persona switches mid-session pick up automatically). Idle
-        loop: sleep ~5s, check should_compress, run if yes. The daemon
-        must call stop() during shutdown."""
+        """Spawn the background compressor thread.
+
+        `persona_provider` is a zero-arg callable returning the
+        currently-active persona (so persona switches mid-session pick
+        up automatically). Idle loop: sleep ~5s, check should_compress,
+        run if yes. The daemon must call stop() during shutdown.
+
+        `enabled_provider` is an optional zero-arg callable returning
+        True iff WM compression should actually run this tick. When it
+        returns False the thread keeps spinning (so flipping the flag
+        on later just works) but skips the maybe_compress call —
+        no Haiku tokens get spent. This is what gates the cost for
+        users who never opt into the harness: the thread is cheap
+        (5s sleep then a callable check), the LLM call is not. If
+        omitted, defaults to "always enabled" — useful for tests.
+        """
         if self._compress_thread is not None:
             return
         self._stop_event.clear()
+
+        def _enabled() -> bool:
+            if enabled_provider is None:
+                return True
+            try:
+                return bool(enabled_provider())
+            except Exception:
+                # Closure failure shouldn't burn tokens on uncertainty
+                # — default to disabled when we can't tell.
+                return False
 
         def _run() -> None:
             while not self._stop_event.is_set():
                 self._stop_event.wait(timeout=5.0)
                 if self._stop_event.is_set():
                     return
+                if not _enabled():
+                    continue
                 try:
                     persona = persona_provider()
                     if persona is None:
