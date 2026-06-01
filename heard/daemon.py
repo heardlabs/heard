@@ -317,7 +317,9 @@ class Daemon:
         """Speak the one-shot welcome line if we haven't yet AND we
         have a real TTS backend to speak it through. Persists the
         ``greeted`` flag immediately so a daemon respawn mid-greeting
-        doesn't double-fire."""
+        doesn't double-fire. Intentionally fires DURING the wizard —
+        the welcome line is part of the onboarding experience and
+        establishes the persona's voice up front."""
         if self.cfg.get("greeted"):
             return
         if isinstance(self.tts, NullTTS):
@@ -332,7 +334,7 @@ class Daemon:
         greeting = (
             f"Hi, I'm {who}. Just letting you know I'm on. "
             "If you want, you can switch to other voices in the menu bar. "
-            "Let's get you set up in 4 easy steps."
+            "Let's get you set up. Three quick steps."
         )
         self.cfg["greeted"] = True
         try:
@@ -1808,6 +1810,18 @@ class Daemon:
         # tiered confidence rules.
         path_hint = (ctx.get("abs_path") or None) if isinstance(ctx, dict) else None
         self.router.note_event(session_id, cwd or "", path_hint=path_hint)
+
+        # Suppress all narration until the user has finished the
+        # first-launch wizard. This is the right gate for the
+        # "Heard.app launched while a CC session was already running"
+        # case — without it, the daemon starts narrating tool calls
+        # while the user is mid-wizard, which competes with the welcome
+        # message and feels intrusive. Agent State + Working Memory
+        # observations above ran already, so when narration kicks back
+        # on (post-onboard reload), the harness has the recent context.
+        if not cfg.get("onboarded"):
+            _log("event_drop", kind=kind, tag=tag, reason="not_onboarded")
+            return
 
         # --- Layer 5 — Harness NARRATE prototype (Phase 3 step 6). ---
         # Driven by cfg["harness_enabled"]; off by default → zero impact

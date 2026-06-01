@@ -63,7 +63,9 @@ def test_greeting_fires_once_with_real_backend(tmp_path, monkeypatch):
     msg = captured[0]["text"]
     assert msg.startswith("Hi, I'm Jarvis.")
     assert "switch to other voices" in msg
-    assert "4 easy steps" in msg
+    # Wizard step count — previously "4 easy steps" but onboarding
+    # was trimmed to 3 when the AX step was removed (commit 364f680).
+    assert "Three quick steps" in msg
 
 
 def test_greeting_skipped_when_no_voice_configured(tmp_path, monkeypatch):

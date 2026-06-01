@@ -1088,7 +1088,7 @@ class SettingsController(NSObject):
                 # silently mint a new anon trial on this device.
                 config.set_value("heard_is_anonymous", False)
                 config.set_value("heard_anon_trial_used", True)
-                config.set_value("onboarded", True)
+                _mark_onboarded()
                 field.setStringValue_("")
                 status_label.setStringValue_("✓ Signed in.")
                 _reload_daemon()
@@ -1365,6 +1365,18 @@ def _reload_daemon() -> None:
         client.send({"cmd": "reload"})
     except Exception:
         pass
+
+
+def _mark_onboarded() -> None:
+    """Flip the persisted `onboarded` flag AND reload the daemon so
+    it picks up the new state immediately. Without the reload the
+    daemon keeps the wizard-suppression gate closed until the next
+    incoming event causes it to re-load config — which means the
+    welcome line doesn't fire when the user actually finishes
+    onboarding, and the first few hook events still get dropped
+    silently."""
+    config.set_value("onboarded", True)
+    _reload_daemon()
 
 
 def _valid_combo(s: str) -> bool:
@@ -1745,7 +1757,7 @@ class _OnboardingWindowDelegate(NSObject):
 
     def windowWillClose_(self, _notification):
         try:
-            config.set_value("onboarded", True)
+            _mark_onboarded()
         except Exception:
             pass
 
@@ -1957,9 +1969,9 @@ class _OnboardingController(NSObject):
         self._finish()
 
     def _finish(self) -> None:
-        config.set_value("onboarded", True)
+        _mark_onboarded()
         try:
-            client.send({"cmd": "reload"})
+            client.send({"cmd": "reload"})  # belt-and-suspenders; helper does this too
         except Exception:
             pass
         if self._window is not None:
@@ -1985,7 +1997,7 @@ class _OnboardingController(NSObject):
         if now and not was:
             # The user has effectively finished — relaunch fresh so
             # pynput inits cleanly.
-            config.set_value("onboarded", True)
+            _mark_onboarded()
             _schedule_app_relaunch(
                 "Heard — restarting to activate the hotkey",
                 "Accessibility was just granted. Heard is relaunching so the "
