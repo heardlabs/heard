@@ -62,7 +62,11 @@ def test_greeting_fires_once_with_real_backend(tmp_path, monkeypatch):
     assert len(captured) == 1
     msg = captured[0]["text"]
     assert msg.startswith("Hi, I'm Jarvis.")
-    assert "switch to other voices" in msg
+    # The greeting points the user at the menu bar — LSUIElement apps
+    # have no Dock icon, and a window competing with a focused
+    # editor is exactly how onboarding got lost on K.'s v0.9.9 install.
+    # Audio is the discovery fallback when the window doesn't pop.
+    assert "menu bar" in msg
     # Wizard step count — previously "4 easy steps" but onboarding
     # was trimmed to 3 when the AX step was removed (commit 364f680).
     assert "Three quick steps" in msg

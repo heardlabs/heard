@@ -331,10 +331,15 @@ class Daemon:
         # has no name set, which never happens for the bundled four
         # but defends against forks.
         who = (self.persona.name or "Heard").strip().capitalize() or "Heard"
+        # Point new users at the menu bar — Heard is LSUIElement, no
+        # Dock icon, so anyone expecting a window after launch will
+        # miss the wizard if it doesn't pop forward. The greeting plays
+        # before that activation-policy promotion lands, so this line
+        # is the audio fallback: tells them where to look.
         greeting = (
-            f"Hi, I'm {who}. Just letting you know I'm on. "
-            "If you want, you can switch to other voices in the menu bar. "
-            "Let's get you set up. Three quick steps."
+            f"Hi, I'm {who}. I'm running in your menu bar at the top of "
+            "the screen — look for my icon. Let's get you set up. "
+            "Three quick steps."
         )
         self.cfg["greeted"] = True
         try:

@@ -22,6 +22,8 @@ import objc
 from AppKit import (
     NSApp,
     NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSApplicationActivationPolicyRegular,
     NSAttributedString,
     NSBackingStoreBuffered,
     NSButton,
@@ -1752,12 +1754,22 @@ class _GoogleButton(NSView):
 
 
 class _OnboardingWindowDelegate(NSObject):
-    """Closing the onboarding window (red button) counts as finishing —
-    flip ``onboarded`` so it doesn't reappear on every launch."""
+    """Closing the onboarding window (red button or finishing the
+    flow) counts as completing onboarding — flip ``onboarded`` so it
+    doesn't reappear on every launch, AND revert the app's activation
+    policy from Regular (temporarily set during wizard show so users
+    can find the window) back to Accessory (menu-bar-only, no Dock
+    icon, no Cmd+Tab presence). Without the revert, Heard would keep
+    a Dock icon after onboarding, which contradicts the
+    ambient-utility product stance."""
 
     def windowWillClose_(self, _notification):
         try:
             _mark_onboarded()
+        except Exception:
+            pass
+        try:
+            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         except Exception:
             pass
 
@@ -1778,6 +1790,27 @@ class _OnboardingController(NSObject):
             inst._ensure_window()
             idx = next((i for i, s in enumerate(inst._screens) if s[0] == start_key), 0)
             inst._go_to(idx)
+            # Heard is normally an LSUIElement app (menu-bar only, no
+            # Dock icon, no Cmd+Tab presence). That's the right steady
+            # state — but on first launch, an invisible window
+            # competing with a focused full-screen editor is exactly
+            # how K. (and presumably others) lost the wizard. So
+            # promote the app to a regular activation policy JUST while
+            # onboarding is open: Dock icon temporarily appears,
+            # window is brought to the front over other apps, and the
+            # window position is reset to screen-centre (defeating any
+            # saved off-screen position from a prior install /
+            # display arrangement). `_OnboardingWindowDelegate
+            # .windowWillClose_` flips the policy back to Accessory so
+            # the Dock icon disappears once onboarding is done.
+            try:
+                NSApp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+            except Exception:
+                pass
+            try:
+                inst._window.center()
+            except Exception:
+                pass
             inst._window.makeKeyAndOrderFront_(None)
             try:
                 NSApp.activateIgnoringOtherApps_(True)
