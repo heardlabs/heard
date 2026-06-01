@@ -48,6 +48,15 @@ DATA_FILES = [
             os.path.join(ROOT, "heard/profiles/verbose.yaml"),
         ],
     ),
+    # Phase 4 F0 — bundled preferences schema. Distillation reads
+    # this as bounded vocabulary; the .app bundle has to ship it
+    # alongside the code or distill.py fails at startup.
+    (
+        "heard",
+        [
+            os.path.join(ROOT, "heard/preferences_schema.yaml"),
+        ],
+    ),
     # heard/presets/ is now a thin shim that delegates to personas
     # — no YAML files to bundle.
     (

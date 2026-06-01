@@ -1,0 +1,198 @@
+# Heard preferences schema — bounded vocabulary for distillation
+# =============================================================
+#
+# This file is the SCHEMA. It defines which slots a user's distilled
+# preferences are allowed to occupy. Distillation (Phase 4 F4) reads
+# this as a constraint: every proposed preference must conform to
+# one of these slots; anything else is logged as out-of-vocabulary
+# feedback for maintainer review.
+#
+# This is a v1 first cut authored 2026-06-01. K. to review + edit.
+# Conservative scope (10 slots) — easier to ADD slots later via
+# release than to remove a slot that users built habits around.
+#
+# Why bounded vocabulary:
+#   * Free-form preferences fragment the product. Two users' prefs
+#     become two different products. This schema is what keeps Heard
+#     coherent while allowing personalization.
+#   * Founder authority over the vocabulary means the product
+#     evolves in one direction: new slots ship in releases; users
+#     don't invent slots themselves.
+#   * Out-of-vocabulary feedback aggregates into maintainer signal.
+#     If 40% of users want something distillation can't express,
+#     that's pressure for a new slot in the next release.
+#
+# Schema versioning:
+#   When slots are renamed, removed, or change semantics, bump
+#   `schema_version`. Migration logic (F8) handles existing user
+#   prefs against the new version with auto-migrate or menu-badge
+#   review.
+#
+# NOT in this schema:
+#   * Persona identity and voice — hard-core, non-overridable.
+#   * Whether failures + questions are announced — hard-core. Only
+#     their FORMAT is overridable (see error_detail_level, etc.).
+#   * Listening mode (copilot vs companion) — top-level config
+#     field for now. At F5 it migrates here as `listening_mode`;
+#     until then mode-specific defaults live in the harness
+#     addendum.
+#   * Persona name + speed + active backend — these are user-level
+#     config, not preferences-derived-from-feedback.
+
+schema_version: 1
+
+slots:
+
+  # ----- Volume / density ---------------------------------------
+
+  tool_category_volume:
+    type: mapping
+    default: {}
+    description: |
+      Per-tool-category volume overrides. Maps category name to
+      one of [quiet, normal, verbose]. Categories supported in v1:
+      bash, edit, read, web, agent. Absent key = inherit the
+      verbosity profile default for that category.
+
+      Distillation candidate when the listener consistently signals
+      preference for one class of tool ("I don't need every bash
+      command narrated, but edits should be").
+    item_values: [quiet, normal, verbose]
+    item_keys: [bash, edit, read, web, agent]
+
+  routine_tool_progress:
+    type: enum
+    values: [skip, brief, full]
+    default: brief
+    description: |
+      How to narrate routine tool starts ("Reading auth.py.",
+      "Running the linter."). `skip` stays silent on routine
+      progress and only narrates decisions + results. `brief` = a
+      one-line acknowledgment per tool (today's default). `full`
+      uses the template's full neutral text.
+
+  intermediate_prose_threshold:
+    type: int
+    default: 240
+    min: 80
+    max: 1000
+    description: |
+      Character count threshold below which intermediate prose
+      from the agent is treated as routine progress (template path)
+      vs. waking the harness for a substantive narration. Lower =
+      more harness wake-ups + richer narration on short utterances;
+      higher = more silence on mid-stream chatter. Today's hardcoded
+      default is 240 chars (see harness._LONG_PROSE_CHARS).
+
+  # ----- Shape / structure --------------------------------------
+
+  long_final_shape:
+    type: enum
+    values: [preserve_structure, lead_then_summary, headline_only]
+    default: preserve_structure
+    description: |
+      How to compress a long final message (multi-phase plan, list
+      of recommendations, structured answer). `preserve_structure`
+      keeps the shape — phase 1 in detail, phases 2/3 at higher
+      altitude, hook at end. `lead_then_summary` does only the
+      immediate items plus a hook. `headline_only` reads the top
+      line and stops.
+
+      This is the slot that emerged from K.'s 2026-05-31 "the
+      narration is too compressed" feedback.
+
+  decision_surfacing:
+    type: enum
+    values: [emphasize, mention, skip]
+    default: emphasize
+    description: |
+      How to handle the agent's decision points (when it chose
+      between options before acting). `emphasize` names the choice
+      and rationale ("two paths for the auth fix — went with the
+      patch because it's contained"). `mention` notes a choice was
+      made. `skip` voices only the chosen action.
+
+  # ----- Tone / register ----------------------------------------
+
+  jargon_translation:
+    type: enum
+    values: [aggressive, moderate, preserve]
+    default: moderate
+    description: |
+      How aggressively to translate developer-speak into plain
+      English. `aggressive` strips most internal jargon (Companion-
+      mode default). `moderate` keeps industry shorthand like
+      "race condition" but translates internal-implementation
+      terms. `preserve` reads agent output close to verbatim.
+
+  register_formality:
+    type: enum
+    values: [formal, neutral, casual]
+    default: neutral
+    description: |
+      Tonal register WITHIN the active persona's range. Formal-
+      Jarvis vs. casual-Jarvis vs. neutral-Jarvis; the persona's
+      identity doesn't change, only how stiff vs. relaxed the
+      narration lands. K.'s 2026-05-31 "the spoken context is
+      too literal and complicated" feedback drove this slot.
+
+  hook_endings:
+    type: enum
+    values: [required, preferred, optional]
+    default: preferred
+    description: |
+      How often a narration turn ends with a hook into action
+      (a question, a pick, "okay to keep going?"). `required` =
+      Companion-mode strictness — every turn ends with a hook
+      or stays silent. `preferred` = end with a hook when one
+      fits. `optional` = end naturally; hooks only when the
+      model thinks they help.
+
+  # ----- Salience ------------------------------------------------
+
+  error_detail_level:
+    type: enum
+    values: [minimal, standard, verbose]
+    default: standard
+    description: |
+      How much detail to include in error narrations. `minimal` =
+      "Tests failed." `standard` = "Three failures in auth.py."
+      `verbose` = the failure breakdown with file paths, counts,
+      and a hint at what's wrong.
+
+      Note: WHETHER errors are announced is hard-core (always yes);
+      only the FORMAT is governed here.
+
+  question_handling:
+    type: enum
+    values: [verbatim, summarize, acknowledge]
+    default: verbatim
+    description: |
+      How to narrate questions the agent asks the user. `verbatim`
+      reads the full question — Companion-mode requirement, since
+      the listener cannot see it on screen. `summarize` reads a
+      shortened version (Co-pilot default for long questions).
+      `acknowledge` says "the agent has a question" and stops,
+      delegating to the screen.
+
+      Same hard-core caveat: WHETHER questions are announced is
+      always yes; only the FORMAT is here.
+
+
+# Slot resolution stack (top wins on conflict, F5+):
+#
+#   hard-core surfaces         ← non-overridable, in code
+#   project preferences        ← local .heard.yaml additions
+#   user preferences           ← cloud-tied per-account
+#   listening mode defaults    ← copilot/companion addendum
+#   soft-core defaults         ← values in this file
+#
+# Distilled-from-feedback prefs always carry source metadata:
+#   { source: explicit | implicit | migrated,
+#     set_at: <iso8601>,
+#     last_confirmed: <iso8601>,
+#     schema_version: 1 }
+#
+# Project-scoped prefs win over user-scoped on conflict (more local
+# = more specific). User-scoped prefs cloud-sync via Heard accounts;
+# project-scoped stays local and may include identifiers.
