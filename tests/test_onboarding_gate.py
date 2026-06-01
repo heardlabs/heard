@@ -146,11 +146,15 @@ def test_greeting_still_fires_during_wizard(tmp_path, monkeypatch):
             "persona": "jarvis",
         },
     )
-    # Daemon __init__ calls _maybe_greet; captured should hold the
-    # greeting even though onboarded is False.
+    # Wizard calls _maybe_greet via the reload socket cmd (see
+    # ui.HeardApp._first_launch_prompt sending {"cmd": "reload"}).
+    # We simulate that trigger explicitly here — the assertion is
+    # that the greeting fires even though onboarded is False, NOT
+    # that it fires on daemon __init__ (which it no longer does).
+    daemon._maybe_greet()
     msgs = [c["text"] for c in captured]
     assert any("Hi, I'm Jarvis" in m for m in msgs), (
-        f"greeting did not fire during wizard; captured: {msgs}"
+        f"greeting did not fire when wizard triggered it; captured: {msgs}"
     )
 
 
@@ -166,6 +170,7 @@ def test_greeting_uses_three_steps_not_four(tmp_path, monkeypatch):
         tmp_path, monkeypatch,
         {"greeted": False, "elevenlabs_api_key": "sk_x", "persona": "jarvis"},
     )
+    daemon._maybe_greet()  # wizard would trigger this via reload cmd
     msg = next((c["text"] for c in captured if "Jarvis" in c.get("text", "")), "")
     assert "4 easy steps" not in msg
     assert "Three quick steps" in msg

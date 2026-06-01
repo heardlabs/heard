@@ -281,10 +281,18 @@ class Daemon:
         # after ourselves *before* the persona introduces itself.
         # No-op on a normal launch.
         self._maybe_notify_post_update()
-        # First-launch greeting — speaks a friendly "I'm on" line the
-        # first time we have a real voice configured. Runs once per
-        # install (gated by cfg["greeted"]); a wiped config re-greets.
-        self._maybe_greet()
+        # First-launch greeting is NOT fired here. Used to be — but
+        # then the welcome line played whenever the daemon launched,
+        # decoupled from the wizard appearing. On a hot-patch
+        # relaunch or a daemon restart after the wizard had already
+        # been dismissed, the greeting would either re-fire or be
+        # silently no-op'd with no visible coupling to the wizard.
+        # Now the wizard triggers a `reload` socket cmd at the moment
+        # it opens (see `ui.HeardApp._first_launch_prompt` and
+        # `settings_window._mark_onboarded`), which arrives here in
+        # `_reload_config()` → `_maybe_greet()`. Wizard and greeting
+        # always travel together. See _maybe_greet docstring for the
+        # idempotency contract.
 
     def _maybe_notify_post_update(self) -> None:
         """Surface a one-time 'we replaced the old version in place'

@@ -52,11 +52,17 @@ def _make_daemon(tmp_path, monkeypatch, cfg_overrides):
 def test_greeting_fires_once_with_real_backend(tmp_path, monkeypatch):
     """``greeted=False`` + a real TTS backend → daemon enqueues the
     welcome line and persists ``greeted=True`` so it doesn't fire
-    again on the next launch."""
+    again on the next call.
+
+    Note: greeting is no longer triggered on daemon ``__init__`` — the
+    onboarding wizard fires it via a `reload` socket cmd so the
+    welcome line + window appear together. Tests call _maybe_greet
+    explicitly to exercise the greeting logic itself."""
     daemon, persisted, captured = _make_daemon(
         tmp_path, monkeypatch,
         {"greeted": False, "elevenlabs_api_key": "sk_x", "persona": "jarvis"},
     )
+    daemon._maybe_greet()
     assert persisted.get("greeted") is True
     assert daemon.cfg["greeted"] is True
     assert len(captured) == 1
@@ -80,6 +86,7 @@ def test_greeting_skipped_when_no_voice_configured(tmp_path, monkeypatch):
     daemon, persisted, captured = _make_daemon(
         tmp_path, monkeypatch, {"greeted": False, "elevenlabs_api_key": ""},
     )
+    daemon._maybe_greet()
     assert daemon.cfg.get("greeted") is False
     assert captured == []
 
@@ -91,6 +98,7 @@ def test_greeting_uses_active_persona_name(tmp_path, monkeypatch):
         tmp_path, monkeypatch,
         {"greeted": False, "elevenlabs_api_key": "sk_x", "persona": "aria"},
     )
+    daemon._maybe_greet()
     assert len(captured) == 1
     assert captured[0]["text"].startswith("Hi, I'm Aria.")
 
@@ -101,4 +109,5 @@ def test_greeting_not_repeated_when_already_greeted(tmp_path, monkeypatch):
     daemon, _, captured = _make_daemon(
         tmp_path, monkeypatch, {"greeted": True, "elevenlabs_api_key": "sk_x"},
     )
+    daemon._maybe_greet()
     assert captured == []
