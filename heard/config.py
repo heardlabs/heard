@@ -186,6 +186,19 @@ DEFAULTS: dict[str, Any] = {
     # adding the key here is required for `heard config set` to round
     # trip through the YAML file).
     "harness_enabled": False,
+    # Phase 3 add-on — listening mode for the harness path. Two values:
+    #   "copilot"   — default. Screen-on, daily coding. Compressed
+    #                 hooks and signposts; details live in the diff
+    #                 the listener can read.
+    #   "companion" — eyes-off (driving, cooking, walking). Lean but
+    #                 substantive: state the choice, surface decisions,
+    #                 plain English over developer-speak, every turn
+    #                 ends with a hook into action. Built on Karpathy's
+    #                 "simplicity + surgical + goal-driven" principles.
+    # Read by harness.py to pick which addendum to layer onto the
+    # base instruction block. No effect when harness_enabled is False
+    # (v1 path doesn't have a prompt customisation point).
+    "mode": "copilot",
 }
 
 

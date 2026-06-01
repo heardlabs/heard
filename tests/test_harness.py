@@ -172,6 +172,82 @@ def test_system_text_is_byte_stable_for_same_persona():
     assert a == b
 
 
+def test_system_text_default_mode_is_copilot():
+    """No mode argument → behaves as Co-pilot. The base instruction
+    block is present; the Companion addendum is NOT."""
+    text = harness._build_system_text(_persona())
+    assert "COMPANION MODE" not in text
+
+
+def test_system_text_copilot_mode_excludes_companion_addendum():
+    text = harness._build_system_text(_persona(), mode="copilot")
+    assert "COMPANION MODE" not in text
+
+
+def test_system_text_companion_mode_appends_addendum():
+    text = harness._build_system_text(_persona(), mode="companion")
+    assert "COMPANION MODE" in text
+    # Addendum must come AFTER the base block so its rules override
+    # ("speak less often" beats "default to speaking" on conflict).
+    base_idx = text.index("DEFAULT TO SPEAKING")
+    addendum_idx = text.index("COMPANION MODE")
+    assert base_idx < addendum_idx
+
+
+def test_system_text_unknown_mode_falls_back_to_copilot():
+    """Garbage mode string must not crash and must not enter Companion
+    by accident. Co-pilot is the safer default."""
+    text = harness._build_system_text(_persona(), mode="bogus-mode")
+    assert "COMPANION MODE" not in text
+
+
+def test_system_text_companion_mode_byte_stable():
+    """Cache stability within Companion mode — two calls produce
+    identical bytes so the cache prefix holds."""
+    a = harness._build_system_text(_persona(), mode="companion")
+    b = harness._build_system_text(_persona(), mode="companion")
+    assert a == b
+
+
+def test_narrate_reads_mode_from_cfg():
+    """End-to-end check: when cfg["mode"]=="companion", the system
+    text the LLM sees includes the Companion addendum."""
+    from unittest.mock import patch
+    reg = AgentStateRegistry()
+    event = _ev(kind="final", neutral="done")
+    cfg = {"harness_enabled": True, "mode": "companion"}
+
+    captured: dict[str, str] = {}
+
+    def _capture(system_text, user_msg, **kwargs):
+        captured["system"] = system_text
+        return "spoken text"
+
+    with patch.object(harness.persona_mod, "call_with_prompt", side_effect=_capture):
+        harness.narrate(event, cfg=cfg, persona=_persona(), agent_states=reg)
+
+    assert "COMPANION MODE" in captured["system"]
+
+
+def test_narrate_default_mode_is_copilot():
+    """No mode key in cfg → Co-pilot. Addendum NOT in system text."""
+    from unittest.mock import patch
+    reg = AgentStateRegistry()
+    event = _ev(kind="final", neutral="done")
+    cfg = {"harness_enabled": True}  # no "mode" key
+
+    captured: dict[str, str] = {}
+
+    def _capture(system_text, user_msg, **kwargs):
+        captured["system"] = system_text
+        return "spoken text"
+
+    with patch.object(harness.persona_mod, "call_with_prompt", side_effect=_capture):
+        harness.narrate(event, cfg=cfg, persona=_persona(), agent_states=reg)
+
+    assert "COMPANION MODE" not in captured["system"]
+
+
 def test_user_message_includes_agent_table_and_event():
     reg = AgentStateRegistry()
     reg.observe(_ev(sid="s1", kind="tool_pre", tag="tool_bash"))

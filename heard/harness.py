@@ -220,8 +220,12 @@ def narrate(
         return None
 
     # Build the prompt. System block stable per session (persona +
-    # shared rules + preferences-stub); user message dynamic per call.
-    system_text = _build_system_text(persona, prefs_stub="")
+    # shared rules + mode addendum + preferences-stub); user message
+    # dynamic per call. Mode read fresh so a menu-bar toggle takes
+    # effect on the next event without a daemon restart (config.load
+    # is the source of truth; the daemon already passes the live cfg).
+    mode = (cfg.get("mode") or "copilot").strip().lower()
+    system_text = _build_system_text(persona, prefs_stub="", mode=mode)
     user_msg = _build_user_message(
         event=event,
         agent_states=agent_states,
@@ -368,7 +372,86 @@ no markdown.
 """
 
 
-def _build_system_text(persona: persona_mod.Persona, *, prefs_stub: str = "") -> str:
+# ----- mode addendum ------------------------------------------------------
+#
+# Heard's harness has two listening modes (see config.py "mode"):
+#
+#   * "copilot"   — default. The listener is AT the screen, reading
+#                   the diff alongside you. Companion-style narration
+#                   is overkill; brief hooks and signposts are right.
+#                   The base instruction block above already targets
+#                   this mode — no addendum needed.
+#
+#   * "companion" — the listener is NOT at the screen (driving,
+#                   cooking, walking). Audio is the only surface.
+#                   Lean BUT substantive: state the choice, surface
+#                   decisions, plain English over developer-speak,
+#                   every turn ends with a hook. Karpathy's CLAUDE.md
+#                   leanness principles (state assumptions, simplest
+#                   thing, surgical, goal-driven) apply — translated
+#                   from coding to speaking.
+#
+# The addendum is appended AFTER the base block so it has the last
+# word on conflicting rules (it overrides "speak for every meaningful
+# event" with "speak less often but more substantively when you do").
+_HARNESS_COMPANION_ADDENDUM = """\
+COMPANION MODE — additional constraints.
+
+The listener is NOT at the screen. No diff, no output, no plan in
+front of them. Audio is the only surface. They're driving, cooking,
+walking, or otherwise hands-off.
+
+Lean BUT substantive. Cut every word that doesn't help the listener
+decide or act. The Co-pilot baseline above said "default to speaking";
+in Companion you SPEAK LESS OFTEN but each turn carries the key
+decision, not just a tool-call headline.
+
+1. State the choice, then the result. Before you read what happened,
+   name what was being decided between.
+     BAD:   "Done with the auth fix."
+     GOOD:  "Two paths for the auth fix — patch the session check or
+            rewrite the middleware. Went with the patch because it's
+            contained. Tests pass."
+
+2. Every sentence has a why. If you can't say what the listener
+   should DO with a sentence, cut it. No "I'm now going to…", no
+   "this might help later", no decorative narration.
+
+3. No speculative additions. Don't volunteer "by the way" tangents.
+   Companion voices what happened and what's next; conjecture is
+   silenced.
+
+4. Surface assumptions and tradeoffs. Name what you guessed, name
+   what you don't know.
+     "Assuming you want the same caching strategy as before — push
+      back if not."
+     "Not sure if you want this on by default or behind a flag."
+
+5. Plain English over developer-speak. Industry shorthand like
+   "race condition", "merge conflict", "regression" stays — those
+   are domain labels with no clean translation. But internal jargon
+   becomes plain.
+     BAD:   "Layer 5 modulates the working-memory compressor output."
+     GOOD:  "The brain part adjusts what the rolling summary says."
+
+6. End every Companion turn with a hook into action. A question,
+   a pick, or a "okay to keep going?" If you can't form a hook,
+   the turn was probably premature — consider silence instead.
+
+Speak LESS OFTEN than in Co-pilot. The listener can't multi-task
+against the screen; constant chatter is a tax, not a service. Skip
+routine tool progress entirely. Wake for: decisions, errors, finals,
+questions, blocked agents, surprises. Default to silence on routine
+ack-shaped events that Co-pilot would have voiced.
+"""
+
+
+def _build_system_text(
+    persona: persona_mod.Persona,
+    *,
+    prefs_stub: str = "",
+    mode: str = "copilot",
+) -> str:
     """Assemble the byte-stable system block. Order matters for
     caching: most stable stuff first (cross-persona rules + persona
     body — these don't change within a session), preferences last
@@ -377,12 +460,20 @@ def _build_system_text(persona: persona_mod.Persona, *, prefs_stub: str = "") ->
     `prefs_stub` is a placeholder for Phase 4 — pass "" until the
     distillation worker writes real preferences. Empty string keeps
     the system bytes stable.
+
+    `mode` is "copilot" (default) or "companion". In Companion mode
+    the addendum is appended after the base instruction block so its
+    rules override (e.g. "speak less often" beats the base "default
+    to speaking"). Unknown values fall back to Co-pilot — safer than
+    raising at runtime.
     """
     parts = [
         persona_mod._SHARED_NARRATION_RULES,
         persona.system_prompt,
         _HARNESS_INSTRUCTION_BLOCK,
     ]
+    if mode == "companion":
+        parts.append(_HARNESS_COMPANION_ADDENDUM)
     if prefs_stub:
         parts.append("User preferences:\n" + prefs_stub)
     return "\n\n".join(parts)
