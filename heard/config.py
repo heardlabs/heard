@@ -184,10 +184,60 @@ def ensure_dirs() -> None:
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
+    """Load a YAML file as a dict, returning {} on missing-file OR
+    parse-error. The parse-error case is the load-bearing one — a
+    corrupt config.yaml (test pollution writing into the prod path, a
+    crash mid-write, a hand-edit with mismatched brackets, etc.) used
+    to crash whoever called `load()`, which in turn bricked the entire
+    app launch (both `daemon.py:Daemon.__init__` and
+    `ui.py:HeardApp.refresh` blow up at startup). Now: log the error,
+    rename the broken file to `<name>.broken-<ts>` so the next read
+    succeeds with defaults, and return {} so the caller proceeds.
+
+    The auto-rename only fires for the GLOBAL config path (CONFIG_PATH).
+    Per-project `.heard.yaml` files live in the user's own repos; we
+    don't touch those — we just return {} and the per-project override
+    layer is silently absent until the user fixes the file.
+
+    Notification is best-effort and import-time-lazy so a bad config
+    on a fresh install (where notify might not be importable yet)
+    doesn't compound the failure."""
     try:
         with path.open(encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
+        return {}
+    except yaml.YAMLError as e:
+        import sys
+        import time as _time
+
+        print(
+            f"config: failed to parse {path} — falling back to defaults: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+        if path == CONFIG_PATH:
+            backup = path.with_suffix(path.suffix + f".broken-{int(_time.time())}")
+            try:
+                path.rename(backup)
+                print(f"config: moved broken file to {backup}", file=sys.stderr, flush=True)
+                try:
+                    from heard import notify as _notify  # noqa: PLC0415
+
+                    _notify.notify(
+                        "Heard — config was reset",
+                        f"Your settings file was corrupted; we backed it "
+                        f"up to {backup.name} and started fresh. Sign in "
+                        f"again from the menu bar if needed.",
+                        kind="config_reset",
+                    )
+                except Exception:
+                    # notify needs osascript and the AppKit-ish imports;
+                    # if that path is unavailable we still want the
+                    # config recovery to work. Silent on this layer.
+                    pass
+            except Exception as rename_err:
+                print(f"config: rename failed: {rename_err}", file=sys.stderr, flush=True)
         return {}
 
 
