@@ -277,6 +277,14 @@ class Daemon:
         self.pending_update: updater.UpdateInfo | None = None
         self._start_update_check()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+        # Architecture step 6c — warm the harness prompt cache so the
+        # first real event after daemon boot hits a cache HIT, not a
+        # full cold-start miss. Background thread because the warming
+        # Haiku call takes ~1s and shouldn't block startup. Best-effort:
+        # silently no-ops if the harness is off or the call fails.
+        # Fires AFTER daemon_start logs so timing analysis can see the
+        # warmup as a distinct ~1s call right at boot.
+        self._start_harness_warmup()
         # Post-update notification — runs before the greeting so a
         # fresh upgrade-and-relaunch tells the user we cleaned up
         # after ourselves *before* the persona introduces itself.
@@ -366,6 +374,24 @@ class Daemon:
             session_id="__greet__",
             coexists=True,
         )
+
+    def _start_harness_warmup(self) -> None:
+        """Architecture step 6c — fire one synthetic harness call on a
+        background thread to warm the Anthropic prompt cache.
+
+        Cheap, best-effort. Always safe to call: harness.warm_cache
+        no-ops when the harness is disabled, and silently absorbs
+        any LLM error. The thread is daemon=True so it doesn't keep
+        the process alive on shutdown."""
+        def _warm():
+            try:
+                harness.warm_cache(cfg=self.cfg, persona=self.persona)
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=_warm, daemon=True, name="harness_warmup",
+        ).start()
 
     def _start_update_check(self) -> None:
         """Spawn the GitHub-Releases poller. Notification + menu-bar

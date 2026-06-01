@@ -89,6 +89,47 @@ def is_enabled(cfg: dict[str, Any]) -> bool:
     return bool(cfg.get("harness_enabled", False))
 
 
+def warm_cache(
+    *,
+    cfg: dict[str, Any],
+    persona: persona_mod.Persona,
+) -> None:
+    """Architecture step 6c — populate the Anthropic prompt cache on
+    daemon startup so the first real harness call hits a cache HIT
+    instead of paying the full cold-start cost.
+
+    Fires one synthetic Haiku call with the same system prefix the
+    real harness uses (persona + shared rules + instruction block +
+    mode addendum). The body of that call doesn't matter — we
+    discard the response. What matters is that the cached prefix
+    lands in Anthropic's cache (5-min TTL) before the user's first
+    event arrives.
+
+    Best-effort: silently no-ops on any failure. A failed warm-up
+    just means the next event pays full cost; not catastrophic.
+
+    Caller should invoke this on a background thread — the Haiku
+    call takes ~1s and we don't want to block daemon startup.
+    """
+    if not is_enabled(cfg):
+        return
+    mode = (cfg.get("mode") or "copilot").strip().lower()
+    system_text = _build_system_text(persona, prefs_stub="", mode=mode)
+    try:
+        persona_mod.call_with_prompt(
+            system_text,
+            # Trivial user message; we don't read the response. The
+            # whole point is to land the SYSTEM bytes in the cache.
+            "(cache warmup — no narration needed)",
+            max_tokens=16,
+            log_path_label="harness_warmup",
+        )
+    except Exception:
+        # Warmup is best-effort. The next real event pays full
+        # cost if this fails — annoying but not broken.
+        pass
+
+
 # Architecture step 6a — fast-path gate.
 #
 # The harness's job is to talk about MEANINGFUL events: failures,
@@ -116,14 +157,26 @@ def is_enabled(cfg: dict[str, Any]) -> bool:
 
 # Tags that always wake the harness — long-running tool starts /
 # finishes (the user wants their voice talking about the test run,
-# not a template), questions to the user, the agent-as-tool case.
-# Mirrors verbosity.py's _ALWAYS_NARRATE_PRE so the classification
-# stays consistent with the rest of the codebase.
+# not a template), and the agent-as-tool case (cross-agent context
+# the harness understands but a template can't).
+#
+# NOT in this list (architecture step 6d, 2026-06-01):
+#   * tool_question — questions go to the user; they MUST narrate
+#     even if the harness LLM is unreachable. Fast-path them
+#     through templates for reliability.
+#   * tool_post_failure / tool_post_command_failed — failures
+#     same rationale: an error announcement is the kind of thing
+#     Heard absolutely must NOT silently drop because Haiku
+#     timed out. Templates always succeed.
+#
+# This trades a small amount of prose quality on failures + questions
+# (template "Tests failed" vs. harness "Three failures in auth.py —
+# looks like the session token isn't refreshing") for hard reliability
+# on the events that matter most.
 _HARNESS_WAKE_TAGS: frozenset[str] = frozenset({
     "tool_bash_test", "tool_bash_build", "tool_bash_install",
     "tool_bash_push", "tool_bash_sync",
-    "tool_agent", "tool_question",
-    "tool_post_failure", "tool_post_command_failed",
+    "tool_agent",
 })
 
 # Kinds that always wake the harness — `final` is the agent's main
@@ -138,6 +191,33 @@ _HARNESS_WAKE_KINDS: frozenset[str] = frozenset({"final"})
 _LONG_PROSE_CHARS: int = 240
 
 
+def is_critical_template_event(event: dict[str, Any]) -> bool:
+    """True for events that MUST narrate via the deterministic
+    template path, never the harness LLM. Architecture step 6d.
+
+    Two classes today:
+      * Failures — any tag containing "failure" or "failed",
+        plus the canonical tool_post_failure /
+        tool_post_command_failed names.
+      * Questions to the user — tool_question.
+
+    The rationale: these are the events where Heard going silent
+    because Haiku is slow / timed out / returned junk is the worst
+    possible failure mode. Better an unstyled template ("Tests
+    failed") than no announcement at all. The harness can still
+    elaborate AFTER the template plays — that's a future iteration
+    (step 6d follow-up, not in this cut).
+    """
+    tag = (event.get("tag") or "").lower()
+    if not tag:
+        return False
+    if tag == "tool_question":
+        return True
+    if "failure" in tag or "failed" in tag:
+        return True
+    return False
+
+
 def should_use_fast_path(
     event: dict[str, Any],
     *,
@@ -150,25 +230,36 @@ def should_use_fast_path(
     The fast-path is appropriate when:
       * Single-agent context (with 2+ agents the harness needs to
         weigh cross-agent salience on every event)
-      * Tag is not in _HARNESS_WAKE_TAGS (no failures, no
-        long-running tools, no agent/question events)
+      * Tag is not in _HARNESS_WAKE_TAGS (no long-running tools,
+        no cross-agent events)
       * Kind is not in _HARNESS_WAKE_KINDS (not a final)
       * Intermediate prose is short (< _LONG_PROSE_CHARS)
-      * No "failure"/"failed" substring leaked into a custom tag
+
+    CRITICAL OVERRIDE — failures and questions ALWAYS fast-path
+    regardless of single/multi agent state. Architecture step 6d:
+    these events must never depend on the harness LLM call. Even if
+    Haiku is down or the prompt cache misses badly, a failure or
+    a user-facing question gets narrated via template + speech queue
+    deterministically. This is the safety-critical bypass.
 
     Returns False (= use the harness) on anything that doesn't
     cleanly fit one of the above. Conservative default: when in
     doubt, let the harness decide.
     """
-    if multi_agent_active:
-        return False
-
     kind = event.get("kind") or ""
     tag = event.get("tag") or ""
 
-    if tag in _HARNESS_WAKE_TAGS:
+    # Critical override — failures + questions always template,
+    # always reliable. Checked BEFORE the multi-agent guard
+    # because a failure during a swarm session is more critical,
+    # not less.
+    if is_critical_template_event(event):
+        return True
+
+    if multi_agent_active:
         return False
-    if "failure" in tag or "failed" in tag:
+
+    if tag in _HARNESS_WAKE_TAGS:
         return False
     if kind in _HARNESS_WAKE_KINDS:
         return False

@@ -229,6 +229,76 @@ def test_narrate_reads_mode_from_cfg():
     assert "COMPANION MODE" in captured["system"]
 
 
+def test_warm_cache_noop_when_disabled():
+    """If harness_enabled is False, warm_cache must NOT make an LLM
+    call. Users on v1 path pay nothing for warming."""
+    from unittest.mock import patch
+    cfg = {"harness_enabled": False, "mode": "copilot"}
+    with patch.object(harness.persona_mod, "call_with_prompt") as m:
+        harness.warm_cache(cfg=cfg, persona=_persona())
+    assert m.call_count == 0
+
+
+def test_warm_cache_calls_llm_when_enabled():
+    """With harness_enabled, warm_cache fires exactly one Haiku call
+    with the assembled system block + a trivial user message."""
+    from unittest.mock import patch
+    cfg = {"harness_enabled": True, "mode": "copilot"}
+    captured = {}
+
+    def _capture(system_text, user_msg, **kwargs):
+        captured["system"] = system_text
+        captured["user"] = user_msg
+        captured["kwargs"] = kwargs
+        return "ok"
+
+    with patch.object(harness.persona_mod, "call_with_prompt",
+                      side_effect=_capture):
+        harness.warm_cache(cfg=cfg, persona=_persona())
+
+    # Same system bytes the real narrate() would build — that's the
+    # whole point (cache key match).
+    expected_system = harness._build_system_text(
+        _persona(), prefs_stub="", mode="copilot",
+    )
+    assert captured["system"] == expected_system
+    # Path label distinguishes warmup calls in the haiku_cache log.
+    assert captured["kwargs"]["log_path_label"] == "harness_warmup"
+
+
+def test_warm_cache_uses_current_mode():
+    """Companion mode warming must use the Companion system bytes,
+    not Co-pilot — otherwise the cache primes the wrong prefix."""
+    from unittest.mock import patch
+    cfg = {"harness_enabled": True, "mode": "companion"}
+    captured = {}
+
+    def _capture(system_text, user_msg, **kwargs):
+        captured["system"] = system_text
+        return "ok"
+
+    with patch.object(harness.persona_mod, "call_with_prompt",
+                      side_effect=_capture):
+        harness.warm_cache(cfg=cfg, persona=_persona())
+
+    assert "COMPANION MODE" in captured["system"]
+
+
+def test_warm_cache_swallows_exceptions():
+    """Warmup must NEVER crash the daemon — call_with_prompt raising
+    is silently absorbed."""
+    from unittest.mock import patch
+    cfg = {"harness_enabled": True}
+
+    def _boom(*a, **k):
+        raise RuntimeError("network blip")
+
+    with patch.object(harness.persona_mod, "call_with_prompt",
+                      side_effect=_boom):
+        # Must not raise.
+        harness.warm_cache(cfg=cfg, persona=_persona())
+
+
 def test_narrate_default_mode_is_copilot():
     """No mode key in cfg → Co-pilot. Addendum NOT in system text."""
     from unittest.mock import patch
@@ -372,33 +442,77 @@ def test_fast_path_final_kind_always_goes_to_harness():
 
 
 def test_fast_path_long_running_tool_tags_go_to_harness():
+    """Long-running tool tags + cross-agent (tool_agent) still wake
+    the harness — these are where persona-shaped tone matters AND
+    LLM failure can't drop a safety-critical announcement."""
     for tag in ("tool_bash_test", "tool_bash_build", "tool_bash_install",
-                "tool_bash_push", "tool_bash_sync", "tool_agent", "tool_question"):
+                "tool_bash_push", "tool_bash_sync", "tool_agent"):
         assert harness.should_use_fast_path(_ev(kind="tool_pre", tag=tag)) is False, (
             f"{tag} should wake harness"
         )
 
 
-def test_fast_path_failure_tags_go_to_harness():
+def test_fast_path_failure_tags_go_to_TEMPLATE():
+    """Architecture step 6d — failures must NEVER depend on the
+    harness LLM. Template-only narration for reliability."""
     for tag in ("tool_post_failure", "tool_post_command_failed"):
-        assert harness.should_use_fast_path(_ev(kind="tool_post", tag=tag)) is False
+        assert harness.should_use_fast_path(_ev(kind="tool_post", tag=tag)) is True, (
+            f"{tag} must template-bypass the harness (step 6d)"
+        )
 
 
-def test_fast_path_substring_failure_in_tag_also_wakes_harness():
-    """Defensive: a custom hook might use a tag like
-    `tool_post_pytest_failure` — the substring check catches it
-    even if it's not in the explicit WAKE_TAGS set."""
+def test_fast_path_question_tag_goes_to_TEMPLATE():
+    """Step 6d — questions to the user must never be silenced by
+    a Haiku hiccup. Templates always succeed; harness can elaborate
+    after in a future iteration."""
+    assert harness.should_use_fast_path(_ev(kind="tool_post", tag="tool_question")) is True
+    assert harness.should_use_fast_path(_ev(kind="tool_pre", tag="tool_question")) is True
+
+
+def test_fast_path_substring_failure_in_tag_also_templates():
+    """Defensive: a custom hook might emit `tool_post_pytest_failure`
+    or `tool_post_install_failed`. The substring check catches them
+    and routes to the template path."""
     assert harness.should_use_fast_path(
         _ev(kind="tool_post", tag="tool_post_pytest_failure")
-    ) is False
+    ) is True
     assert harness.should_use_fast_path(
         _ev(kind="tool_post", tag="tool_post_install_failed")
-    ) is False
+    ) is True
+
+
+def test_critical_events_bypass_even_under_multi_agent():
+    """Step 6d — failures during a swarm are MORE critical, not
+    less. Template bypass must trump the multi-agent guard."""
+    fail = _ev(kind="tool_post", tag="tool_post_failure")
+    question = _ev(kind="tool_post", tag="tool_question")
+    assert harness.should_use_fast_path(fail, multi_agent_active=True) is True
+    assert harness.should_use_fast_path(question, multi_agent_active=True) is True
+
+
+def test_is_critical_template_event_classifies_correctly():
+    """The 6d helper used by daemon.py + should_use_fast_path."""
+    assert harness.is_critical_template_event(
+        _ev(tag="tool_post_failure")) is True
+    assert harness.is_critical_template_event(
+        _ev(tag="tool_post_command_failed")) is True
+    assert harness.is_critical_template_event(
+        _ev(tag="tool_question")) is True
+    assert harness.is_critical_template_event(
+        _ev(tag="tool_post_pytest_failure")) is True
+    # Normal events are NOT critical.
+    assert harness.is_critical_template_event(
+        _ev(tag="tool_bash")) is False
+    assert harness.is_critical_template_event(
+        _ev(tag="tool_post_bash")) is False
+    # No tag → not critical (defensive).
+    assert harness.is_critical_template_event({}) is False
 
 
 def test_fast_path_multi_agent_disables_fast_path():
-    """When 2+ agents are active, every event is potentially salient
-    for cross-agent reasoning. Harness sees all."""
+    """When 2+ agents are active, every routine event is potentially
+    salient for cross-agent reasoning. Harness sees all (except
+    critical events — see test_critical_events_bypass_even_under_multi_agent)."""
     routine = _ev(kind="tool_pre", tag="tool_pre_bash")
     assert harness.should_use_fast_path(routine, multi_agent_active=True) is False
     # And the corresponding single-agent case stays fast.
