@@ -25,7 +25,6 @@ from pathlib import Path
 import rumps
 
 from heard import client, config, notify, updater
-from heard import verbosity as verbosity_mod
 from heard.presets import list_bundled as list_presets
 
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -222,34 +221,14 @@ class HeardApp(rumps.App):
             item = rumps.MenuItem(label, callback=self._mk_mode_cb(value))
             self.mode_menu[label] = item
 
-        # Verbosity profiles. The top-level "Verbosity" submenu sets
-        # `verbosity` (used in solo mode and for focus sessions in
-        # swarm). A nested "Swarm" submenu sets `swarm_verbosity` —
-        # tucked away because most single-agent users won't ever
-        # touch it, but discoverable for the multi-agent case.
-        #
-        # Profile YAML files live in heard/profiles/; power users can
-        # drop their own in $CONFIG_DIR/profiles/ to override.
-        self.verbosity_menu = rumps.MenuItem("Verbosity")
-        verbosity_labels = (
-            "quiet — errors only",
-            "brief — prose only, tools summarised",
-            "normal — per-tool + bursts summarised",
-            "verbose — speak everything",
-        )
-        for label in verbosity_labels:
-            level = label.split()[0]
-            item = rumps.MenuItem(label, callback=self._mk_verbosity_cb(level))
-            self.verbosity_menu[label] = item
-
-        # Swarm verbosity (nested). Same four levels but writes to
-        # `swarm_verbosity`. Only matters when 2+ agents are active.
-        self.swarm_verbosity_menu = rumps.MenuItem("Swarm (background agents)")
-        for label in verbosity_labels:
-            level = label.split()[0]
-            item = rumps.MenuItem(label, callback=self._mk_swarm_verbosity_cb(level))
-            self.swarm_verbosity_menu[label] = item
-        self.verbosity_menu["Swarm (background agents)"] = self.swarm_verbosity_menu
+        # Verbosity used to live here as two nested submenus (foreground
+        # + swarm). Pulled out of the menu bar in favor of Mode as the
+        # user-facing primitive — verbosity is internals now ("how much
+        # per event" — answered by the harness on its own when on, by
+        # templates when off). Power users + v1-only users still find
+        # the same four levels under Settings → Voice → Verbosity. The
+        # config keys (`verbosity`, `swarm_verbosity`) are unchanged so
+        # nothing in v1 broke; only the menu surface got cleaner.
 
         self.auto_silence_item = rumps.MenuItem(
             "Auto-silence on call",
@@ -351,7 +330,6 @@ class HeardApp(rumps.App):
             self.persona_menu,
             self.speed_menu,
             self.mode_menu,
-            self.verbosity_menu,
             self.active_sessions_menu,
             None,
             self.report_problem_item,
@@ -434,25 +412,9 @@ class HeardApp(rumps.App):
             value = "companion" if label.startswith("Companion") else "copilot"
             item.state = 1 if value == active_mode else 0
 
-        # Resolve through verbosity.level so legacy "low"/"high"
-        # config values display as "quiet"/"verbose" in the menu.
-        # Skip the nested "Swarm" submenu — it has its own checkmark
-        # logic below.
-        active_verbosity = verbosity_mod.level(cfg)
-        for label, item in self.verbosity_menu.items():
-            if label.startswith("Swarm"):
-                continue
-            level = label.split()[0]
-            item.state = 1 if level == active_verbosity else 0
-
-        # Swarm verbosity submenu — same checkmark logic but reads
-        # the swarm_verbosity config key (default brief).
-        from heard import profile as profile_mod
-
-        swarm_level = profile_mod._normalize(cfg.get("swarm_verbosity") or "brief")
-        for label, item in self.swarm_verbosity_menu.items():
-            level = label.split()[0]
-            item.state = 1 if level == swarm_level else 0
+        # Verbosity + swarm checkmark refresh used to live here; both
+        # submenus were pulled in the Mode-replaces-Verbosity cleanup.
+        # Settings → Voice has its own popup + refresh path.
         self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
         self._refresh_offline_voice_items()
 
@@ -829,17 +791,6 @@ class HeardApp(rumps.App):
 
         return cb
 
-    def _mk_verbosity_cb(self, level: str):
-        def cb(_sender):
-            config.set_value("verbosity", level)
-            try:
-                client.send({"cmd": "reload"})
-            except Exception:
-                pass
-            self.refresh(None)
-
-        return cb
-
     def _mk_mode_cb(self, mode: str):
         """Mode toggle (Co-pilot ↔ Companion). Writes `mode` to config
         and reloads the daemon so the next harness call reads the new
@@ -847,17 +798,6 @@ class HeardApp(rumps.App):
         the value persists for whenever the user flips the harness on."""
         def cb(_sender):
             config.set_value("mode", mode)
-            try:
-                client.send({"cmd": "reload"})
-            except Exception:
-                pass
-            self.refresh(None)
-
-        return cb
-
-    def _mk_swarm_verbosity_cb(self, level: str):
-        def cb(_sender):
-            config.set_value("swarm_verbosity", level)
             try:
                 client.send({"cmd": "reload"})
             except Exception:
