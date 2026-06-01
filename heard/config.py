@@ -174,6 +174,18 @@ DEFAULTS: dict[str, Any] = {
     # Anonymous request, no telemetry. Set False to disable entirely
     # (`heard config set update_check_enabled false`).
     "update_check_enabled": True,
+    # Phase 3 step 6 — opt-in toggle for the v2 harness path. Off by
+    # default; flip on to route every meaningful event through
+    # `harness.narrate()` (one Haiku call sees persona + Agent State +
+    # Working Memory + current event and produces narration directly,
+    # bypassing v1's verbosity/router/persona-rewrite chain). Also
+    # gates the Working Memory compressor — users on v1 don't pay
+    # Haiku tokens for the rolling prose summary they never read.
+    # Must be in DEFAULTS so `config.save()` actually persists it
+    # (save() only writes keys whose values differ from DEFAULTS, so
+    # adding the key here is required for `heard config set` to round
+    # trip through the YAML file).
+    "harness_enabled": False,
 }
 
 
