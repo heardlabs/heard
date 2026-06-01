@@ -1581,8 +1581,17 @@ def _ensure_edit_menu() -> None:
 
 # ===========================================================================
 # First-launch onboarding wizard — a small dedicated window that walks the
-# user through Welcome → Sign in → Connect an agent → Grant Accessibility,
-# then closes for good. Separate from the Settings window.
+# user through Welcome → Sign in → Connect an agent, then closes for good.
+# Separate from the Settings window.
+#
+# The Accessibility-grant step used to live in the wizard but was removed:
+# the macOS TCC stale-permission failure mode (where Heard is in the AX
+# list but the grant doesn't actually bind, because the entry was made for
+# a previous binary's code signature) stranded users on a "Not granted yet
+# — waiting…" screen. AX is now granted at the user's leisure from
+# Settings → Advanced; the accessibility module's TrustWatcher picks up
+# the grant whenever it lands and re-inits pynput. See `_on_ax_changed`
+# below — that's where the post-grant relaunch logic lives now.
 # ===========================================================================
 
 def _progress_dot(active: bool) -> NSView:
@@ -1792,7 +1801,6 @@ class _OnboardingController(NSObject):
         # Claude Code on (installs the hook). Once set, we never
         # re-install behind a user who toggled it off.
         self._agents_defaulted = False
-        self._ax_screen_entered_at = 0.0
         # (key, build_fn, enter_fn_or_None)
         # The AX-grant step used to live here but the stale-TCC failure
         # mode kept stranding users on a "Not granted yet — waiting…"
@@ -1974,12 +1982,6 @@ class _OnboardingController(NSObject):
             return
         was = self._ax_was_trusted
         self._ax_was_trusted = now
-        # Reflect on the AX screen if we're there.
-        if self._screens[self._screen_idx][0] == "ax":
-            try:
-                self._enter_ax()
-            except Exception:
-                pass
         if now and not was:
             # The user has effectively finished — relaunch fresh so
             # pynput inits cleanly.
@@ -2228,91 +2230,6 @@ class _OnboardingController(NSObject):
                 installed = False
             sw.setState_(1 if installed else 0)
 
-    # If the AX grant hasn't landed after this long, surface the
-    # "stale permission" hint — almost always the cause when Heard
-    # already shows enabled in the list (ad-hoc-signed builds: TCC
-    # binds the grant to the binary's cdhash, which changes every
-    # release, so the old grant no longer applies to the new binary).
-    # Stale-TCC hint timing. The "Heard is in the list but the toggle
-    # doesn't bind" case is by far the most common failure mode on a
-    # reinstall (TCC's entry is bound to the previous binary's
-    # designated requirement). Surfacing the recovery button after
-    # 2 s means the user isn't staring at "Not granted yet — waiting…"
-    # wondering if the app is broken.
-    _AX_STALE_HINT_AFTER_S = 2.0
-
-    def _screen_ax(self) -> NSView:
-        import time
-        v = NSView.alloc().init()
-        v.setTranslatesAutoresizingMaskIntoConstraints_(False)
-        title = _wizard_title("Grant Accessibility access")
-        body = _wizard_body(
-            "Heard needs Accessibility access for the global pause/continue "
-            "hotkeys. Click below, find Heard in the list, and turn it on. "
-            "macOS will restart Heard once you grant it."
-        )
-        open_btn = _button("Open System Settings", target=self, action="onWizOpenAX:", primary=True)
-        status = _label("", size=13, bold=True)
-        hint = _label("", size=12, dim=True)
-        _low_priority_text(hint, wrap=True)
-        hint.setHidden_(True)
-        fix_btn = _button("Heard already in the list? Fix the stale permission",
-                          target=self, action="onWizFixStaleAX:")
-        fix_btn.setHidden_(True)
-        stack = _vstack(
-            [title, body, _spacer(4), open_btn, _spacer(2), status,
-             _spacer(4), hint, fix_btn],
-            spacing=12,
-        )
-        v.addSubview_(stack)
-        NSLayoutConstraint.activateConstraints_([
-            stack.topAnchor().constraintEqualToAnchor_constant_(v.topAnchor(), 12),
-            stack.leadingAnchor().constraintEqualToAnchor_(v.leadingAnchor()),
-            stack.trailingAnchor().constraintEqualToAnchor_(v.trailingAnchor()),
-            stack.bottomAnchor().constraintLessThanOrEqualToAnchor_(v.bottomAnchor()),
-            body.widthAnchor().constraintLessThanOrEqualToAnchor_(v.widthAnchor()),
-            hint.widthAnchor().constraintLessThanOrEqualToAnchor_(v.widthAnchor()),
-        ])
-        self._ax_screen_entered_at = time.monotonic()
-        self._refs = {"ax_status": status, "ax_hint": hint, "ax_fix_btn": fix_btn}
-        return v
-
-    def _enter_ax(self) -> None:
-        import time
-        r = self._refs
-        st = r.get("ax_status")
-        if st is None:
-            return
-        try:
-            ok = accessibility.is_trusted()
-        except Exception:
-            ok = False
-        hint = r.get("ax_hint")
-        fix_btn = r.get("ax_fix_btn")
-        if ok:
-            st.setStringValue_("✓ Granted — Heard will restart to finish up.")
-            st.setTextColor_(_text_color_dim())
-            if hint is not None:
-                hint.setHidden_(True)
-            if fix_btn is not None:
-                fix_btn.setHidden_(True)
-            return
-        st.setStringValue_("● Not granted yet — waiting…")
-        st.setTextColor_(_text_color_dim())
-        waited = time.monotonic() - getattr(self, "_ax_screen_entered_at", time.monotonic())
-        if waited >= self._AX_STALE_HINT_AFTER_S:
-            if hint is not None:
-                hint.setStringValue_(
-                    "Already see Heard enabled in the list? That's a stale "
-                    "permission from a previous version — the toggle looks on "
-                    "but macOS isn't honoring it. Click below to clear it (or "
-                    "in the list: select Heard, hit the − button, then add it "
-                    "back and toggle on)."
-                )
-                hint.setHidden_(False)
-            if fix_btn is not None:
-                fix_btn.setHidden_(False)
-
     # --- screen actions -----------------------------------------------------
 
     def onWizSendCode_(self, _s) -> None:
@@ -2513,36 +2430,6 @@ class _OnboardingController(NSObject):
         except Exception as e:
             print(f"adapter {name} toggle failed: {e}", file=sys.stderr)
         self._enter_agents()
-
-    def onWizOpenAX_(self, _s) -> None:
-        import subprocess
-        subprocess.run(
-            ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"],
-            check=False,
-        )
-
-    def onWizFixStaleAX_(self, _s) -> None:
-        """Escape hatch for the stale-TCC-after-reinstall bug. The
-        accessibility module's ``reset_tcc`` drops the stale entry so
-        a re-grant binds to the *current* binary's code signature; we
-        then reopen the pane so the user can toggle it back on."""
-        import time
-        accessibility.reset_tcc()
-        # Restart the stale-hint clock — give the fresh grant a window.
-        self._ax_screen_entered_at = time.monotonic()
-        r = self._refs
-        st = r.get("ax_status")
-        if st is not None:
-            st.setStringValue_("Cleared. Add Heard back in the list and turn it on.")
-            st.setTextColor_(_text_color_dim())
-        hint = r.get("ax_hint")
-        if hint is not None:
-            hint.setHidden_(True)
-        fb = r.get("ax_fix_btn")
-        if fb is not None:
-            fb.setHidden_(True)
-        self.onWizOpenAX_(None)
-
 
 # Public API ----------------------------------------------------------------
 
