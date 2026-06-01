@@ -214,8 +214,8 @@ class HeardApp(rumps.App):
         # concept (v1 path doesn't have the customization point).
         self.mode_menu = rumps.MenuItem("Mode")
         mode_labels = (
-            ("copilot", "Co-pilot — screen-on, compressed"),
-            ("companion", "Companion — eyes-off, lean briefing"),
+            ("copilot", "Co-pilot — short hooks while you watch the screen"),
+            ("companion", "Companion — full briefings when you're hands-off (driving, walking, cooking)"),
         )
         for value, label in mode_labels:
             item = rumps.MenuItem(label, callback=self._mk_mode_cb(value))

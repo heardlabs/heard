@@ -1855,41 +1855,19 @@ class Daemon:
             _log("event_drop", kind=kind, tag=tag, reason="not_onboarded")
             return
 
-        # --- Fast-path gate (architecture-v2 step 6a) ---
-        # `prompt_intent` fires the moment the user submits a prompt to
-        # the agent. v1 path runs it through a Haiku rewrite for a 6-10
-        # word "looking into X" line — that's a 500ms+ round-trip
-        # before the user hears anything. The harness path can take
-        # even longer AND occasionally silences it entirely, which is
-        # the worst outcome (user types, hears nothing, wonders if
-        # Heard died). Skip BOTH paths for this event kind and play a
-        # short deterministic ack. ~300ms total (TTS only) so the user
-        # gets immediate audio confirmation that their input registered.
-        # Subsequent tool calls + the final response still go through
-        # the normal harness/v1 narration, so this is a quick ack, not
-        # a substitute for richer narration.
+        # Prompt-intent events used to play a hardcoded "On it." ack
+        # the moment the user submitted a prompt — filling the agent's
+        # first-token latency with audio. Removed 2026-06-01: K.
+        # flagged it as robotic and constant. Better path: stay silent
+        # until Claude has its FIRST substantive intermediate sentence
+        # (which is itself fast — usually 1-2s — and is genuinely
+        # useful copy like "Reading the auth handler next" rather
+        # than a pre-canned acknowledgment).
+        # The narrate_prompt_intent config flag is left in DEFAULTS
+        # as inert state; honoring it would resurrect the old behavior
+        # so we just always-drop the event now.
         if kind == "prompt_intent":
-            if not cfg.get("narrate_prompt_intent", True):
-                _log("event_drop", kind=kind, reason="narrate_prompt_intent_off")
-                return
-            _log("event_speak", kind=kind, tag=tag, persona=persona.name, chars=6, via="fastpath")
-            history_meta = {
-                "kind": kind,
-                "tag": tag,
-                "neutral": neutral,
-                "profile": cfg.get("verbosity", "normal"),
-                "repo_name": (self.router._sessions.get(session_id).repo_name  # noqa: SLF001
-                              if self.router._sessions.get(session_id) else "") or "",  # noqa: SLF001
-                "cwd": cwd or "",
-                "via": "fastpath",
-            }
-            self._start_speech(
-                "On it.",
-                cfg=cfg,
-                persona=persona,
-                session_id=session_id,
-                history_meta=history_meta,
-            )
+            _log("event_drop", kind=kind, reason="prompt_intent_retired")
             return
 
         # --- Fast-path gate for routine events (architecture step 6a
@@ -2032,15 +2010,6 @@ class Daemon:
                 session = self.sessions.get(session_id)
             if verbosity.classify_post(cfg, tag) != "speak":
                 _log("event_drop", kind=kind, tag=tag, reason="verbosity_post")
-                return
-        elif kind == "prompt_intent":
-            # "Thinking summary" — user just submitted a prompt; we
-            # speak a 6-10 word "looking into X" while the agent
-            # starts. No verbosity gating (one event per submission,
-            # not in the burst-of-tools volume profile); the user can
-            # disable the whole feature via narrate_prompt_intent.
-            if not cfg.get("narrate_prompt_intent", True):
-                _log("event_drop", kind=kind, reason="narrate_prompt_intent_off")
                 return
         elif kind in ("intermediate", "final"):
             if verbosity.classify_prose(cfg) != "speak":
