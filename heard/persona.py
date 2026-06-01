@@ -35,7 +35,16 @@ BUNDLED_DIR = Path(__file__).parent / "personas"
 # or refusal behaviour in subtle ways.
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 HAIKU_TIMEOUT_S = 2.5
-HAIKU_MAX_TOKENS = 160
+# Output cap for the persona rewrite Haiku call. Previously 160 — that's
+# ~120 words / ~600 chars, which the model exceeded fairly often when
+# the source had real content to compress. The result was a mid-sentence
+# cutoff: the model's output got chopped at the cap and the truncated
+# half went straight to TTS, so users heard "voices the first summary
+# paragraph then stops." Bumping to 320 gives ~240 words / ~1200 chars
+# of headroom. Brevity is still enforced by the persona system prompt
+# ("one or two short sentences"); the cap is the safety net, not the
+# budget. The harness path (heard/harness.py) has its own larger cap.
+HAIKU_MAX_TOKENS = 320
 
 # Epoch ms of the last managed-rewrite 429 (shared daily-char cap hit
 # via /v1/persona-rewrite), or None. While this is from the current UTC
