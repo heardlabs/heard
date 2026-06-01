@@ -420,6 +420,29 @@ def feedback(text: str, source: str = "cli") -> None:
         pass
 
 
+def ask(question: str, cwd: str | None = None, speak: bool = False, timeout_s: float = 20.0) -> dict:
+    """Layer 4 Q&A — ask a question about recent work in a project.
+
+    Returns a dict {"ok": bool, "answer": str, "error": str?}. Times
+    out (returns ok=False with error="timeout") if the daemon
+    doesn't answer in `timeout_s`. The daemon's Haiku call is
+    bounded by its own timeout too — this is the outer safety net.
+
+    `speak=True` queues the answer through the standard speech path
+    so it plays in the user's chosen voice (same as narration).
+    """
+    if not is_daemon_alive():
+        return {"ok": False, "answer": "", "error": "daemon_not_alive"}
+    payload = {"cmd": "ask", "question": question or "", "speak": bool(speak)}
+    if cwd:
+        payload["cwd"] = cwd
+    try:
+        resp = request(payload, timeout_s=timeout_s)
+    except Exception as e:
+        return {"ok": False, "answer": "", "error": f"send_failed: {e}"}
+    return resp or {"ok": False, "answer": "", "error": "no_response"}
+
+
 def report_defect(category: str, note: str = "", source: str = "cli") -> None:
     """Send a defect report to the daemon. Routed to defect_reports.jsonl
     with tech_context (backend, voice, persona, mic state, etc.) auto-

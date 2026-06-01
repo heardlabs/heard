@@ -660,6 +660,33 @@ def stop() -> None:
             pass
 
 
+@app.command(name="ask", hidden=True)
+def ask_cmd(
+    question: str = typer.Argument(..., help="Question about recent agent work in this project."),
+    speak: bool = typer.Option(False, "--speak", "-s", help="Also play the answer aloud through Heard."),
+) -> None:
+    """[Internal] Layer 4 Q&A — answer a question about recent
+    work in this project using the per-project memory log. Hidden
+    from `heard --help` since the user-facing surface for Q&A will
+    eventually be a menu-bar input + voice-in (Phase 4 step 12).
+    This command exists for Claude Code to query on the user's
+    behalf and for power-user terminal queries.
+
+    Resolves the project by passing the current cwd to the daemon
+    (`heard ask`'s output depends on which project you're standing in).
+    """
+    import os as _os  # noqa: PLC0415
+
+    from heard import client as _client  # noqa: PLC0415
+    cwd = _os.getcwd()
+    resp = _client.ask(question, cwd=cwd, speak=speak)
+    if not resp.get("ok"):
+        err = resp.get("error") or "no_answer"
+        typer.echo(f"(no answer — {err})", err=True)
+        raise typer.Exit(1)
+    typer.echo(resp.get("answer") or "")
+
+
 @app.command(name="feedback", hidden=True)
 def feedback_cmd(
     text: str = typer.Argument(..., help="Preference feedback about the most recent utterance."),

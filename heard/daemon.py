@@ -34,6 +34,7 @@ from heard import (
     history,
     hotkey,
     notify,
+    project_memory,
     updater,
     verbosity,
 )
@@ -1810,6 +1811,24 @@ class Daemon:
         except Exception:
             pass
 
+        # Layer 4 — Project Memory. Persistent per-project log of
+        # every event. Read by `heard ask` (Q&A) and future surfaces.
+        # Best-effort: silent on write failure, no LLM in hot path.
+        # Skip when no cwd context (event came from outside a
+        # project — there's nothing to record against). `spoken` /
+        # `via` are filled in later if/when the daemon decides to
+        # narrate; for now we capture the raw arrival so even dropped
+        # events show up in the log (so Q&A can answer "what was the
+        # agent doing in that quiet stretch?").
+        try:
+            project_memory.record(
+                req,
+                cwd=cwd,
+                agent_summary=self.working_memory.snapshot(),
+            )
+        except Exception:
+            pass
+
         cfg = config.load(cwd=cwd)
         persona = self._persona_for(cfg)
         session = self.sessions.touch(session_id, cwd=cwd)
@@ -1834,6 +1853,43 @@ class Daemon:
         # on (post-onboard reload), the harness has the recent context.
         if not cfg.get("onboarded"):
             _log("event_drop", kind=kind, tag=tag, reason="not_onboarded")
+            return
+
+        # --- Fast-path gate (architecture-v2 step 6a) ---
+        # `prompt_intent` fires the moment the user submits a prompt to
+        # the agent. v1 path runs it through a Haiku rewrite for a 6-10
+        # word "looking into X" line — that's a 500ms+ round-trip
+        # before the user hears anything. The harness path can take
+        # even longer AND occasionally silences it entirely, which is
+        # the worst outcome (user types, hears nothing, wonders if
+        # Heard died). Skip BOTH paths for this event kind and play a
+        # short deterministic ack. ~300ms total (TTS only) so the user
+        # gets immediate audio confirmation that their input registered.
+        # Subsequent tool calls + the final response still go through
+        # the normal harness/v1 narration, so this is a quick ack, not
+        # a substitute for richer narration.
+        if kind == "prompt_intent":
+            if not cfg.get("narrate_prompt_intent", True):
+                _log("event_drop", kind=kind, reason="narrate_prompt_intent_off")
+                return
+            _log("event_speak", kind=kind, tag=tag, persona=persona.name, chars=6, via="fastpath")
+            history_meta = {
+                "kind": kind,
+                "tag": tag,
+                "neutral": neutral,
+                "profile": cfg.get("verbosity", "normal"),
+                "repo_name": (self.router._sessions.get(session_id).repo_name  # noqa: SLF001
+                              if self.router._sessions.get(session_id) else "") or "",  # noqa: SLF001
+                "cwd": cwd or "",
+                "via": "fastpath",
+            }
+            self._start_speech(
+                "On it.",
+                cfg=cfg,
+                persona=persona,
+                session_id=session_id,
+                history_meta=history_meta,
+            )
             return
 
         # --- Layer 5 — Harness NARRATE prototype (Phase 3 step 6). ---
@@ -2181,6 +2237,55 @@ class Daemon:
         if cmd == "event":
             self._handle_event(req)
             return None
+        if cmd == "ask":
+            # Layer 4 Q&A — answer a question about recent agent work
+            # in a project, using the per-project memory log.
+            #
+            # Request: {"cmd": "ask", "question": "...", "cwd": "...",
+            #           "speak": false}
+            # Response: {"answer": "...", "ok": true/false}
+            #
+            # `cwd` lets the CLI pass its current directory so the
+            # daemon answers about the right project (the daemon
+            # itself runs in the menu-bar process's cwd, which is
+            # never what the user means).
+            question = (req.get("question") or "").strip()
+            cwd = req.get("cwd")
+            speak_aloud = bool(req.get("speak", False))
+            if not question:
+                return json.dumps({"ok": False, "answer": "", "error": "missing_question"}).encode("utf-8")
+            cfg = config.load(cwd=cwd)
+            persona = self._persona_for(cfg)
+            try:
+                answer = project_memory.answer(
+                    question, cwd=cwd, persona=persona,
+                )
+            except Exception:
+                answer = None
+            if not answer:
+                return json.dumps({"ok": False, "answer": "", "error": "no_answer"}).encode("utf-8")
+            if speak_aloud:
+                # Queue through the standard speech path so the
+                # answer plays in the user's chosen voice, with the
+                # same prefs / queue semantics as narration.
+                try:
+                    self._start_speech(
+                        answer,
+                        cfg=cfg,
+                        persona=persona,
+                        session_id="__ask__",
+                        coexists=True,
+                        history_meta={
+                            "kind": "ask_answer",
+                            "tag": "ask_answer",
+                            "neutral": question,
+                            "profile": cfg.get("verbosity", "normal"),
+                            "via": "ask",
+                        },
+                    )
+                except Exception:
+                    pass
+            return json.dumps({"ok": True, "answer": answer}).encode("utf-8")
 
         # default: plain speak (legacy {"text": "..."} path)
         self._start_speech(req.get("text") or "")
