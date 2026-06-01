@@ -1892,6 +1892,71 @@ class Daemon:
             )
             return
 
+        # --- Fast-path gate for routine events (architecture step 6a
+        # full). Only relevant when the harness is engaged — without
+        # the harness, the v1 path already handles the verbosity
+        # gate + persona-rewrite chain consistently. When harness IS
+        # on, routine tool_pre / tool_post / short intermediate text
+        # bypass both the harness LLM and the persona rewrite:
+        # templates already shaped neutral; speech queue plays it
+        # directly. The harness focuses on failures, finals,
+        # long-running finishes, long prose, and cross-agent
+        # moments. ~300ms total for the routine path (TTS only),
+        # vs 500ms-1s+ when an LLM is in the loop.
+        if harness.is_enabled(cfg):
+            active_count = len(self.router.list_active())
+            if harness.should_use_fast_path(req, multi_agent_active=active_count > 1):
+                # Verbosity profile still applies: quiet mode still
+                # mutes trivia, brief mode still digests bursts, etc.
+                if kind == "tool_pre":
+                    density = self.sessions.tool_density(session_id)
+                    self.sessions.record_tool_event(session_id)
+                    v = verbosity.classify_pre(cfg, tag, density)
+                    if v == "drop":
+                        _log("event_drop", kind=kind, tag=tag, reason="fastpath_verbosity_drop")
+                        return
+                    if v == "digest":
+                        self.router.add_to_digest(session_id, kind, tag, neutral, ctx)
+                        _log("event_deferred", kind=kind, tag=tag, reason="fastpath_verbosity_digest")
+                        return
+                elif kind == "tool_post":
+                    if verbosity.classify_post(cfg, tag) != "speak":
+                        _log("event_drop", kind=kind, tag=tag, reason="fastpath_verbosity_drop")
+                        return
+                elif kind == "intermediate":
+                    if verbosity.classify_prose(cfg) != "speak":
+                        _log("event_drop", kind=kind, tag=tag, reason="fastpath_verbosity_drop")
+                        return
+                if not neutral:
+                    _log("event_drop", kind=kind, tag=tag, reason="fastpath_empty_neutral")
+                    return
+                info = self.router._sessions.get(session_id)  # noqa: SLF001
+                history_meta = {
+                    "kind": kind,
+                    "tag": tag,
+                    "neutral": neutral,
+                    "profile": cfg.get("verbosity", "normal"),
+                    "repo_name": getattr(info, "repo_name", "") or "",
+                    "cwd": cwd or "",
+                    "via": "fastpath",
+                }
+                _log(
+                    "event_speak",
+                    kind=kind,
+                    tag=tag,
+                    persona=persona.name,
+                    chars=len(neutral),
+                    via="fastpath",
+                )
+                self._start_speech(
+                    neutral,
+                    cfg=cfg,
+                    persona=persona,
+                    session_id=session_id,
+                    history_meta=history_meta,
+                )
+                return
+
         # --- Layer 5 — Harness NARRATE prototype (Phase 3 step 6). ---
         # Driven by cfg["harness_enabled"]; off by default → zero impact
         # on the v1 path. When on, the harness gets first shot at every

@@ -262,6 +262,82 @@ def test_max_agents_in_prompt_cap_applied():
 # --- integration smoke ---------------------------------------------------
 
 
+# --- fast-path classifier (step 6a) -----------------------------------------
+
+
+def test_fast_path_routine_tool_pre_is_fast():
+    """Routine bash tool_pre (not in WAKE_TAGS) → fast-path."""
+    assert harness.should_use_fast_path(_ev(kind="tool_pre", tag="tool_pre_bash")) is True
+
+
+def test_fast_path_routine_tool_post_is_fast():
+    assert harness.should_use_fast_path(_ev(kind="tool_post", tag="tool_post_bash")) is True
+
+
+def test_fast_path_short_intermediate_is_fast():
+    assert harness.should_use_fast_path(
+        _ev(kind="intermediate", neutral="ok done")
+    ) is True
+
+
+def test_fast_path_long_intermediate_goes_to_harness():
+    """Long intermediate prose carries decisions / multi-part
+    reasoning that warrants the harness's judgment."""
+    long_text = "x" * (harness._LONG_PROSE_CHARS + 1)
+    assert harness.should_use_fast_path(
+        _ev(kind="intermediate", neutral=long_text)
+    ) is False
+
+
+def test_fast_path_final_kind_always_goes_to_harness():
+    """The agent's main reply to the user is always
+    harness territory — persona-shaped tone matters most here."""
+    assert harness.should_use_fast_path(_ev(kind="final", neutral="done")) is False
+
+
+def test_fast_path_long_running_tool_tags_go_to_harness():
+    for tag in ("tool_bash_test", "tool_bash_build", "tool_bash_install",
+                "tool_bash_push", "tool_bash_sync", "tool_agent", "tool_question"):
+        assert harness.should_use_fast_path(_ev(kind="tool_pre", tag=tag)) is False, (
+            f"{tag} should wake harness"
+        )
+
+
+def test_fast_path_failure_tags_go_to_harness():
+    for tag in ("tool_post_failure", "tool_post_command_failed"):
+        assert harness.should_use_fast_path(_ev(kind="tool_post", tag=tag)) is False
+
+
+def test_fast_path_substring_failure_in_tag_also_wakes_harness():
+    """Defensive: a custom hook might use a tag like
+    `tool_post_pytest_failure` — the substring check catches it
+    even if it's not in the explicit WAKE_TAGS set."""
+    assert harness.should_use_fast_path(
+        _ev(kind="tool_post", tag="tool_post_pytest_failure")
+    ) is False
+    assert harness.should_use_fast_path(
+        _ev(kind="tool_post", tag="tool_post_install_failed")
+    ) is False
+
+
+def test_fast_path_multi_agent_disables_fast_path():
+    """When 2+ agents are active, every event is potentially salient
+    for cross-agent reasoning. Harness sees all."""
+    routine = _ev(kind="tool_pre", tag="tool_pre_bash")
+    assert harness.should_use_fast_path(routine, multi_agent_active=True) is False
+    # And the corresponding single-agent case stays fast.
+    assert harness.should_use_fast_path(routine, multi_agent_active=False) is True
+
+
+def test_fast_path_unknown_kind_is_conservative():
+    """An unknown event kind (custom hook, future event type) →
+    sent to harness rather than silently routed to a template
+    that doesn't know how to narrate it."""
+    assert harness.should_use_fast_path(
+        _ev(kind="custom_hook_event_v3", neutral="?")
+    ) is False
+
+
 def test_call_with_prompt_invoked_with_assembled_prompts():
     """End-to-end: narrate() builds prompts and passes them to
     call_with_prompt with the documented log-path label."""

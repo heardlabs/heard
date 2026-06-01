@@ -89,6 +89,104 @@ def is_enabled(cfg: dict[str, Any]) -> bool:
     return bool(cfg.get("harness_enabled", False))
 
 
+# Architecture step 6a — fast-path gate.
+#
+# The harness's job is to talk about MEANINGFUL events: failures,
+# long-running finishes, decisions, questions to the user, anything
+# where cross-event context or persona-shaped tone genuinely earns
+# the latency + token cost of a Haiku call. The other 70-80% of what
+# the daemon sees is routine tool churn — a quick `ls`, a successful
+# `cat`, an Edit that wrote a few lines. Those don't need richer
+# narration than what `templates.py` already produced when it built
+# the `neutral` text. Sending them through the harness adds:
+#
+#   * 500ms-1s of latency per event (the user notices a beat between
+#     "agent did a thing" and "Heard says something about it")
+#   * Real per-event Haiku token cost (every routine `cat` reads
+#     the prompt + writes a sentence — adds up fast on a heavy day)
+#   * A risk of the harness over-silencing trivia (which it already
+#     demonstrated during K.'s first session — that was the
+#     `default-speak` prompt rebalance)
+#
+# So: classify each event deterministically here. If it's
+# meaningful, let the harness see it. If it's routine, the daemon
+# bypasses BOTH the harness AND the v1 persona rewrite — neutral
+# text goes straight to the speech queue. Templates already shaped
+# it; piling another LLM on top isn't earning anything.
+
+# Tags that always wake the harness — long-running tool starts /
+# finishes (the user wants their voice talking about the test run,
+# not a template), questions to the user, the agent-as-tool case.
+# Mirrors verbosity.py's _ALWAYS_NARRATE_PRE so the classification
+# stays consistent with the rest of the codebase.
+_HARNESS_WAKE_TAGS: frozenset[str] = frozenset({
+    "tool_bash_test", "tool_bash_build", "tool_bash_install",
+    "tool_bash_push", "tool_bash_sync",
+    "tool_agent", "tool_question",
+    "tool_post_failure", "tool_post_command_failed",
+})
+
+# Kinds that always wake the harness — `final` is the agent's main
+# communication with the user; that's exactly where persona-shaped
+# narration matters most.
+_HARNESS_WAKE_KINDS: frozenset[str] = frozenset({"final"})
+
+# Threshold for "long intermediate prose." Below this we treat as
+# routine progress (template); above this we let the harness
+# decide — long intermediate text usually carries a decision or
+# multi-part reasoning the harness should summarize.
+_LONG_PROSE_CHARS: int = 240
+
+
+def should_use_fast_path(
+    event: dict[str, Any],
+    *,
+    multi_agent_active: bool = False,
+) -> bool:
+    """Deterministic classifier — returns True when the daemon
+    should bypass the harness and let templates narrate this event
+    directly.
+
+    The fast-path is appropriate when:
+      * Single-agent context (with 2+ agents the harness needs to
+        weigh cross-agent salience on every event)
+      * Tag is not in _HARNESS_WAKE_TAGS (no failures, no
+        long-running tools, no agent/question events)
+      * Kind is not in _HARNESS_WAKE_KINDS (not a final)
+      * Intermediate prose is short (< _LONG_PROSE_CHARS)
+      * No "failure"/"failed" substring leaked into a custom tag
+
+    Returns False (= use the harness) on anything that doesn't
+    cleanly fit one of the above. Conservative default: when in
+    doubt, let the harness decide.
+    """
+    if multi_agent_active:
+        return False
+
+    kind = event.get("kind") or ""
+    tag = event.get("tag") or ""
+
+    if tag in _HARNESS_WAKE_TAGS:
+        return False
+    if "failure" in tag or "failed" in tag:
+        return False
+    if kind in _HARNESS_WAKE_KINDS:
+        return False
+
+    if kind == "intermediate":
+        neutral = event.get("neutral") or ""
+        if len(neutral) >= _LONG_PROSE_CHARS:
+            return False
+
+    if kind in ("tool_pre", "tool_post", "intermediate"):
+        return True
+
+    # Unknown kind (custom hook source, future event types) →
+    # conservative: send to harness rather than skipping richer
+    # narration silently.
+    return False
+
+
 def narrate(
     event: dict[str, Any],
     *,
