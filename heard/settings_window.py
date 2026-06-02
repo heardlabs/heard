@@ -1980,12 +1980,12 @@ class _OnboardingController(NSObject):
         idx, last = self._screen_idx, len(self._screens) - 1
         self._back_btn.setHidden_(idx == 0)
         self._next_btn.setTitle_("Finish" if idx == last else "Continue")
-        # Sign-in step is mandatory (anon-trial retired 2026-06-02 —
-        # see daemon._maybe_start_anon_trial). Hide "Skip setup" on
-        # the signin screen and disable Continue until the user is
-        # actually signed in with a verified (non-anon) account.
-        # Old anon-trial holdouts whose token is anon won't be able
-        # to proceed either — they need to sign in to upgrade.
+        # Skip removed entirely 2026-06-02 — the wizard is now fully
+        # mandatory. Sign-in is required (anon-trial is retired, see
+        # daemon._maybe_start_anon_trial) and the previous Welcome →
+        # Skip path left users in a half-state: onboarded=true with
+        # no token, so the daemon "narrated" into NullTTS. Cleaner UX
+        # is to walk every user through the three short screens.
         on_signin = (self._screens[idx][0] == "signin")
         if on_signin:
             cfg_now = config.load()
@@ -1993,10 +1993,9 @@ class _OnboardingController(NSObject):
             is_anon = bool(cfg_now.get("heard_is_anonymous"))
             signed_in = bool(tok) and not is_anon
             self._next_btn.setEnabled_(signed_in)
-            self._skip_btn.setHidden_(True)
         else:
             self._next_btn.setEnabled_(True)
-            self._skip_btn.setHidden_(idx == last)
+        self._skip_btn.setHidden_(True)
         for i, d in enumerate(self._dots):
             active = (i == idx)
             color = _text_color() if active else NSColor.colorWithSRGBRed_green_blue_alpha_(0, 0, 0, 0.18)
