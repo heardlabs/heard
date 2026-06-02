@@ -379,10 +379,17 @@ class WorkingMemoryManager:
         self._compress_thread.start()
 
     def stop(self) -> None:
+        """Signal the compressor thread to exit and wait for it to
+        drain. Join is bounded but generous (15s) so any in-flight
+        compression (network LLM call + state swap) can finish before
+        we return. Earlier 2s join could race with a still-running
+        compress call, leaving a leftover thread that then hit
+        subsequent tests' mocks — see the 2026-06-02 CI flake on
+        test_enabled_provider_exception_defaults_to_disabled."""
         self._stop_event.set()
         t = self._compress_thread
         if t is not None:
-            t.join(timeout=2.0)
+            t.join(timeout=15.0)
         self._compress_thread = None
 
     # --- test helpers ---------------------------------------------------
