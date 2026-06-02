@@ -1082,6 +1082,14 @@ class HeardApp(rumps.App):
             self.usage_item.set_callback(None)
             return
         plan = (usage.get("plan") or "").strip()
+        # Maintainer override — founder + comp accounts have an
+        # effectively-infinite cap (MAINTAINER_CAP in types.ts). Showing
+        # "130 / 1.0T this month" is absurd; show "Founder · unlimited"
+        # so the menu surface stays honest about the relationship.
+        if usage.get("is_maintainer"):
+            self.usage_item.title = "Founder · unlimited"
+            self.usage_item.set_callback(None)
+            return
         if plan == "expired":
             self.usage_item.title = ""
             self.usage_item.set_callback(None)
