@@ -169,6 +169,7 @@ def test_muted_hook_advances_offset_to_eof(tmp_path, monkeypatch):
     cleanly from "right now" instead of from pause-time."""
     import io
     import json as _json
+
     from heard import client, hook, spoken
 
     transcript = tmp_path / "session.jsonl"

@@ -174,18 +174,21 @@ DEFAULTS: dict[str, Any] = {
     # Anonymous request, no telemetry. Set False to disable entirely
     # (`heard config set update_check_enabled false`).
     "update_check_enabled": True,
-    # Phase 3 step 6 — opt-in toggle for the v2 harness path. Off by
-    # default; flip on to route every meaningful event through
-    # `harness.narrate()` (one Haiku call sees persona + Agent State +
-    # Working Memory + current event and produces narration directly,
-    # bypassing v1's verbosity/router/persona-rewrite chain). Also
-    # gates the Working Memory compressor — users on v1 don't pay
-    # Haiku tokens for the rolling prose summary they never read.
-    # Must be in DEFAULTS so `config.save()` actually persists it
-    # (save() only writes keys whose values differ from DEFAULTS, so
-    # adding the key here is required for `heard config set` to round
-    # trip through the YAML file).
-    "harness_enabled": False,
+    # v2 harness path. Flipped ON by default at v1.0.0 (2026-06-02) —
+    # the cross-event-judgment narration (persona + Agent State +
+    # Working Memory + current event into one Haiku call) is now the
+    # primary pipeline. The v1 verbosity/router/persona-rewrite chain
+    # stays in place as the safety-net fallback for any harness
+    # failure (None return from harness.narrate → daemon falls through
+    # to v1 — see daemon._handle_event), so an LLM hiccup never goes
+    # audibly silent.
+    # Gates the Working Memory compressor too: with the harness on,
+    # the WM rolling-summary Haiku call fires; with it off, no WM
+    # work is done.
+    # Must stay in DEFAULTS so `config.save()` persists explicit
+    # overrides (save() only writes keys whose values differ from
+    # DEFAULTS — so users who set this to False keep their False).
+    "harness_enabled": True,
     # Phase 3 add-on — listening mode for the harness path. Two values:
     #   "copilot"   — default. Screen-on, daily coding. Compressed
     #                 hooks and signposts; details live in the diff
