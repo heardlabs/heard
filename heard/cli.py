@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import UTC, datetime
+from typing import Any
 
 import typer
 
@@ -16,7 +18,13 @@ from heard.tts.elevenlabs import _VOICE_ALIASES, ElevenLabsTTS
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Heard — speak your agent's replies.")
 config_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Manage configuration.")
 service_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Manage the LaunchAgent.")
+prefs_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="Inspect + tune narration preferences (Phase 4 substrate).",
+)
 app.add_typer(config_app, name="config", hidden=True)
+app.add_typer(prefs_app, name="preferences", hidden=True)
 app.add_typer(service_app, name="service")
 
 
@@ -875,6 +883,205 @@ def config_set(key: str, value: str) -> None:
 def config_path() -> None:
     """Print the config file path."""
     typer.echo(config.CONFIG_PATH)
+
+
+# ----- preferences (Phase 4 F5) ----------------------------------------
+#
+# Per architecture-v2 + the ambient-utility product instinct, these
+# stay hidden from `heard --help`. The intended invocation path is via
+# Claude Code ("hey, set my register_formality to casual") which can
+# run them on K.'s behalf; the menu-bar UX is the user-facing surface.
+
+
+def _format_pref_value(value: Any) -> str:
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        return ", ".join(f"{k}={v}" for k, v in sorted(value.items()))
+    return str(value)
+
+
+@prefs_app.command("list")
+def preferences_list(
+    cwd: str | None = typer.Option(
+        None,
+        "--cwd",
+        help=(
+            "Resolve project-scope prefs from this working directory "
+            "(walks up looking for .heard.yaml). Omit to use the "
+            "shell's CWD."
+        ),
+    ),
+) -> None:
+    """Show every preference slot with its active value + source.
+
+    Source legend:
+      project — set in .heard.yaml's `preferences:` block (nearest cwd)
+      user    — set in $CONFIG_DIR/preferences.yaml
+      default — schema baseline (preferences_schema.yaml)
+    """
+    from heard import preferences as prefs_mod
+
+    where = cwd if cwd is not None else os.getcwd()
+    rows = prefs_mod.list_active(cwd=where)
+    typer.echo(f"schema_version: {prefs_mod.schema_version()}")
+    typer.echo("")
+    width = max(len(r.slot) for r in rows)
+    for r in rows:
+        typer.echo(
+            f"  {r.slot.ljust(width)}  {_format_pref_value(r.value):24}  ({r.source})"
+        )
+
+
+@prefs_app.command("get")
+def preferences_get(slot: str) -> None:
+    """Print the active value for one slot (with source)."""
+    from heard import preferences as prefs_mod
+
+    for r in prefs_mod.list_active(cwd=os.getcwd()):
+        if r.slot == slot:
+            typer.echo(f"{r.value} ({r.source})")
+            return
+    typer.echo(f"unknown slot: {slot}", err=True)
+    raise typer.Exit(1)
+
+
+@prefs_app.command("set")
+def preferences_set(slot: str, value: str) -> None:
+    """Set a user-scope preference. Reloads the daemon so the change
+    takes effect on the next event.
+
+    VALUE is parsed best-effort:
+      * int slots → integer
+      * mapping slots → not supported here; edit
+        $CONFIG_DIR/preferences.yaml directly for now
+      * enum slots → string value (must be in the allowed set)
+    """
+    from heard import preferences as prefs_mod
+
+    schema = prefs_mod.load_schema()
+    slots = schema.get("slots", {})
+    if slot not in slots:
+        typer.echo(f"unknown slot: {slot}", err=True)
+        raise typer.Exit(1)
+
+    spec = slots[slot]
+    stype = spec.get("type")
+    parsed: Any
+    if stype == "int":
+        try:
+            parsed = int(value)
+        except ValueError:
+            typer.echo(f"{slot} expects an integer, got {value!r}", err=True)
+            raise typer.Exit(1) from None
+    elif stype == "mapping":
+        typer.echo(
+            f"{slot} is a mapping; edit {prefs_mod._user_prefs_path()} directly.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    else:
+        parsed = value
+
+    try:
+        prefs_mod.set_value(slot, parsed)
+    except prefs_mod.ValidationError as e:
+        typer.echo(f"invalid: {e}", err=True)
+        raise typer.Exit(1) from e
+
+    prefs_mod.append_history("set", slot=slot, value=parsed, source="explicit")
+    typer.echo(f"set {slot} = {parsed}")
+
+    # Best-effort daemon reload so the change takes effect on the next
+    # event. The harness reads prefs on every call; a reload nudges any
+    # stale in-process state (we don't cache prefs in the daemon yet,
+    # but defensive).
+    try:
+        client.send({"cmd": "reload"})
+    except Exception:
+        pass
+
+
+@prefs_app.command("remove")
+def preferences_remove(slot: str) -> None:
+    """Remove a user-scope preference (slot falls back to schema
+    default). No-op if the slot was already at default."""
+    from heard import preferences as prefs_mod
+
+    try:
+        changed = prefs_mod.remove_value(slot)
+    except prefs_mod.ValidationError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    if changed:
+        prefs_mod.append_history("remove", slot=slot, source="explicit")
+        typer.echo(f"removed {slot}")
+        try:
+            client.send({"cmd": "reload"})
+        except Exception:
+            pass
+    else:
+        typer.echo(f"{slot} was already at default")
+
+
+@prefs_app.command("reset")
+def preferences_reset(
+    confirm: bool = typer.Option(
+        False, "--yes", help="Skip the confirmation prompt.",
+    ),
+) -> None:
+    """Reset every user-scope preference to the schema defaults."""
+    from heard import preferences as prefs_mod
+
+    if not confirm:
+        n = len(prefs_mod.load_user_prefs())
+        if n == 0:
+            typer.echo("Nothing to reset — no user-scope prefs set.")
+            return
+        confirm = typer.confirm(f"Wipe {n} user-scope preference(s)?")
+        if not confirm:
+            typer.echo("Cancelled.")
+            return
+
+    n = prefs_mod.reset_all()
+    prefs_mod.append_history("reset", source="explicit")
+    typer.echo(f"reset {n} preference(s)")
+    try:
+        client.send({"cmd": "reload"})
+    except Exception:
+        pass
+
+
+@prefs_app.command("history")
+def preferences_history(
+    limit: int = typer.Option(50, "--limit", help="Most-recent N entries."),
+) -> None:
+    """Print recent preference changes (set / remove / reset)."""
+    from heard import preferences as prefs_mod
+
+    entries = prefs_mod.read_history(limit=limit)
+    if not entries:
+        typer.echo("(no preference history yet)")
+        return
+    for e in entries:
+        ts = e.get("ts", "?")
+        action = e.get("action", "?")
+        slot = e.get("slot") or ""
+        value = e.get("value")
+        source = e.get("source", "?")
+        line = f"{ts}  {action:7}  {slot:32}"
+        if value is not None:
+            line += f"  -> {value}"
+        line += f"  [{source}]"
+        typer.echo(line)
+
+
+@prefs_app.command("path")
+def preferences_path() -> None:
+    """Print the user-scope preferences file path."""
+    from heard import preferences as prefs_mod
+
+    typer.echo(prefs_mod._user_prefs_path())
 
 
 @service_app.command("install")

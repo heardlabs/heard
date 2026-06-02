@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from heard import persona as persona_mod
+from heard import preferences as prefs_mod
 from heard.agent_state import AgentStateRegistry
 
 # Output budget for the harness call. Same shape as
@@ -114,7 +115,12 @@ def warm_cache(
     if not is_enabled(cfg):
         return
     mode = (cfg.get("mode") or "copilot").strip().lower()
-    system_text = _build_system_text(persona, prefs_stub="", mode=mode)
+    # Warmup uses defaults-only prefs (no project context at daemon
+    # boot). When every slot matches its schema default the prompt
+    # text is empty, so the system bytes match the most common
+    # per-event system bytes — meaning the warmed cache hits.
+    prefs_text = _resolve_prefs_text(cwd=None)
+    system_text = _build_system_text(persona, prefs_stub=prefs_text, mode=mode)
     try:
         persona_mod.call_with_prompt(
             system_text,
@@ -189,6 +195,25 @@ _HARNESS_WAKE_KINDS: frozenset[str] = frozenset({"final"})
 # decide — long intermediate text usually carries a decision or
 # multi-part reasoning the harness should summarize.
 _LONG_PROSE_CHARS: int = 240
+
+
+def _resolve_prefs_text(*, cwd: str | None) -> str:
+    """Read the resolved preferences for this event's cwd and serialise
+    them for inclusion in the harness system block.
+
+    Defensive — preferences I/O failure (broken YAML, missing schema,
+    permissions error) must NEVER block narration. On any unexpected
+    error, returns "" (empty) so the harness falls back to schema
+    defaults baked into the instruction block.
+
+    Empty return is byte-identical to the pre-F5 prefs_stub="" path,
+    so cache prefixes match across the v1.0.1 → v1.0.2 transition for
+    users who haven't set any prefs."""
+    try:
+        resolved = prefs_mod.resolve(cwd=cwd)
+        return prefs_mod.to_prompt_text(resolved)
+    except Exception:
+        return ""
 
 
 def is_critical_template_event(event: dict[str, Any]) -> bool:
@@ -285,6 +310,7 @@ def narrate(
     persona: persona_mod.Persona,
     agent_states: AgentStateRegistry,
     working_memory: str = "",
+    cwd: str | None = None,
 ) -> HarnessDecision | None:
     """Layer 5 NARRATE call. Returns:
 
@@ -311,12 +337,17 @@ def narrate(
         return None
 
     # Build the prompt. System block stable per session (persona +
-    # shared rules + mode addendum + preferences-stub); user message
-    # dynamic per call. Mode read fresh so a menu-bar toggle takes
-    # effect on the next event without a daemon restart (config.load
-    # is the source of truth; the daemon already passes the live cfg).
+    # shared rules + mode addendum + resolved preferences); user
+    # message dynamic per call. Mode read fresh so a menu-bar toggle
+    # takes effect on the next event without a daemon restart
+    # (config.load is the source of truth; the daemon already passes
+    # the live cfg). Preferences resolved from the OVERLAY STACK
+    # (project > user > schema default) on the cwd of the event —
+    # so project-local prefs in .heard.yaml shape narration for that
+    # repo only.
     mode = (cfg.get("mode") or "copilot").strip().lower()
-    system_text = _build_system_text(persona, prefs_stub="", mode=mode)
+    prefs_text = _resolve_prefs_text(cwd=cwd)
+    system_text = _build_system_text(persona, prefs_stub=prefs_text, mode=mode)
     user_msg = _build_user_message(
         event=event,
         agent_states=agent_states,

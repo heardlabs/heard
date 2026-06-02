@@ -1979,6 +1979,7 @@ class Daemon:
                     persona=persona,
                     agent_states=self.agent_states,
                     working_memory=self.working_memory.snapshot(),
+                    cwd=cwd,
                 )
             except Exception:
                 decision = None
