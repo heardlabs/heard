@@ -738,34 +738,14 @@ class Daemon:
         return NullTTS()
 
     def _maybe_start_anon_trial(self) -> None:
-        """Kick off the first-launch anonymous trial fetch if we have
-        no voice configured. Idempotent across re-launches via the
-        ``heard_anon_trial_used`` config flag — once set we never
-        re-fetch, so deliberately signing out doesn't silently mint a
-        new trial. The flag is set on success AND on 402 trial_expired
-        (the device already burned its anon trial). Network errors do
-        NOT set the flag — the next launch retries.
-
-        The fetch itself runs on a background thread so daemon boot
-        stays snappy; the user briefly sees NullTTS until the reload
-        re-picks ManagedTTS."""
-        if (self.cfg.get("elevenlabs_api_key") or "").strip():
-            return
-        if (self.cfg.get("heard_token") or "").strip():
-            return
-        if self.cfg.get("heard_anon_trial_used"):
-            return
-        # Tests instantiate Daemon() many times in parallel; under pytest
-        # they monkeypatch CONFIG_DIR but not CONFIG_PATH, so this
-        # thread's config.set_value writes race the test's setUp and
-        # corrupt the runner's real config.yaml. Skip the fetch when
-        # pytest is the caller — its `PYTEST_CURRENT_TEST` env is the
-        # canonical "we're running under pytest" signal.
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
-        threading.Thread(
-            target=self._anon_trial_fetch, daemon=True, name="anon-trial"
-        ).start()
+        """Retired 2026-06-02. Anonymous sign-in created two auth paths
+        through onboarding (sign-in vs. silent device-bound trial) and
+        was the source of "signed in but no email" bugs in the menu
+        bar plus a 5K/day cap so tight it was a worse first impression
+        than just asking for sign-in. The endpoint at /v1/auth/anonymous
+        now returns 410 Gone; this function is the matching no-op on
+        the client side. Wizard makes sign-in the only path forward."""
+        return
 
     def _anon_trial_fetch(self) -> None:
         """Background worker for ``_maybe_start_anon_trial``. See its

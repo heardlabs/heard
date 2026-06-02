@@ -1980,7 +1980,23 @@ class _OnboardingController(NSObject):
         idx, last = self._screen_idx, len(self._screens) - 1
         self._back_btn.setHidden_(idx == 0)
         self._next_btn.setTitle_("Finish" if idx == last else "Continue")
-        self._skip_btn.setHidden_(idx == last)
+        # Sign-in step is mandatory (anon-trial retired 2026-06-02 —
+        # see daemon._maybe_start_anon_trial). Hide "Skip setup" on
+        # the signin screen and disable Continue until the user is
+        # actually signed in with a verified (non-anon) account.
+        # Old anon-trial holdouts whose token is anon won't be able
+        # to proceed either — they need to sign in to upgrade.
+        on_signin = (self._screens[idx][0] == "signin")
+        if on_signin:
+            cfg_now = config.load()
+            tok = (cfg_now.get("heard_token") or "").strip()
+            is_anon = bool(cfg_now.get("heard_is_anonymous"))
+            signed_in = bool(tok) and not is_anon
+            self._next_btn.setEnabled_(signed_in)
+            self._skip_btn.setHidden_(True)
+        else:
+            self._next_btn.setEnabled_(True)
+            self._skip_btn.setHidden_(idx == last)
         for i, d in enumerate(self._dots):
             active = (i == idx)
             color = _text_color() if active else NSColor.colorWithSRGBRed_green_blue_alpha_(0, 0, 0, 0.18)
@@ -2223,6 +2239,13 @@ class _OnboardingController(NSObject):
         known = (cfg.get("heard_email") or "").strip()
         if email_field is not None and known and not (email_field.stringValue() or "").strip():
             email_field.setStringValue_(known)
+        # Refresh the bottom-bar Continue/Skip state — sign-in is
+        # mandatory now, so the button stays disabled until the
+        # token + verified state line up. Cheap to recompute.
+        try:
+            self._update_chrome()
+        except Exception:
+            pass
 
     def _screen_agents(self) -> NSView:
         v = NSView.alloc().init()
