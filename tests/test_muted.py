@@ -143,6 +143,11 @@ def test_hook_short_circuits_when_muted(monkeypatch):
     )
     monkeypatch.setattr(sys, "argv", ["heard.hook", "claude-code"])
     monkeypatch.delenv("HEARD_HOOK_DISABLED", raising=False)
+    # Bug 2026-06-02: muted hook now advances the spoken offset before
+    # exiting (to prevent post-resume transcript replay). Stub the
+    # advance helper out so this test stays focused on the
+    # dispatcher-short-circuit invariant.
+    monkeypatch.setattr(hook, "_advance_cc_offset_while_muted", lambda: None)
 
     monkeypatch.setattr(client, "is_muted", lambda: True)
     try:
@@ -154,6 +159,45 @@ def test_hook_short_circuits_when_muted(monkeypatch):
     monkeypatch.setattr(client, "is_muted", lambda: False)
     hook.main()
     assert calls["n"] == 1
+
+
+def test_muted_hook_advances_offset_to_eof(tmp_path, monkeypatch):
+    """Bug 2026-06-02: muted hooks used to exit without advancing the
+    transcript offset, causing post-resume floods (hours of CC prose
+    replayed as one burst of intermediate events). Fix: advance the
+    spoken offset to current EOF even when muted, so resume picks up
+    cleanly from "right now" instead of from pause-time."""
+    import io
+    import json as _json
+    from heard import client, hook, spoken
+
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}\n',
+        encoding="utf-8",
+    )
+    size_at_pause = transcript.stat().st_size
+
+    sid = "test-session-mute-offset"
+    payload = {
+        "hook_event_name": "Stop",
+        "session_id": sid,
+        "transcript_path": str(transcript),
+    }
+    monkeypatch.setattr(sys, "argv", ["heard.hook", "claude-code"])
+    monkeypatch.delenv("HEARD_HOOK_DISABLED", raising=False)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(_json.dumps(payload)))
+    monkeypatch.setattr(client, "is_muted", lambda: True)
+
+    try:
+        hook.main()
+    except SystemExit:
+        pass
+
+    # The hook should have written an offset pointing past the
+    # transcript's current EOF.
+    assert spoken.has_offset(sid)
+    assert spoken.get_offset(sid) == size_at_pause
 
 
 def test_speak_drops_when_mic_active(tmp_path, monkeypatch):
