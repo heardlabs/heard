@@ -1065,6 +1065,18 @@ class Daemon:
                         pass
                     self.tts = self._make_tts()
                     _log("plan_expired_by_server", backend=type(self.tts).__name__)
+                    # Stale-cache fix — the menu's "X / Y today" line
+                    # reads from a cached /v1/me snapshot that refreshes
+                    # every 5 minutes. After a plan transition like this
+                    # one we want the new state visible immediately, not
+                    # lagged behind 5min of "trial · X / 500K". Fire
+                    # the refresh on a background thread (network call,
+                    # don't block the synth error path).
+                    threading.Thread(
+                        target=self._refresh_account_usage,
+                        daemon=True,
+                        name="usage_refresh_after_402",
+                    ).start()
                     if isinstance(self.tts, NullTTS):
                         notify.notify(
                             "Heard cloud voices ended",
@@ -1090,6 +1102,15 @@ class Daemon:
                     self.tts = self._make_tts()
                     new_backend = type(self.tts).__name__
                     _log("managed_cap_hit", new_backend=new_backend)
+                    # Stale-cache fix — same rationale as the 402 branch
+                    # above: refresh the /v1/me snapshot now so the
+                    # menu bar reflects the cap state without the
+                    # 5-min tick lag.
+                    threading.Thread(
+                        target=self._refresh_account_usage,
+                        daemon=True,
+                        name="usage_refresh_after_429",
+                    ).start()
                     if new_backend == "ElevenLabsTTS":
                         notify.notify(
                             "Heard daily limit reached",
