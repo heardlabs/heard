@@ -34,7 +34,11 @@ BUNDLED_DIR = Path(__file__).parent / "personas"
 # to whatever the next 4.5 release is, which can change tone, length,
 # or refusal behaviour in subtle ways.
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
-HAIKU_TIMEOUT_S = 2.5
+HAIKU_TIMEOUT_S = 10.0  # was 2.5 — too tight for uncached cold-start
+# calls (system block + network round-trip via managed proxy could push
+# past 2.5s and silently timeout, which surfaced as harness_punt → v1
+# fallback narration. 10s gives a comfortable buffer; cached calls still
+# return in <1s typical.
 # Output cap for the persona rewrite Haiku call. Previously 160 — that's
 # ~120 words / ~600 chars, which the model exceeded fairly often when
 # the source had real content to compress. The result was a mid-sentence
