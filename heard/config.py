@@ -130,7 +130,7 @@ DEFAULTS: dict[str, Any] = {
     # every agent speak in the persona's voice — then, in multi-agent
     # situations, every spoken line is prefixed with "Agent <name>: "
     # so you still know which agent it's reporting on.
-    "multi_agent_auto_voices": True,
+    "multi_agent_auto_voices": False,
     # Manual repo_name → ElevenLabs voice_id overrides. Always wins
     # over the auto-pick. Edit YAML directly:
     #   agent_voices:

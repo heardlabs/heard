@@ -71,6 +71,7 @@ from heard.settings_widgets import (
     _BTN_TEXT,
     _GAP_GROUP,
     _GAP_TITLE,
+    _H_CONTROL,
     _PAD_WINDOW,
     _PINK_ACCENT,
     _THEME,
@@ -90,8 +91,10 @@ from heard.settings_widgets import (
     _popup,
     _section_title,
     _segmented,
+    _segmented_tabs,
     _setting_row,
     _SettingsNSWindow,
+    _stacked_pick_row,
     _sysfont,
     _text_color,
     _text_color_dim,
@@ -474,15 +477,20 @@ class SettingsController(NSObject):
     def _build_account_panel(self) -> NSView:
         outer, body = self._panel_shell("account")
 
-        # Identity card — email + plan, big primary action button.
+        # Identity card — email + plan, primary capsule CTA. Matches the
+        # Tuning tab's reset button styling (capsule + primary fill + hover).
         email_label = _label("Not signed in", size=13, bold=True)
         plan_label = _label("Sign in to use cloud voices.", size=12, dim=True)
-        signin_btn = _button("Sign in", target=self, action="onSignInClicked:")
+        signin_btn = _button(
+            "Sign In",
+            target=self, action="onSignInClicked:",
+            primary=True, capsule=True,
+        )
         identity_row = _setting_row(email_label, plan_label, signin_btn)
 
-        signout_btn = _button("Sign out", target=self, action="onSignOutClicked:")
+        signout_btn = _button("Sign Out", target=self, action="onSignOutClicked:")
         signout_row = _setting_row(
-            "Sign out",
+            "Sign Out",
             "Clear the sign-in on this Mac.",
             signout_btn,
         )
@@ -502,11 +510,15 @@ class SettingsController(NSObject):
         # signed-in user already has a bearer; redeeming a code would
         # just rotate it for no reason. _refresh_account hides this
         # whole group when heard_token is set.
-        self._add_section(body, "INSTALL CODE")
+        self._add_section(body, "Install code")
         code_field = _text_field(placeholder="ABCD-EFGH")
         code_field.setTarget_(self)
         code_field.setAction_("onClaimInstallCode:")
-        code_btn = _button("Redeem", target=self, action="onClaimInstallCode:")
+        code_btn = _button(
+            "Redeem",
+            target=self, action="onClaimInstallCode:",
+            primary=True, capsule=True,
+        )
         code_status = _label("", size=12, dim=True)
         code_row = _field_row(
             "Redeem an install code",
@@ -518,9 +530,13 @@ class SettingsController(NSObject):
         ic_group = self._add_card(body, _card([code_row]))
 
         # What's playing card.
-        self._add_section(body, "WHAT'S PLAYING")
+        self._add_section(body, "What's playing")
         path_label = _label("…", size=12, dim=True)
-        upgrade_btn = _button("Upgrade to Pro →", target=self, action="onUpgradeClicked:")
+        upgrade_btn = _button(
+            "Upgrade to Pro →",
+            target=self, action="onUpgradeClicked:",
+            primary=True, capsule=True,
+        )
         path_row = _setting_row("Voice path", path_label, upgrade_btn)
         self._add_card(body, _card([path_row]))
 
@@ -543,14 +559,11 @@ class SettingsController(NSObject):
     def _build_voice_panel(self) -> NSView:
         outer, body = self._panel_shell("voice")
 
-        # Persona + speed. Dropdown labels are title-cased to match the
-        # segmented control ("Normal / Fast / Hyper"); the underlying
-        # config values stay lowercase (handled in the change handlers
-        # and in _refresh_voice).
-        # Persona dropdown is plan-aware: Free/expired users see only
-        # Hobby personas (jarvis, aria). Pro/trial users get all four.
-        # Reads plan once on panel build; opening Settings after an
-        # upgrade picks up the new options.
+        # Persona stays a popup — plan-aware (Free sees 2, Pro sees 4) so
+        # the option count is variable, and the lookup-style chevron is
+        # the right affordance for "pick from a list of named characters."
+        # Plan read once on panel build; opening Settings after an upgrade
+        # picks up the new options.
         try:
             _plan = (config.load().get("heard_plan") or "").strip() or "free"
         except Exception:
@@ -561,43 +574,48 @@ class SettingsController(NSObject):
         )
         persona_row = _setting_row(
             "Persona",
-            "Voice character. Each persona has its own tone and ElevenLabs voice.",
+            "Voice character with its own tone and ElevenLabs voice.",
             persona_pop,
         )
+        self._add_card(body, _card([persona_row]))
 
-        speed_seg = _segmented(["Normal", "Fast", "Hyper"], self, "onSpeedChanged:")
-        speed_row = _setting_row(
+        # Speed — segmented + stacked, matches Tuning's pick rows.
+        speed_seg = _segmented(
+            ["Normal", "Fast", "Hyper"], self, "onSpeedChanged:",
+        )
+        speed_row = _stacked_pick_row(
             "Speed",
             "Hyper layers afplay over ElevenLabs' 1.2× cap.",
             speed_seg,
         )
+        self._add_card(body, _card([speed_row]))
 
-        self._add_card(body, _card([persona_row, speed_row]))
-
-        # Verbosity.
-        self._add_section(body, "VERBOSITY")
-        verbosity_pop = _popup(
+        # Verbosity — foreground + background as segmented stacked rows.
+        # Replaced the popup pair to match Tuning's full-width segmented
+        # pattern; 4 levels comfortably fits a 4-segment control.
+        verbosity_seg = _segmented(
             ["Quiet", "Brief", "Normal", "Verbose"],
-            target=self, action="onVerbosityChanged:",
+            self, "onVerbosityChanged:",
         )
-        fg_row = _setting_row(
+        fg_row = _stacked_pick_row(
             "Foreground",
             "What the focused agent says out loud.",
-            verbosity_pop,
+            verbosity_seg,
         )
-        swarm_pop = _popup(
+        swarm_seg = _segmented(
             ["Quiet", "Brief", "Normal", "Verbose"],
-            target=self, action="onSwarmVerbosityChanged:",
+            self, "onSwarmVerbosityChanged:",
         )
-        bg_row = _setting_row(
+        bg_row = _stacked_pick_row(
             "Background",
-            "Other agents in swarm mode. Usually quieter than foreground.",
-            swarm_pop,
+            "Other agents in swarm mode. Usually quieter.",
+            swarm_seg,
         )
         self._add_card(body, _card([fg_row, bg_row]))
 
-        # Behavior.
-        self._add_section(body, "BEHAVIOR")
+        # Behavior. Auto-pause stays inline (switch is a 1-bit pick, not
+        # worth a wide row). Parallel agents converted from popup to a
+        # 2-segment control.
         auto_silence = _checkbox(
             "", target=self, action="onAutoSilenceToggled:",
         )
@@ -606,25 +624,25 @@ class SettingsController(NSObject):
             "Stop narrating when another app starts using the microphone.",
             auto_silence,
         )
-        agent_voices_pop = _popup(
-            ["Distinct voices", "One voice"],
-            target=self, action="onAgentVoicesModeChanged:",
+        agent_voices_seg = _segmented(
+            ["Distinct", "One voice"],
+            self, "onAgentVoicesModeChanged:",
         )
-        agent_voices_row = _setting_row(
+        agent_voices_row = _stacked_pick_row(
             "Parallel agents",
-            "Distinct voices: each agent gets its own voice. One voice: "
-            "the persona for all, with the agent's name spoken before each line.",
-            agent_voices_pop,
+            "Distinct: each project gets its own voice. One voice: the persona "
+            "for all, with the agent's name spoken first.",
+            agent_voices_seg,
         )
         self._add_card(body, _card([auto_silence_row, agent_voices_row]))
 
         self._refs["voice"].update({
             "persona": persona_pop,
             "speed": speed_seg,
-            "verbosity": verbosity_pop,
-            "swarm": swarm_pop,
+            "verbosity": verbosity_seg,
+            "swarm": swarm_seg,
             "auto_silence": auto_silence,
-            "agent_voices_mode": agent_voices_pop,
+            "agent_voices_mode": agent_voices_seg,
         })
         return outer
 
@@ -643,143 +661,210 @@ class SettingsController(NSObject):
     #     and most users won't have per-category opinions on day one.
     # Everything else (9/10 slots) gets a popup or a text field here.
 
-    # Popup titles for the int prose-threshold slot. Four bands cover
-    # the useful range without making the user type a specific number;
-    # the actual int stays visible in parens so power users still see
-    # what each band maps to.
-    _PROSE_THRESHOLD_TITLES = [
-        "Wake more often (180)",
-        "Default (240)",
-        "Wake less (320)",
-        "Rarely (480)",
-    ]
-    _PROSE_THRESHOLD_BY_TITLE = {
-        "Wake more often (180)": 180,
-        "Default (240)": 240,
-        "Wake less (320)": 320,
-        "Rarely (480)": 480,
-    }
+    # Index → schema-canonical value maps for each Tuning segmented
+    # control. Keeping these as module-level lists rather than inline
+    # makes the change-handlers and the refresh step share the same
+    # source of truth.
+    # Voice tab: segmented index → config value table for the verbosity
+    # picker (used for BOTH foreground `verbosity` and `swarm_verbosity`).
+    # Used by the onVerbosityChanged / onSwarmVerbosityChanged handlers
+    # and by _refresh_voice on cfg → UI sync.
+    _VOICE_VERBOSITY = ["quiet", "brief", "normal", "verbose"]
+
+    _TUNING_ROUTINE_PROGRESS = ["skip", "brief", "full"]
+    _TUNING_PROSE_THRESHOLD = [180, 240, 320, 480]
+    _TUNING_ERROR_DETAIL = ["minimal", "standard", "verbose"]
+    _TUNING_DECISION_SURFACING = ["emphasize", "mention", "skip"]
+    _TUNING_QUESTION_HANDLING = ["verbatim", "summarize", "acknowledge"]
+    _TUNING_REGISTER = ["formal", "neutral", "casual"]
+    _TUNING_JARGON = ["aggressive", "moderate", "preserve"]
+    _TUNING_LONG_FINAL = ["preserve_structure", "lead_then_summary", "headline_only"]
+    _TUNING_HOOK_ENDINGS = ["required", "preferred", "optional"]
 
     def _build_tuning_panel(self) -> NSView:
         outer, body = self._panel_shell("tuning")
         self._refs.setdefault("tuning", {})
 
-        # --- HOW MUCH ---
-        self._add_section(body, "HOW MUCH")
-        routine_pop = _popup(
-            ["Skip", "Brief", "Full"],
-            target=self, action="onTuningRoutineToolProgressChanged:",
+        # Tab switcher at the top — the two categories share the same
+        # panel via show/hide rather than a vertical scroll. Reduces the
+        # "wall of nine knobs" feel of the section-header version.
+        tab_seg = _segmented_tabs(
+            ["How much", "How it sounds"],
+            self, "onTuningTabChanged:",
         )
-        routine_row = _setting_row(
+        tab_card = _card([tab_seg])
+        self._add_card(body, tab_card)
+
+        # --- HOW MUCH ---
+        routine_seg = _segmented(
+            ["Skip", "Brief", "Full"],
+            self, "onTuningRoutineToolProgressChanged:",
+        )
+        routine_row = _stacked_pick_row(
             "Routine tool progress",
             "How chatty for routine tools.",
-            routine_pop,
+            routine_seg,
         )
-        prose_pop = _popup(
-            self._PROSE_THRESHOLD_TITLES,
-            target=self, action="onTuningProseThresholdChanged:",
+        prose_seg = _segmented(
+            ["More often", "Default", "Less", "Rarely"],
+            self, "onTuningProseThresholdChanged:",
         )
-        prose_row = _setting_row(
+        prose_row = _stacked_pick_row(
             "Mid-stream prose",
             "When to wake the brain for in-flight prose.",
-            prose_pop,
+            prose_seg,
         )
-        error_detail_pop = _popup(
+        error_detail_seg = _segmented(
             ["Minimal", "Standard", "Verbose"],
-            target=self, action="onTuningErrorDetailChanged:",
+            self, "onTuningErrorDetailChanged:",
         )
-        error_detail_row = _setting_row(
+        error_detail_row = _stacked_pick_row(
             "Error detail",
             "How much detail when something errors.",
-            error_detail_pop,
+            error_detail_seg,
         )
-        decision_pop = _popup(
+        decision_seg = _segmented(
             ["Emphasize", "Mention", "Skip"],
-            target=self, action="onTuningDecisionSurfacingChanged:",
+            self, "onTuningDecisionSurfacingChanged:",
         )
-        decision_row = _setting_row(
+        decision_row = _stacked_pick_row(
             "Decision moments",
             "How to surface a decision the agent's making.",
-            decision_pop,
+            decision_seg,
         )
-        question_pop = _popup(
+        question_seg = _segmented(
             ["Verbatim", "Summarize", "Acknowledge"],
-            target=self, action="onTuningQuestionHandlingChanged:",
+            self, "onTuningQuestionHandlingChanged:",
         )
-        question_row = _setting_row(
+        question_row = _stacked_pick_row(
             "Agent questions",
             "How to read questions the agent asks you.",
-            question_pop,
+            question_seg,
         )
-        self._add_card(body, _card([
+        how_much_card = _card([
             routine_row, prose_row, error_detail_row,
             decision_row, question_row,
-        ]))
+        ])
+        # NOTE: not added to body yet — wrapped in a fixed-height overlay
+        # container below alongside how_sounds_card so toggling tabs
+        # doesn't reflow the panel height.
 
         # --- HOW IT SOUNDS ---
-        self._add_section(body, "HOW IT SOUNDS")
-        register_pop = _popup(
+        register_seg = _segmented(
             ["Formal", "Neutral", "Casual"],
-            target=self, action="onTuningRegisterFormalityChanged:",
+            self, "onTuningRegisterFormalityChanged:",
         )
-        register_row = _setting_row(
+        register_row = _stacked_pick_row(
             "Register",
             "How formal or casual the persona lands.",
-            register_pop,
+            register_seg,
         )
-        jargon_pop = _popup(
+        jargon_seg = _segmented(
             ["Plain English", "Moderate", "Preserve"],
-            target=self, action="onTuningJargonTranslationChanged:",
+            self, "onTuningJargonTranslationChanged:",
         )
-        jargon_row = _setting_row(
+        jargon_row = _stacked_pick_row(
             "Jargon",
             "Plain English vs. developer-speak.",
-            jargon_pop,
+            jargon_seg,
         )
-        final_shape_pop = _popup(
-            [
-                "Keep all the points",
-                "Lead with the main point",
-                "Headline only",
-            ],
-            target=self, action="onTuningLongFinalShapeChanged:",
+        final_shape_seg = _segmented(
+            ["All points", "Main point", "Headline"],
+            self, "onTuningLongFinalShapeChanged:",
         )
-        final_shape_row = _setting_row(
+        final_shape_row = _stacked_pick_row(
             "Long answers",
             "How to compress a long structured reply.",
-            final_shape_pop,
+            final_shape_seg,
         )
-        hook_pop = _popup(
+        hook_seg = _segmented(
             ["Required", "Preferred", "Optional"],
-            target=self, action="onTuningHookEndingsChanged:",
+            self, "onTuningHookEndingsChanged:",
         )
-        hook_row = _setting_row(
+        hook_row = _stacked_pick_row(
             "Hook endings",
             "How often a turn ends with a question or pick.",
-            hook_pop,
+            hook_seg,
         )
-        self._add_card(body, _card([
+        how_sounds_card = _card([
             register_row, jargon_row, final_shape_row, hook_row,
-        ]))
+        ])
+        # Start hidden — "How much" tab is selected by default. The
+        # onTuningTabChanged_ handler swaps which card is visible.
+        how_sounds_card.setHidden_(True)
 
-        # --- RESET ---
+        # NSStackView container holding both cards. Vertical stack with
+        # `detachesHiddenViews = True` — a card marked setHidden_ is
+        # treated by the stack as if it were removed, so the stack's
+        # height == the VISIBLE card's height. This keeps the reset
+        # button (below the overlay) snug against the bottom of whichever
+        # tab is active, no whitespace gap on the shorter "How it sounds"
+        # tab. The cards themselves don't appear to move on switch —
+        # both are top-aligned in the stack, and only one is visible at a
+        # time, so the visible card's top is always at the same spot.
+        tab_overlay = NSStackView.alloc().init()
+        tab_overlay.setOrientation_(NSUserInterfaceLayoutOrientationVertical)
+        tab_overlay.setSpacing_(0.0)
+        tab_overlay.setAlignment_(NSLayoutAttributeLeading)
+        tab_overlay.setDistribution_(NSStackViewDistributionFill)
+        try:
+            tab_overlay.setDetachesHiddenViews_(True)
+        except Exception:
+            pass
+        tab_overlay.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        for inner in (how_much_card, how_sounds_card):
+            inner.setTranslatesAutoresizingMaskIntoConstraints_(False)
+            tab_overlay.addArrangedSubview_(inner)
+            # Cards span the overlay's full width.
+            NSLayoutConstraint.activateConstraints_([
+                inner.leadingAnchor().constraintEqualToAnchor_(
+                    tab_overlay.leadingAnchor()
+                ),
+                inner.trailingAnchor().constraintEqualToAnchor_(
+                    tab_overlay.trailingAnchor()
+                ),
+            ])
+        self._add_card(body, tab_overlay)
+
+        # Reset action — bottom of the panel, pinned to the leading edge.
+        # Capsule + primary fill so it reads as a real CTA, with hover
+        # lightening the fill (added to _PillButton). Explicit height
+        # constraint = _H_CONTROL so the row has a guaranteed clickable
+        # rect (otherwise the wrapper view's intrinsic height was
+        # resolving to 0 under the body stack's Fill distribution and
+        # swallowing the click).
+        from AppKit import NSView
         reset_btn = _button(
             "Reset all to defaults",
             target=self,
             action="onTuningResetAll:",
+            primary=True,
+            capsule=True,
         )
-        self._add_card(body, _card([reset_btn]))
+        reset_row = NSView.alloc().init()
+        reset_row.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        reset_row.addSubview_(reset_btn)
+        NSLayoutConstraint.activateConstraints_([
+            reset_btn.leadingAnchor().constraintEqualToAnchor_(reset_row.leadingAnchor()),
+            reset_btn.topAnchor().constraintEqualToAnchor_(reset_row.topAnchor()),
+            reset_btn.bottomAnchor().constraintEqualToAnchor_(reset_row.bottomAnchor()),
+            reset_row.heightAnchor().constraintEqualToConstant_(_H_CONTROL),
+        ])
+        self._add_card(body, reset_row)
 
         self._refs["tuning"].update({
-            "routine_tool_progress": routine_pop,
-            "intermediate_prose_threshold": prose_pop,
-            "long_final_shape": final_shape_pop,
-            "decision_surfacing": decision_pop,
-            "register_formality": register_pop,
-            "jargon_translation": jargon_pop,
-            "hook_endings": hook_pop,
-            "error_detail_level": error_detail_pop,
-            "question_handling": question_pop,
+            "tab_seg": tab_seg,
+            "how_much_card": how_much_card,
+            "how_sounds_card": how_sounds_card,
+            "routine_tool_progress": routine_seg,
+            "intermediate_prose_threshold": prose_seg,
+            "long_final_shape": final_shape_seg,
+            "decision_surfacing": decision_seg,
+            "register_formality": register_seg,
+            "jargon_translation": jargon_seg,
+            "hook_endings": hook_seg,
+            "error_detail_level": error_detail_seg,
+            "question_handling": question_seg,
         })
         return outer
 
@@ -788,14 +873,18 @@ class SettingsController(NSObject):
     def _build_keys_panel(self) -> NSView:
         outer, body = self._panel_shell("keys")
 
-        self._add_section(body, "API KEYS")
+        self._add_section(body, "API keys")
 
         llm_field = _text_field(placeholder="sk-ant-…  or  sk-…")
         llm_field.setTarget_(self)
         llm_field.setAction_("onLLMKeyChanged:")
         llm_field.setDelegate_(self)
         llm_status = _label("", size=12, dim=True)
-        llm_save = _button("Save", target=self, action="onSaveLLMKey:")
+        llm_save = _button(
+            "Save",
+            target=self, action="onSaveLLMKey:",
+            primary=True, capsule=True,
+        )
         llm_row = _field_row(
             "LLM key (optional)",
             "Anthropic (sk-ant-…) or OpenAI (sk-…). Heard auto-detects from the prefix.",
@@ -808,7 +897,11 @@ class SettingsController(NSObject):
         el_field.setAction_("onElevenKeyChanged:")
         el_field.setDelegate_(self)
         el_status = _label("", size=12, dim=True)
-        el_save = _button("Save", target=self, action="onSaveElKey:")
+        el_save = _button(
+            "Save",
+            target=self, action="onSaveElKey:",
+            primary=True, capsule=True,
+        )
         el_row = _field_row(
             "ElevenLabs key (optional)",
             "Used when you're not signed in to Heard's cloud voices.",
@@ -842,7 +935,7 @@ class SettingsController(NSObject):
         # no tap-hold mode, no menu-item-named alternates. Hotkey
         # strings use pynput's ``<shift>+<alt>+.`` form; the daemon
         # validates them on reload.
-        self._add_section(body, "PAUSE & CONTINUE")
+        self._add_section(body, "Pause & continue")
         pause_field = _text_field(placeholder="<shift>+<alt>+.")
         pause_field.setTarget_(self)
         pause_field.setAction_("onPauseComboChanged:")
@@ -877,7 +970,7 @@ class SettingsController(NSObject):
         outer, body = self._panel_shell("advanced")
 
         # Agents card.
-        self._add_section(body, "AGENTS")
+        self._add_section(body, "Agents")
         cc_check = _checkbox("", target=self, action="onClaudeCodeToggled:")
         cc_row = _setting_row(
             "Claude Code",
@@ -893,7 +986,7 @@ class SettingsController(NSObject):
         self._add_card(body, _card([cc_row, codex_row]))
 
         # Accessibility card.
-        self._add_section(body, "ACCESSIBILITY")
+        self._add_section(body, "Accessibility")
         ax_status = _label("Checking…", size=13, bold=True)
         ax_btn = _button("Open Settings", target=self, action="onOpenAXSettings:")
         ax_row = _setting_row(
@@ -904,7 +997,7 @@ class SettingsController(NSObject):
         self._add_card(body, _card([ax_row]))
 
         # Offline voice card.
-        self._add_section(body, "OFFLINE VOICE")
+        self._add_section(body, "Offline voice")
         kokoro_status = _label("…", size=13, bold=True)
         kokoro_dl_btn = _button("Download (~350 MB)", target=self, action="onKokoroDownload:")
         kokoro_del_btn = _button("Delete", target=self, action="onKokoroDelete:")
@@ -921,7 +1014,7 @@ class SettingsController(NSObject):
         self._add_card(body, _card([kokoro_dl_row, kokoro_del_row]))
 
         # Troubleshooting card.
-        self._add_section(body, "TROUBLESHOOTING")
+        self._add_section(body, "Troubleshooting")
         restart_btn = _button("Restart", target=self, action="onRestartDaemon:")
         cfg_btn = _button("Open", target=self, action="onOpenConfig:")
         log_btn = _button("Open", target=self, action="onOpenLog:")
@@ -953,7 +1046,7 @@ class SettingsController(NSObject):
         # Off → daemon skips the /v1/telemetry/usage POST after BYOK +
         # local synths. Managed synths are counted server-side and not
         # affected by this toggle.
-        self._add_section(body, "PRIVACY")
+        self._add_section(body, "Privacy")
         telemetry_check = _checkbox(
             "", target=self, action="onByokTelemetryToggled:"
         )
@@ -995,10 +1088,10 @@ class SettingsController(NSObject):
         self._refresh_advanced(cfg, status)
 
     def _refresh_tuning(self, _cfg: dict) -> None:
-        """Reflect the currently-resolved preferences (overlay-stack
-        applied) in the Tuning tab's popups + fields. Called by
-        _refresh_all on the periodic tick AND after a reset / setting
-        change so the UI tracks what the daemon is actually reading."""
+        """Drive every Tuning segmented control to match the currently-
+        resolved preference value. Called on the periodic refresh tick
+        and after any setting change so the UI tracks what the daemon
+        is actually reading from preferences.yaml."""
         from heard import preferences as prefs_mod
         try:
             resolved = prefs_mod.resolve()
@@ -1006,71 +1099,35 @@ class SettingsController(NSObject):
             return
         r = self._refs.get("tuning") or {}
 
-        def _select(popup, target_title: str) -> None:
-            if popup is None:
+        def _set_seg(slot: str, table: list, default) -> None:
+            seg = r.get(slot)
+            if seg is None:
                 return
-            for i in range(popup.numberOfItems() if hasattr(popup, "numberOfItems") else 0):
-                item = popup.itemAtIndex_(i)
-                if item and item.title().lower() == target_title.lower():
-                    popup.selectItemAtIndex_(i)
-                    return
-            # _GhostPopUp doesn't expose numberOfItems / itemAtIndex_ —
-            # fall back to setTitleByValue_ if the widget supports it.
-            sel_setter = getattr(popup, "selectByTitle_", None)
-            if sel_setter is not None:
+            value = resolved.get(slot, default)
+            try:
+                idx = table.index(value)
+            except ValueError:
+                # Resolved value isn't in our table (shouldn't happen
+                # with schema-validated prefs, but defensive); fall back
+                # to whatever index the default maps to.
                 try:
-                    sel_setter(target_title)
-                except Exception:
-                    pass
+                    idx = table.index(default)
+                except ValueError:
+                    idx = 0
+            try:
+                seg.setSelectedSegment_(idx)
+            except Exception:
+                pass
 
-        _select(r.get("routine_tool_progress"),
-                resolved.get("routine_tool_progress", "brief").capitalize())
-
-        # Prose threshold — pick the closest band whose number is ≥ the
-        # resolved int, falling back to "Default (240)" if nothing
-        # matches (shouldn't happen with the schema-clamped range).
-        prose_val = resolved.get("intermediate_prose_threshold", 240)
-        prose_title = "Default (240)"
-        for t, v in self._PROSE_THRESHOLD_BY_TITLE.items():
-            if v == prose_val:
-                prose_title = t
-                break
-        _select(r.get("intermediate_prose_threshold"), prose_title)
-
-        _final_shape_titles = {
-            "preserve_structure": "Keep all the points",
-            "lead_then_summary": "Lead with the main point",
-            "headline_only": "Headline only",
-        }
-        _select(
-            r.get("long_final_shape"),
-            _final_shape_titles.get(
-                resolved.get("long_final_shape", "preserve_structure"),
-                "Keep all the points",
-            ),
-        )
-        _select(r.get("decision_surfacing"),
-                resolved.get("decision_surfacing", "emphasize").capitalize())
-        _select(r.get("register_formality"),
-                resolved.get("register_formality", "neutral").capitalize())
-        _jargon_titles = {
-            "aggressive": "Plain English",
-            "moderate": "Moderate",
-            "preserve": "Preserve",
-        }
-        _select(
-            r.get("jargon_translation"),
-            _jargon_titles.get(
-                resolved.get("jargon_translation", "moderate"),
-                "Moderate",
-            ),
-        )
-        _select(r.get("hook_endings"),
-                resolved.get("hook_endings", "preferred").capitalize())
-        _select(r.get("error_detail_level"),
-                resolved.get("error_detail_level", "standard").capitalize())
-        _select(r.get("question_handling"),
-                resolved.get("question_handling", "verbatim").capitalize())
+        _set_seg("routine_tool_progress", self._TUNING_ROUTINE_PROGRESS, "brief")
+        _set_seg("intermediate_prose_threshold", self._TUNING_PROSE_THRESHOLD, 240)
+        _set_seg("error_detail_level", self._TUNING_ERROR_DETAIL, "standard")
+        _set_seg("decision_surfacing", self._TUNING_DECISION_SURFACING, "emphasize")
+        _set_seg("question_handling", self._TUNING_QUESTION_HANDLING, "verbatim")
+        _set_seg("register_formality", self._TUNING_REGISTER, "neutral")
+        _set_seg("jargon_translation", self._TUNING_JARGON, "moderate")
+        _set_seg("long_final_shape", self._TUNING_LONG_FINAL, "preserve_structure")
+        _set_seg("hook_endings", self._TUNING_HOOK_ENDINGS, "preferred")
 
     def _refresh_account(self, cfg: dict, status: dict) -> None:
         r = self._refs["account"]
@@ -1087,7 +1144,7 @@ class SettingsController(NSObject):
         else:
             r["email"].setStringValue_("Not signed in")
             r["plan"].setStringValue_("Sign in to use cloud voices and Pro features.")
-            r["signin"].setTitle_("Sign in")
+            r["signin"].setTitle_("Sign In")
             r["signout_row"].setHidden_(True)
             r["manage_row"].setHidden_(True)
             r["upgrade"].setHidden_(False)
@@ -1111,17 +1168,22 @@ class SettingsController(NSObject):
         seg_idx = 0 if speed < 1.075 else (1 if speed < 1.25 else 2)
         r["speed"].setSelectedSegment_(seg_idx)
         from heard import verbosity as verbosity_mod
-        verb = (verbosity_mod.level(cfg) or "normal").capitalize()
-        if verb in r["verbosity"].itemTitles():
-            r["verbosity"].selectItemWithTitle_(verb)
+        verb = (verbosity_mod.level(cfg) or "normal").lower()
+        try:
+            r["verbosity"].setSelectedSegment_(self._VOICE_VERBOSITY.index(verb))
+        except ValueError:
+            r["verbosity"].setSelectedSegment_(2)  # default to "normal"
         from heard import profile as profile_mod
-        swarm = (profile_mod._normalize(cfg.get("swarm_verbosity") or "brief") or "brief").capitalize()
-        if swarm in r["swarm"].itemTitles():
-            r["swarm"].selectItemWithTitle_(swarm)
+        swarm = (profile_mod._normalize(cfg.get("swarm_verbosity") or "brief") or "brief").lower()
+        try:
+            r["swarm"].setSelectedSegment_(self._VOICE_VERBOSITY.index(swarm))
+        except ValueError:
+            r["swarm"].setSelectedSegment_(1)  # default to "brief"
         r["auto_silence"].setState_(1 if cfg.get("auto_silence_on_mic", True) else 0)
         if r.get("agent_voices_mode") is not None:
-            r["agent_voices_mode"].selectItemWithTitle_(
-                "Distinct voices" if cfg.get("multi_agent_auto_voices", True) else "One voice"
+            # idx 0 = Distinct (default True), idx 1 = One voice
+            r["agent_voices_mode"].setSelectedSegment_(
+                0 if cfg.get("multi_agent_auto_voices", False) else 1
             )
 
     def _refresh_keys(self, cfg: dict) -> None:
@@ -1360,15 +1422,15 @@ class SettingsController(NSObject):
         _reload_daemon()
 
     def onVerbosityChanged_(self, sender) -> None:
-        v = (sender.titleOfSelectedItem() or "").lower()
-        if v:
-            config.set_value("verbosity", v)
+        idx = int(sender.selectedSegment())
+        if 0 <= idx < len(self._VOICE_VERBOSITY):
+            config.set_value("verbosity", self._VOICE_VERBOSITY[idx])
             _reload_daemon()
 
     def onSwarmVerbosityChanged_(self, sender) -> None:
-        v = (sender.titleOfSelectedItem() or "").lower()
-        if v:
-            config.set_value("swarm_verbosity", v)
+        idx = int(sender.selectedSegment())
+        if 0 <= idx < len(self._VOICE_VERBOSITY):
+            config.set_value("swarm_verbosity", self._VOICE_VERBOSITY[idx])
             _reload_daemon()
 
     def onAutoSilenceToggled_(self, sender) -> None:
@@ -1380,8 +1442,9 @@ class SettingsController(NSObject):
         _reload_daemon()
 
     def onAgentVoicesModeChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        config.set_value("multi_agent_auto_voices", title == "distinct voices")
+        idx = int(sender.selectedSegment())
+        # idx 0 = Distinct, idx 1 = One voice
+        config.set_value("multi_agent_auto_voices", idx == 0)
         _reload_daemon()
 
     # --- Tuning tab handlers ----------------------------------------------
@@ -1405,61 +1468,75 @@ class SettingsController(NSObject):
             pass
         _reload_daemon()
 
+    def onTuningTabChanged_(self, sender) -> None:
+        """Swap which Tuning category card is visible — segment 0 = How
+        much, segment 1 = How it sounds. Both cards stay in the layout;
+        we just toggle setHidden_ so the panel scroll height adjusts
+        to whichever set is showing."""
+        try:
+            idx = int(sender.selectedSegment())
+        except Exception:
+            return
+        r = self._refs.get("tuning") or {}
+        hm = r.get("how_much_card")
+        hs = r.get("how_sounds_card")
+        if hm is not None:
+            hm.setHidden_(idx != 0)
+        if hs is not None:
+            hs.setHidden_(idx != 1)
+
+    def _tuning_pick(self, slot: str, table: list, sender) -> None:
+        """Common path for every Tuning segmented control: read the
+        selected index, look up the schema value from the slot's table,
+        set + reload."""
+        idx = int(sender.selectedSegment())
+        if 0 <= idx < len(table):
+            self._tuning_set(slot, table[idx])
+
     def onTuningRoutineToolProgressChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        if title in ("skip", "brief", "full"):
-            self._tuning_set("routine_tool_progress", title)
+        self._tuning_pick(
+            "routine_tool_progress", self._TUNING_ROUTINE_PROGRESS, sender,
+        )
 
     def onTuningProseThresholdChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip()
-        value = self._PROSE_THRESHOLD_BY_TITLE.get(title)
-        if value is not None:
-            self._tuning_set("intermediate_prose_threshold", value)
+        self._tuning_pick(
+            "intermediate_prose_threshold", self._TUNING_PROSE_THRESHOLD, sender,
+        )
 
     def onTuningLongFinalShapeChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        mapping = {
-            "keep all the points": "preserve_structure",
-            "lead with the main point": "lead_then_summary",
-            "headline only": "headline_only",
-        }
-        if title in mapping:
-            self._tuning_set("long_final_shape", mapping[title])
+        self._tuning_pick(
+            "long_final_shape", self._TUNING_LONG_FINAL, sender,
+        )
 
     def onTuningDecisionSurfacingChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        if title in ("emphasize", "mention", "skip"):
-            self._tuning_set("decision_surfacing", title)
+        self._tuning_pick(
+            "decision_surfacing", self._TUNING_DECISION_SURFACING, sender,
+        )
 
     def onTuningRegisterFormalityChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        if title in ("formal", "neutral", "casual"):
-            self._tuning_set("register_formality", title)
+        self._tuning_pick(
+            "register_formality", self._TUNING_REGISTER, sender,
+        )
 
     def onTuningJargonTranslationChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        mapping = {
-            "plain english": "aggressive",
-            "moderate": "moderate",
-            "preserve": "preserve",
-        }
-        if title in mapping:
-            self._tuning_set("jargon_translation", mapping[title])
+        self._tuning_pick(
+            "jargon_translation", self._TUNING_JARGON, sender,
+        )
 
     def onTuningHookEndingsChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        if title in ("required", "preferred", "optional"):
-            self._tuning_set("hook_endings", title)
+        self._tuning_pick(
+            "hook_endings", self._TUNING_HOOK_ENDINGS, sender,
+        )
 
     def onTuningErrorDetailChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        if title in ("minimal", "standard", "verbose"):
-            self._tuning_set("error_detail_level", title)
+        self._tuning_pick(
+            "error_detail_level", self._TUNING_ERROR_DETAIL, sender,
+        )
 
     def onTuningQuestionHandlingChanged_(self, sender) -> None:
-        title = (sender.titleOfSelectedItem() or "").strip().lower()
-        if title in ("verbatim", "summarize", "acknowledge"):
-            self._tuning_set("question_handling", title)
+        self._tuning_pick(
+            "question_handling", self._TUNING_QUESTION_HANDLING, sender,
+        )
 
     def onTuningResetAll_(self, _sender) -> None:
         from heard import preferences as prefs_mod
@@ -2414,7 +2491,7 @@ class _OnboardingController(NSObject):
         )
 
         signin_btn = _button(
-            "Sign in",
+            "Sign In",
             target=self,
             action="onWizSignInWeb:",
             primary=True,

@@ -439,7 +439,7 @@ class Daemon:
         if current_session_id and full_session_id == current_session_id:
             return None
         agent_voices = cfg.get("agent_voices") or {}
-        auto_voices = bool(cfg.get("multi_agent_auto_voices", True))
+        auto_voices = bool(cfg.get("multi_agent_auto_voices", False))
         with self.router._lock:  # noqa: SLF001
             return self.router._voice_for_locked(  # noqa: SLF001
                 full_session_id,
@@ -506,7 +506,7 @@ class Daemon:
         def _tick() -> None:
             while True:
                 time.sleep(1.0)
-                auto_voices = bool(self.cfg.get("multi_agent_auto_voices", True))
+                auto_voices = bool(self.cfg.get("multi_agent_auto_voices", False))
                 if not self.cfg.get("multi_agent_digest_enabled", True):
                     # Feature off — drain silently so events don't pile
                     # up forever waiting on a scheduler that won't speak.
@@ -1774,7 +1774,7 @@ class Daemon:
         / persona / formatting is identical to the normal narration
         stream — the recap just happens on-demand instead of on the
         next tick boundary."""
-        auto_voices = bool(self.cfg.get("multi_agent_auto_voices", True))
+        auto_voices = bool(self.cfg.get("multi_agent_auto_voices", False))
         flushes = self.router.force_flush_all(auto_voices=auto_voices)
         if not flushes:
             return
@@ -2098,7 +2098,7 @@ class Daemon:
             tag=tag,
             session_id=session_id,
             agent_voices=cfg.get("agent_voices") or {},
-            auto_voices=bool(cfg.get("multi_agent_auto_voices", True)),
+            auto_voices=bool(cfg.get("multi_agent_auto_voices", False)),
         )
         if decision.action == "drop":
             _log("event_drop", kind=kind, tag=tag, session=session_id, reason="multi_agent_drop")

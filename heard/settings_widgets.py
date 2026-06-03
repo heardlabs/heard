@@ -20,6 +20,7 @@ from AppKit import (
     NSAttributedString,
     NSButton,
     NSColor,
+    NSControl,
     NSFont,
     NSImage,
     NSImageView,
@@ -30,7 +31,6 @@ from AppKit import (
     NSMenu,
     NSStackView,
     NSStackViewDistributionFill,
-    NSSwitchButton,
     NSTextField,
     NSTextFieldCell,
     NSUserInterfaceLayoutOrientationHorizontal,
@@ -38,7 +38,7 @@ from AppKit import (
     NSView,
     NSWindow,
 )
-from Foundation import NSOperationQueue
+from Foundation import NSMakeSize, NSOperationQueue
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -76,28 +76,28 @@ elif _THEME == "light":
     _HAIRLINE = (0.0, 0.0, 0.0, 0.08)           # faint black divider
     _BANNER_BG = (1.000, 0.961, 0.882, 1.0)     # warm sand
     _BANNER_BORDER = (0.918, 0.831, 0.659, 1.0)
-else:  # offwhite
+else:  # offwhite — cooler, matte palette (Notion / Linear feel)
     _APPEARANCE = "NSAppearanceNameAqua"
-    _BG = (0.969, 0.965, 0.957, 1.0)            # ~#f7f6f4 warm off-white
-    _CARD_BG = (1.000, 1.000, 1.000, 1.0)       # white cards floating on the bg
-    _CARD_BORDER = (0.902, 0.890, 0.875, 1.0)   # ~#e6e3df hairline border
-    _HAIRLINE = (0.0, 0.0, 0.0, 0.06)           # divider within a card
-    _BANNER_BG = (1.000, 0.973, 0.918, 1.0)     # pale sand
+    _BG = (0.980, 0.980, 0.984, 1.0)            # ~#fafafa neutral light gray
+    _CARD_BG = (1.000, 1.000, 1.000, 1.0)       # pure white cards
+    _CARD_BORDER = (0.918, 0.918, 0.925, 1.0)   # ~#eaeaec cool hairline
+    _HAIRLINE = (0.0, 0.0, 0.0, 0.07)           # slightly more visible row divider
+    _BANNER_BG = (1.000, 0.973, 0.918, 1.0)     # pale sand (banners still warm)
     _BANNER_BORDER = (0.929, 0.875, 0.769, 1.0)
 
 _PINK_ACCENT = (0.870, 0.300, 0.460, 1.0)       # readable pink on both surfaces
 
-# -- Spacing scale (8pt grid, mirrors macOS System Settings) ---------------
-_PAD_WINDOW = 20.0      # window content inset (all four sides of a panel)
-_PAD_ROW_H = 22.0       # horizontal padding inside a card row
-_PAD_ROW_V = 10.0       # vertical padding inside a card row
-_GAP_TITLE = 7.0        # gap between a section title and the card below it
-_GAP_GROUP = 20.0       # gap between successive title+card groups
-_RADIUS_CARD = 10.0     # card corner radius
+# -- Spacing scale (8pt grid, mirrors macOS System Settings + Notion feel) -
+_PAD_WINDOW = 24.0      # window content inset (all four sides of a panel)
+_PAD_ROW_H = 24.0       # horizontal padding inside a card row
+_PAD_ROW_V = 14.0       # vertical padding inside a card row (was 10)
+_GAP_TITLE = 10.0       # gap between a section title and the card below it
+_GAP_GROUP = 28.0       # gap between successive title+card groups (was 20)
+_RADIUS_CARD = 12.0     # card corner radius (was 10)
 _RADIUS_CTRL = 9.0      # button / popup / segment corner radius
 _RADIUS_FIELD = 14.0    # text-input corner radius (nearly a pill at 30pt tall)
-_H_CONTROL = 28.0       # standard control height
-_H_FIELD = 30.0         # text-input height
+_H_CONTROL = 32.0       # standard control height (was 28 — more clickable)
+_H_FIELD = 32.0         # text-input height (matches control height)
 
 # Pill buttons — outlined "ghost" style (Screen Studio Shortcuts look):
 # near-transparent fill, hairline border, fill firms up slightly on
@@ -108,13 +108,15 @@ if _THEME == "dark":
     _BTN_BORDER = (1.0, 1.0, 1.0, 0.16)          # hairline outline
     _BTN_TEXT = (0.93, 0.93, 0.94, 1.0)
     _BTN_PRIMARY_FILL = (0.95, 0.95, 0.96, 1.0)  # white-ish
+    _BTN_PRIMARY_FILL_HOVER = (0.82, 0.82, 0.84, 1.0)
     _BTN_PRIMARY_TEXT = (0.06, 0.06, 0.07, 1.0)  # near-black
 else:  # light / offwhite
     _BTN_FILL = (1.0, 1.0, 1.0, 1.0)             # white on the warm bg
-    _BTN_FILL_HOVER = (0.0, 0.0, 0.0, 0.045)
-    _BTN_BORDER = (0.0, 0.0, 0.0, 0.16)          # hairline outline
+    _BTN_FILL_HOVER = (0.0, 0.0, 0.0, 0.04)
+    _BTN_BORDER = (0.0, 0.0, 0.0, 0.09)          # lighter hairline (was 0.16)
     _BTN_TEXT = (0.12, 0.12, 0.13, 1.0)
     _BTN_PRIMARY_FILL = (0.11, 0.11, 0.12, 1.0)  # near-black
+    _BTN_PRIMARY_FILL_HOVER = (0.28, 0.28, 0.30, 1.0)  # lighter dark on hover
     _BTN_PRIMARY_TEXT = (1.0, 1.0, 1.0, 1.0)     # white
 
 # Error / warning text colour (e.g. an invalid hotkey combo).
@@ -252,8 +254,10 @@ def _label(text: str, size: float = 13.0, dim: bool = False, bold: bool = False)
 
 
 def _section_header(text: str) -> NSTextField:
-    """Small uppercase header for grouping form rows."""
-    tf = _label(text.upper(), size=10.5, dim=True, bold=True)
+    """Sentence-case header for grouping form rows (Notion / Linear feel).
+    Slightly bigger than the labels below it so the visual hierarchy
+    reads cleanly without needing ALL CAPS shouting."""
+    tf = _label(text, size=13.0, dim=True, bold=True)
     return tf
 
 
@@ -347,17 +351,25 @@ class _PillButton(NSButton):
     flush against the edge."""
 
     def initWithTitle_primary_(self, title, primary):
+        return self.initWithTitle_primary_capsule_(title, primary, False)
+
+    def initWithTitle_primary_capsule_(self, title, primary, capsule):
         self = objc.super(_PillButton, self).init()
         if self is None:
             return None
         self._primary = bool(primary)
+        self._capsule = bool(capsule)
         self._hover = False
         self.setBordered_(False)
         self.setWantsLayer_(True)
         self.setTitle_(title)
         self.setFont_(_sysfont(13))
         layer = self.layer()
-        layer.setCornerRadius_(_RADIUS_CTRL)
+        # Capsule = fully-rounded ends (corner radius = half the control
+        # height). Default _RADIUS_CTRL is the slightly-rounded rectangle
+        # used for most buttons — used as fallback so existing callers
+        # are unaffected.
+        layer.setCornerRadius_(_H_CONTROL / 2.0 if self._capsule else _RADIUS_CTRL)
         if not self._primary:
             layer.setBorderWidth_(1.0)
             layer.setBorderColor_(_nscolor(_BTN_BORDER).CGColor())
@@ -367,7 +379,7 @@ class _PillButton(NSButton):
 
     def _apply_colors(self):
         if self._primary:
-            fill = _nscolor(_BTN_PRIMARY_FILL)
+            fill = _nscolor(_BTN_PRIMARY_FILL_HOVER if self._hover else _BTN_PRIMARY_FILL)
             text = _nscolor(_BTN_PRIMARY_TEXT)
             try:
                 self.cell().setBackgroundStyle_(1)  # NSBackgroundStyleEmphasized
@@ -406,10 +418,11 @@ class _PillButton(NSButton):
 
     def intrinsicContentSize(self):
         size = objc.super(_PillButton, self).intrinsicContentSize()
-        from Foundation import NSMakeSize
-        # Slim side padding, plus a small floor so single-word buttons
-        # ("Open", "Delete") don't look cramped.
-        return NSMakeSize(max(size.width + 18, 58.0), _H_CONTROL)
+        # Roomy side padding + a 100px floor so capsule buttons have
+        # enough breathing space and short-title buttons read as
+        # uniformly-sized pills across cards ("Open" / "Restart" /
+        # "GitHub" / "Delete" all land at the floor).
+        return NSMakeSize(max(size.width + 28, 100.0), _H_CONTROL)
 
     # Hover tracking ---------------------------------------------------
     def updateTrackingAreas(self):
@@ -429,17 +442,25 @@ class _PillButton(NSButton):
 
     def mouseEntered_(self, _event):
         self._hover = True
-        if not self._primary:
-            self._apply_colors()
+        self._apply_colors()
 
     def mouseExited_(self, _event):
         self._hover = False
-        if not self._primary:
-            self._apply_colors()
+        self._apply_colors()
 
 
-def _button(title: str, target=None, action: str | None = None, primary: bool = False):
-    btn = _PillButton.alloc().initWithTitle_primary_(title, primary)
+def _button(
+    title: str,
+    target=None,
+    action: str | None = None,
+    primary: bool = False,
+    capsule: bool = True,
+):
+    """Capsule pill button by default — matches the Settings UI's unified
+    capsule affordance (popups, segmented controls, action buttons all
+    have the same rounded-end shape). Pass ``capsule=False`` to opt out
+    if a tighter rounded-rect is needed (rare)."""
+    btn = _PillButton.alloc().initWithTitle_primary_capsule_(title, primary, capsule)
     if target is not None and action is not None:
         btn.setTarget_(target)
         btn.setAction_(action)
@@ -448,29 +469,96 @@ def _button(title: str, target=None, action: str | None = None, primary: bool = 
     return btn
 
 
+class _BlackToggle(NSControl):
+    """Custom iOS-style toggle. We can't tint NSSwitch (its on-state
+    color is the system accent — blue by default — and AppKit doesn't
+    expose a per-switch tint that actually works), so we draw our own:
+    a capsule track with a circular white knob that slides. On = black
+    track, off = light gray track. Click anywhere on the track to
+    toggle. Exposes NSSwitch-shaped API (``state()`` / ``setState_``)
+    plus the standard NSControl ``target`` / ``action`` so it's a
+    drop-in for the previous NSSwitch."""
+
+    _W = 42.0
+    _H = 22.0
+    _PAD = 2.0  # gap between knob and track edge
+
+    # Track colors. `_on` uses near-black to match the primary button
+    # fill; `_off` uses a neutral disabled-gray that reads as "inactive."
+    _ON_COLOR_LIGHT = (0.11, 0.11, 0.12, 1.0)
+    _ON_COLOR_DARK = (0.95, 0.95, 0.96, 1.0)
+    _OFF_COLOR_LIGHT = (0.0, 0.0, 0.0, 0.15)
+    _OFF_COLOR_DARK = (1.0, 1.0, 1.0, 0.20)
+
+    def init(self):
+        self = objc.super(_BlackToggle, self).init()
+        if self is None:
+            return None
+        self._on = False
+        self.setWantsLayer_(True)
+        self.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        return self
+
+    def intrinsicContentSize(self):
+        return NSMakeSize(self._W, self._H)
+
+    def state(self):
+        return 1 if self._on else 0
+
+    def setState_(self, v):
+        self._on = bool(int(v))
+        self.setNeedsDisplay_(True)
+
+    def acceptsFirstMouse_(self, _event):
+        return True
+
+    def mouseDown_(self, _event):
+        self._on = not self._on
+        self.setNeedsDisplay_(True)
+        tgt = self.target()
+        act = self.action()
+        if tgt is not None and act is not None:
+            try:
+                tgt.performSelector_withObject_(act, self)
+            except Exception:
+                pass
+
+    def drawRect_(self, _dirty):
+        from AppKit import NSBezierPath
+        from Foundation import NSMakeRect
+        bounds = self.bounds()
+        radius = bounds.size.height / 2.0
+        track_path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            bounds, radius, radius,
+        )
+        is_dark = _THEME == "dark"
+        if self._on:
+            color = self._ON_COLOR_DARK if is_dark else self._ON_COLOR_LIGHT
+        else:
+            color = self._OFF_COLOR_DARK if is_dark else self._OFF_COLOR_LIGHT
+        _nscolor(color).setFill()
+        track_path.fill()
+
+        knob_size = bounds.size.height - 2 * self._PAD
+        if self._on:
+            knob_x = bounds.size.width - knob_size - self._PAD
+        else:
+            knob_x = self._PAD
+        knob_rect = NSMakeRect(knob_x, self._PAD, knob_size, knob_size)
+        knob_path = NSBezierPath.bezierPathWithOvalInRect_(knob_rect)
+        NSColor.whiteColor().setFill()
+        knob_path.fill()
+
+
 def _checkbox(title: str, target=None, action: str | None = None):
-    """iOS-style pill toggle (NSSwitch, macOS 10.15+). Falls back to
-    NSButton checkbox on older systems. The title argument is kept for
-    backwards compat with existing callers but ignored — labels are
-    provided by the surrounding setting_row."""
-    try:
-        from AppKit import NSSwitch
-        sw = NSSwitch.alloc().init()
-        if target is not None and action is not None:
-            sw.setTarget_(target)
-            sw.setAction_(action)
-        sw.setTranslatesAutoresizingMaskIntoConstraints_(False)
-        return sw
-    except Exception:
-        btn = NSButton.alloc().init()
-        btn.setButtonType_(NSSwitchButton)
-        btn.setTitle_(title)
-        btn.setFont_(_sysfont(13))
-        if target is not None and action is not None:
-            btn.setTarget_(target)
-            btn.setAction_(action)
-        btn.setTranslatesAutoresizingMaskIntoConstraints_(False)
-        return btn
+    """Custom black/white toggle (see ``_BlackToggle``). The title argument
+    is kept for backwards compat with existing callers but ignored —
+    labels are provided by the surrounding setting_row."""
+    sw = _BlackToggle.alloc().init()
+    if target is not None and action is not None:
+        sw.setTarget_(target)
+        sw.setAction_(action)
+    return sw
 
 
 class _GhostPopUp(NSView):
@@ -493,7 +581,10 @@ class _GhostPopUp(NSView):
         self._menu_action = None
         self.setWantsLayer_(True)
         layer = self.layer()
-        layer.setCornerRadius_(_RADIUS_CTRL)
+        # Capsule corner radius — matches the segmented control + the
+        # capsule pill buttons used across Settings. Single, consistent
+        # affordance for "rounded interactive control."
+        layer.setCornerRadius_(_H_CONTROL / 2.0)
         layer.setBorderWidth_(1.0)
         layer.setBorderColor_(_nscolor(_BTN_BORDER).CGColor())
         layer.setBackgroundColor_(_nscolor(_BTN_FILL).CGColor())
@@ -512,11 +603,24 @@ class _GhostPopUp(NSView):
 
         self._chevron = NSImageView.alloc().init()
         try:
-            img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("chevron.down", None)
+            # chevron.up.chevron.down reads as "this is a picker, click
+            # for options" — clearer affordance than the plain
+            # chevron.down which can look static.
+            img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                "chevron.up.chevron.down", None,
+            )
+            if img is None:
+                # Fallback for older macOS where the compound symbol may
+                # not exist.
+                img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                    "chevron.down", None,
+                )
             if img is not None:
                 img.setTemplate_(True)
                 self._chevron.setImage_(img)
-            self._chevron.setContentTintColor_(_nscolor(_BTN_TEXT))
+            # Dim the chevron a touch so the value text reads as the
+            # primary element of the pill.
+            self._chevron.setContentTintColor_(NSColor.tertiaryLabelColor())
         except Exception:
             pass
         self._chevron.setTranslatesAutoresizingMaskIntoConstraints_(False)
@@ -524,11 +628,15 @@ class _GhostPopUp(NSView):
 
         NSLayoutConstraint.activateConstraints_([
             self.heightAnchor().constraintEqualToConstant_(_H_CONTROL),
-            self._value_lbl.leadingAnchor().constraintEqualToAnchor_constant_(self.leadingAnchor(), 11.0),
+            # Minimum width so even short labels like "Skip" feel like a
+            # real button instead of a tiny right-pinned stripe. The
+            # popup grows beyond this if its longest item demands it.
+            self.widthAnchor().constraintGreaterThanOrEqualToConstant_(180.0),
+            self._value_lbl.leadingAnchor().constraintEqualToAnchor_constant_(self.leadingAnchor(), 14.0),
             self._value_lbl.centerYAnchor().constraintEqualToAnchor_(self.centerYAnchor()),
-            self._chevron.trailingAnchor().constraintEqualToAnchor_constant_(self.trailingAnchor(), -10.0),
+            self._chevron.trailingAnchor().constraintEqualToAnchor_constant_(self.trailingAnchor(), -12.0),
             self._chevron.centerYAnchor().constraintEqualToAnchor_(self.centerYAnchor()),
-            self._value_lbl.trailingAnchor().constraintEqualToAnchor_constant_(
+            self._value_lbl.trailingAnchor().constraintLessThanOrEqualToAnchor_constant_(
                 self._chevron.leadingAnchor(), -8.0
             ),
         ])
@@ -609,30 +717,104 @@ def _popup(items: list[str], selected: str | None = None, target=None, action: s
 class _SegButton(NSButton):
     """A single segment button — flat, layer-bordered, with real
     horizontal padding added via ``intrinsicContentSize`` (so the plain,
-    un-padded title centres cleanly inside it). Fixed control height."""
+    un-padded title centres cleanly inside it). Fixed control height.
+
+    Optional NSGradient background: when ``_grad_selected`` is True and
+    ``_grad_top`` / ``_grad_bottom`` are set, ``drawRect_`` paints a
+    vertical gradient INSIDE drawRect (so the result lands in the layer's
+    ``contents`` and the title — drawn by super afterwards — renders ON
+    TOP, not under). A CAGradientLayer sublayer would have rendered above
+    the title (since the title is captured into the main layer's
+    ``contents`` and sublayers paint over it), which is the gotcha that
+    forced this approach.
+    """
 
     _PAD_H = 18.0
+    _grad_selected = False
+    _grad_left = None     # tuple (r,g,b,a) when set
+    _grad_right = None    # tuple (r,g,b,a) when set
 
     def intrinsicContentSize(self):
         s = objc.super(_SegButton, self).intrinsicContentSize()
         from Foundation import NSMakeSize
         return NSMakeSize(s.width + 2 * self._PAD_H, _H_CONTROL)
 
+    def drawRect_(self, dirty):
+        if self._grad_selected and self._grad_left is not None and self._grad_right is not None:
+            from AppKit import NSBezierPath, NSGradient
+            left = _nscolor(self._grad_left)
+            right = _nscolor(self._grad_right)
+            grad = NSGradient.alloc().initWithStartingColor_endingColor_(left, right)
+            bounds = self.bounds()
+            radius = bounds.size.height / 2.0
+            path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(bounds, radius, radius)
+            # angle=0 means left→right (start on left, end on right). Horizontal
+            # is more legible than vertical on a wide capsule and reads as the
+            # gradient's "story" across the pill rather than a top-lit dome.
+            grad.drawInBezierPath_angle_(path, 0.0)
+        objc.super(_SegButton, self).drawRect_(dirty)
+
 
 class _GhostSegment(NSStackView):
-    """Segmented control = an NSStackView of equal-width ghost buttons.
-    Subclassing NSStackView (rather than wrapping one in a plain NSView)
-    means the control has an honest intrinsic content size, so it hugs
-    its buttons and gets pinned to the row's trailing edge cleanly —
-    no stretching. Exposes ``setSelectedSegment_`` / ``selectedSegment``
-    so it's a drop-in for NSSegmentedControl in the refresh code.
+    """Segmented control rendered as a single rounded gray track that
+    contains the segments. Selected segment = white pill sitting on top
+    of the track; unselected = just label text on the gray track. No
+    individual button borders — the OUTER container provides the visual
+    boundary.
 
-    Selected button: a darker-grey outline + bold text (Screen-Studio's
-    pattern, neutral grey). Unselected: hairline border, regular text."""
+    This is the "track + sliding pill" pattern (iOS / Notion / Linear);
+    K.'s reference. Earlier iterations had each segment as its own
+    outlined ghost button which read as separate widgets rather than
+    one control.
 
-    _SEL_BORDER = (0.0, 0.0, 0.0, 0.32)
+    NSStackView subclass so we can drive layer-backed background drawing
+    on the stack itself. FillEqually distribution + zero spacing makes
+    the segments share the available width with no visible gap (the
+    track shows through only as a border around the white pill).
+
+    Exposes ``setSelectedSegment_`` / ``selectedSegment`` so it stays a
+    drop-in for NSSegmentedControl in the refresh code.
+    """
+
+    # Track + pill colors. Kept here (not in the top-of-file theme block)
+    # so the whole pattern reads as one widget. Two visual styles:
+    #   - "default": white pill, hairline border, dark text — used inside
+    #     cards (the 9 tuning rows + Voice tab Speed). Reads as neutral
+    #     control affordance, doesn't pull eye away from row labels.
+    #   - "orange_gradient": warm orange pill with NSGradient top→bottom,
+    #     white bold text, no border — used ONLY for the Tuning tab
+    #     switcher (How much / How it sounds). Brand accent for navigation,
+    #     not for values. K.'s spec.
+    _TRACK_BG_LIGHT = (0.0, 0.0, 0.0, 0.055)
+    _TRACK_BG_DARK = (1.0, 1.0, 1.0, 0.06)
+    _PILL_BG_LIGHT = (1.0, 1.0, 1.0, 1.0)
+    _PILL_BG_DARK = (1.0, 1.0, 1.0, 0.12)
+    _PILL_BORDER_LIGHT = (0.0, 0.0, 0.0, 0.08)
+    _PILL_BORDER_DARK = (1.0, 1.0, 1.0, 0.08)
+    # Brand gradient endpoints — peach LEFT → lavender RIGHT, taken
+    # verbatim from the heard.dev logo SVG (docs/assets/logo/*).
+    # NSGradient draws angle=0 (left→right). Matte by construction — no
+    # specular, no inner highlight layer. Drawn in _SegButton.drawRect_
+    # (NSGradient via NSBezierPath, then super draws the title on top)
+    # because a CAGradientLayer SUBLAYER would render above the button's
+    # title — the title is captured into the main layer's `contents`,
+    # and sublayers paint over `contents`. drawRect captures into
+    # `contents` itself, so the title naturally lands on top.
+    # NOTE: both stops are light, so white text reads softer than ideal
+    # (~2-3:1 contrast). K.'s stylistic call — keeping it.
+    _PILL_GRAD_LEFT = (0.961, 0.647, 0.537, 1.0)    # #F5A589 peach (logo)
+    _PILL_GRAD_RIGHT = (0.722, 0.643, 0.831, 1.0)   # #B8A4D4 lavender (logo)
+    _PILL_TEXT_ON_ORANGE = (1.0, 1.0, 1.0, 1.0)
+
+    # Internal padding so the white pill sits INSIDE the gray track with
+    # a thin gray border showing around it. Matches the Notion-style
+    # spec K. referenced.
+    _TRACK_INSET = 3.0
 
     def initWithLabels_target_action_(self, labels, target, action):
+        return self.initWithLabels_target_action_accent_(labels, target, action, "default")
+
+    def initWithLabels_target_action_accent_(self, labels, target, action, accent):
         self = objc.super(_GhostSegment, self).init()
         if self is None:
             return None
@@ -641,10 +823,36 @@ class _GhostSegment(NSStackView):
         self._target = target
         self._action = action
         self._buttons = []
+        # "default" → white pill, dark text (in-card use).
+        # "orange_gradient" → orange-gradient pill, white text, used ONLY
+        # for the Tuning tab switcher (How much / How it sounds).
+        self._accent = str(accent or "default")
 
         self.setOrientation_(NSUserInterfaceLayoutOrientationHorizontal)
-        self.setSpacing_(6.0)
+        # Zero spacing between segments — the gray track shows AROUND the
+        # selected pill, not BETWEEN unselected segments.
+        self.setSpacing_(0.0)
+        from AppKit import NSEdgeInsetsMake, NSStackViewDistributionFillEqually
+        self.setDistribution_(NSStackViewDistributionFillEqually)
+        self.setEdgeInsets_(NSEdgeInsetsMake(
+            self._TRACK_INSET, self._TRACK_INSET,
+            self._TRACK_INSET, self._TRACK_INSET,
+        ))
         self.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+        # Layer-back the stack itself so we can draw the gray track.
+        # Fully rounded ends (capsule shape) — corner radius = half the
+        # control height. K.'s pill-shaped reference.
+        self.setWantsLayer_(True)
+        track_bg = self._TRACK_BG_DARK if _THEME == "dark" else self._TRACK_BG_LIGHT
+        layer = self.layer()
+        layer.setCornerRadius_(_H_CONTROL / 2.0)
+        layer.setBackgroundColor_(_nscolor(track_bg).CGColor())
+
+        # Inner pill height = control height minus the top + bottom
+        # track insets. Its radius = half that height so the pill is
+        # also a true capsule, sitting concentrically inside the track.
+        pill_radius = max(2.0, (_H_CONTROL - 2 * self._TRACK_INSET) / 2.0)
 
         for i, lbl in enumerate(self._labels):
             b = _SegButton.alloc().init()
@@ -652,42 +860,108 @@ class _GhostSegment(NSStackView):
             b.setWantsLayer_(True)
             b.setTitle_(lbl)
             b.setFont_(_sysfont(13))
-            layer = b.layer()
-            layer.setCornerRadius_(_RADIUS_CTRL)
-            layer.setBorderWidth_(1.0)
-            layer.setBorderColor_(_nscolor(_BTN_BORDER).CGColor())
-            layer.setBackgroundColor_(_nscolor(_BTN_FILL).CGColor())
+            bl = b.layer()
+            bl.setCornerRadius_(pill_radius)
+            bl.setBorderWidth_(0.0)
+            bl.setBackgroundColor_(NSColor.clearColor().CGColor())
             b.setTarget_(self)
             b.setAction_("_segClicked:")
             b.setTag_(i)
+            # Relax hugging + compression resistance so FillEqually wins.
+            # Without these, _SegButton's intrinsicContentSize keeps
+            # short-text buttons narrower than long-text ones — which is
+            # exactly what made "How much" pill twice the width of
+            # "How it sounds" in the tab switcher. Equal-width is the
+            # whole point of the track.
+            try:
+                b.setContentHuggingPriority_forOrientation_(1.0, 0)
+                b.setContentCompressionResistancePriority_forOrientation_(1.0, 0)
+            except Exception:
+                pass
+            # Seed gradient colors on the button when this is the
+            # orange-tab style. _restyle toggles _grad_selected per pick.
+            if self._accent == "orange_gradient":
+                b._grad_left = self._PILL_GRAD_LEFT
+                b._grad_right = self._PILL_GRAD_RIGHT
             self._buttons.append(b)
             self.addArrangedSubview_(b)
-
-        # All segments share the widest button's width.
-        for b in self._buttons[1:]:
-            NSLayoutConstraint.activateConstraints_([
-                b.widthAnchor().constraintEqualToAnchor_(self._buttons[0].widthAnchor()),
-            ])
+        # Belt-and-suspenders equal-width: explicit constraints pinning
+        # every button to the same width as the first. FillEqually SHOULD
+        # already do this, but the tab switcher in settings_window.py had
+        # called setDistribution_(NSStackViewDistributionFill) on top of
+        # us, which broke equal widths. These constraints are immune to
+        # that — they force equality regardless of distribution.
+        if len(self._buttons) >= 2:
+            try:
+                first = self._buttons[0]
+                for other in self._buttons[1:]:
+                    other.widthAnchor().constraintEqualToAnchor_(
+                        first.widthAnchor()
+                    ).setActive_(True)
+            except Exception:
+                pass
         self._restyle()
         return self
 
     def _restyle(self):
+        """Selected = white pill on the gray track, with a hairline border
+        + very subtle shadow so it reads as elevated. Unselected = label
+        text on the bare track (no per-button background or border)."""
         from AppKit import NSCenterTextAlignment, NSMutableParagraphStyle
+
+        is_dark = _THEME == "dark"
+        is_orange = (self._accent == "orange_gradient")
+        pill_bg = self._PILL_BG_DARK if is_dark else self._PILL_BG_LIGHT
+        pill_border = self._PILL_BORDER_DARK if is_dark else self._PILL_BORDER_LIGHT
+
         for i, b in enumerate(self._buttons):
             sel = (i == self._selected)
+            layer = b.layer()
             if sel:
-                b.layer().setBorderWidth_(1.5)
-                b.layer().setBorderColor_(_nscolor(self._SEL_BORDER).CGColor())
+                if is_orange:
+                    # Gradient is painted in drawRect_. Layer background
+                    # stays clear so the gradient shows through; turn the
+                    # gradient flag on and request a redraw.
+                    layer.setBackgroundColor_(NSColor.clearColor().CGColor())
+                    layer.setBorderWidth_(0.0)
+                    b._grad_selected = True
+                    b.setNeedsDisplay_(True)
+                    # Subtle drop shadow gives the orange pill some lift.
+                    layer.setShadowOpacity_(0.20)
+                    layer.setShadowRadius_(3.0)
+                    from Foundation import NSMakeSize
+                    layer.setShadowOffset_(NSMakeSize(0.0, -1.0))
+                    layer.setMasksToBounds_(False)
+                    text_color = _nscolor(self._PILL_TEXT_ON_ORANGE)
+                else:
+                    layer.setBackgroundColor_(_nscolor(pill_bg).CGColor())
+                    layer.setBorderWidth_(1.0)
+                    layer.setBorderColor_(_nscolor(pill_border).CGColor())
+                    # Very subtle drop shadow on the white pill.
+                    layer.setShadowOpacity_(0.06)
+                    layer.setShadowRadius_(2.0)
+                    from Foundation import NSMakeSize
+                    layer.setShadowOffset_(NSMakeSize(0.0, -1.0))
+                    layer.setMasksToBounds_(False)
+                    text_color = _nscolor(_BTN_TEXT)
             else:
-                b.layer().setBorderWidth_(1.0)
-                b.layer().setBorderColor_(_nscolor(_BTN_BORDER).CGColor())
+                layer.setBackgroundColor_(NSColor.clearColor().CGColor())
+                layer.setBorderWidth_(0.0)
+                layer.setShadowOpacity_(0.0)
+                if is_orange:
+                    b._grad_selected = False
+                    b.setNeedsDisplay_(True)
+                # Unselected segment text is a touch dimmer than the
+                # selected pill so the selection reads as the active one
+                # even without the bg contrast doing all the work.
+                text_color = _nscolor(_BTN_TEXT) if is_dark else NSColor.secondaryLabelColor()
             ps = NSMutableParagraphStyle.alloc().init()
             ps.setAlignment_(NSCenterTextAlignment)
             font = _sysfont(13, bold=True) if sel else _sysfont(13)
             b.setAttributedTitle_(
                 NSAttributedString.alloc().initWithString_attributes_(
                     self._labels[i],
-                    {"NSColor": _nscolor(_BTN_TEXT), "NSFont": font, "NSParagraphStyle": ps},
+                    {"NSColor": text_color, "NSFont": font, "NSParagraphStyle": ps},
                 )
             )
 
@@ -712,6 +986,16 @@ class _GhostSegment(NSStackView):
 
 def _segmented(labels: list[str], target, action: str) -> _GhostSegment:
     return _GhostSegment.alloc().initWithLabels_target_action_(list(labels), target, action)
+
+
+def _segmented_tabs(labels: list[str], target, action: str) -> _GhostSegment:
+    """Orange-gradient variant of _segmented. Reserved for top-level tab
+    navigation inside a panel (currently just the Tuning tab's How much /
+    How it sounds switcher). Use _segmented (white pill) for value picks
+    inside a card — orange everywhere would be visual noise."""
+    return _GhostSegment.alloc().initWithLabels_target_action_accent_(
+        list(labels), target, action, "orange_gradient",
+    )
 
 
 def _equal_widths(views: list) -> None:
@@ -970,6 +1254,65 @@ def _field_row(
         stack.leadingAnchor().constraintEqualToAnchor_constant_(row.leadingAnchor(), _PAD_ROW_H),
         stack.trailingAnchor().constraintEqualToAnchor_constant_(row.trailingAnchor(), -_PAD_ROW_H),
     ])
+    return row
+
+
+def _stacked_pick_row(
+    title: str,
+    description: str,
+    control: NSView,
+) -> NSView:
+    """Like _setting_row but the control sits BELOW the label/description,
+    spanning the full card width. Used for segmented pickers (Tuning
+    tab) where:
+      * the label area would otherwise compete with the control for
+        horizontal real estate (squishing the description into 1-2 word
+        lines on shorter rows)
+      * the control benefits from filling the full row width so its
+        segments are equal and substantial (matches the Notion /
+        Linear pill-pick pattern K. wanted instead of right-pinned
+        controls)."""
+    row = NSView.alloc().init()
+    row.setTranslatesAutoresizingMaskIntoConstraints_(False)
+
+    title_lbl = _label(title, size=13, bold=True)
+    _low_priority_text(title_lbl, wrap=False)
+    row.addSubview_(title_lbl)
+    desc_lbl = None
+    if description:
+        desc_lbl = _label(description, size=12, dim=True)
+        _low_priority_text(desc_lbl, wrap=True)
+        row.addSubview_(desc_lbl)
+    row.addSubview_(control)
+
+    cons: list = [
+        title_lbl.topAnchor().constraintEqualToAnchor_constant_(row.topAnchor(), _PAD_ROW_V),
+        title_lbl.leadingAnchor().constraintEqualToAnchor_constant_(row.leadingAnchor(), _PAD_ROW_H),
+        title_lbl.trailingAnchor().constraintLessThanOrEqualToAnchor_constant_(
+            row.trailingAnchor(), -_PAD_ROW_H,
+        ),
+    ]
+    if desc_lbl is not None:
+        cons += [
+            desc_lbl.topAnchor().constraintEqualToAnchor_constant_(title_lbl.bottomAnchor(), 3.0),
+            desc_lbl.leadingAnchor().constraintEqualToAnchor_(title_lbl.leadingAnchor()),
+            desc_lbl.trailingAnchor().constraintLessThanOrEqualToAnchor_constant_(
+                row.trailingAnchor(), -_PAD_ROW_H,
+            ),
+        ]
+        control_top_anchor = desc_lbl.bottomAnchor()
+    else:
+        control_top_anchor = title_lbl.bottomAnchor()
+    cons += [
+        # Full-width control below the text — leading + trailing pinned
+        # to the row's content insets. FillEqually distribution inside
+        # _GhostSegment makes every segment share this width equally.
+        control.topAnchor().constraintEqualToAnchor_constant_(control_top_anchor, 10.0),
+        control.leadingAnchor().constraintEqualToAnchor_constant_(row.leadingAnchor(), _PAD_ROW_H),
+        control.trailingAnchor().constraintEqualToAnchor_constant_(row.trailingAnchor(), -_PAD_ROW_H),
+        control.bottomAnchor().constraintEqualToAnchor_constant_(row.bottomAnchor(), -_PAD_ROW_V),
+    ]
+    NSLayoutConstraint.activateConstraints_(cons)
     return row
 
 
