@@ -2608,6 +2608,16 @@ class _OnboardingController(NSObject):
             pl = r.get("plan_lbl")
             if pl is not None:
                 pl.setStringValue_(self._plan_caption(cfg))
+            # Bug fix 2026-06-03: the early-return here used to skip
+            # `_update_chrome`, which is what flips `_next_btn` from
+            # disabled to enabled. Result: even after sign-in succeeds,
+            # Continue stayed disabled (dim title on the dark capsule)
+            # and didn't respond to clicks. Re-run chrome before
+            # returning so the bottom bar reflects the signed-in state.
+            try:
+                self._update_chrome()
+            except Exception:
+                pass
             return
         if fs is not None:
             fs.setHidden_(False)
