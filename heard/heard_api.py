@@ -43,12 +43,6 @@ class TokenInfo:
     email: str
     trial_expires_at: int
     returning: bool
-    # True iff this token was minted by /v1/auth/anonymous (anon-trial
-    # flow). Lets the wizard / menu show "Sign in to extend your trial"
-    # instead of acting like the user has a verified account. Defaults
-    # to False so existing callers (verify_code, claim_install_code)
-    # don't need to touch this field.
-    is_anonymous: bool = False
 
 
 class HeardApiError(RuntimeError):
@@ -179,34 +173,9 @@ def load_or_create_device_id(data_dir: Path) -> str:
     return new_id
 
 
-def request_anon_trial(
-    device_id: str, base_url: str = DEFAULT_BASE_URL
-) -> TokenInfo:
-    """Mint an anonymous trial token bound to ``device_id``. Same
-    device_id always returns the same trial (idempotent on the server
-    side). Returns a TokenInfo with is_anonymous=True.
-
-    Raises ``HeardApiError(400, 'invalid_request')`` on a malformed
-    device_id, ``HeardApiError(402, 'trial_expired')`` when the device
-    has already burned its 7-day anon trial (must sign in to extend),
-    ``HeardApiError(0, 'network_unreachable')`` on network failure —
-    callers should treat the network case as a retry candidate, not a
-    hard failure (see daemon boot path)."""
-    payload = _post_json(
-        f"{base_url.rstrip('/')}/v1/auth/anonymous",
-        {"device_id": device_id},
-    )
-    token = (payload.get("token") or "").strip()
-    if not token:
-        raise HeardApiError(500, "missing_token", json.dumps(payload)[:200])
-    return TokenInfo(
-        token=token,
-        plan=str(payload.get("plan") or "trial"),
-        email="",  # anon accounts have a synthetic placeholder; never surface
-        trial_expires_at=int(payload.get("trial_expires_at") or 0),
-        returning=False,
-        is_anonymous=bool(payload.get("is_anonymous", True)),
-    )
+# request_anon_trial() was here. Removed 2026-06-02 with the rest of
+# the anon-trial path — the wizard now requires sign-in. The endpoint
+# at /v1/auth/anonymous returns 410 Gone.
 
 
 def _local_device_name() -> str:

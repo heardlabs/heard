@@ -115,12 +115,6 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
     if email:
         config.set_value("heard_email", email)
     config.set_value("heard_trial_expires_at", int(trial_expires_at or 0))
-    # Sign-in always produces a verified account — clear the anonymous
-    # flag so the menu bar drops the "Sign in to extend" affordance.
-    # heard_anon_trial_used stays True so we never reach back to the
-    # anon endpoint on this device after a deliberate sign-out.
-    config.set_value("heard_is_anonymous", False)
-    config.set_value("heard_anon_trial_used", True)
     _reload_and_selftest()
     _bring_onboarding_forward_signed_in(email or "your account")
 

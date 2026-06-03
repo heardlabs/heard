@@ -1085,11 +1085,6 @@ class SettingsController(NSObject):
                 config.set_value("heard_plan", info.plan)
                 config.set_value("heard_email", info.email)
                 config.set_value("heard_trial_expires_at", int(info.trial_expires_at or 0))
-                # Sign-in produces a verified account; clear the anon
-                # flag and pin used-flag so a future sign-out doesn't
-                # silently mint a new anon trial on this device.
-                config.set_value("heard_is_anonymous", False)
-                config.set_value("heard_anon_trial_used", True)
                 _mark_onboarded()
                 field.setStringValue_("")
                 status_label.setStringValue_("✓ Signed in.")
@@ -1990,9 +1985,7 @@ class _OnboardingController(NSObject):
         if on_signin:
             cfg_now = config.load()
             tok = (cfg_now.get("heard_token") or "").strip()
-            is_anon = bool(cfg_now.get("heard_is_anonymous"))
-            signed_in = bool(tok) and not is_anon
-            self._next_btn.setEnabled_(signed_in)
+            self._next_btn.setEnabled_(bool(tok))
         else:
             self._next_btn.setEnabled_(True)
         self._skip_btn.setHidden_(True)
@@ -2088,10 +2081,10 @@ class _OnboardingController(NSObject):
         # block heard://, no protocol handler registered, etc).
         v = NSView.alloc().init()
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
-        title = _wizard_title("Extend your trial")
+        title = _wizard_title("Sign in to Heard")
         body = _wizard_body(
-            "Voice is working right now on a 7-day trial. Sign in to "
-            "extend to 30 days and sync your settings across Macs."
+            "Sign in to unlock voice — free for 30 days, no credit "
+            "card needed. Settings sync across your Macs."
         )
 
         signin_btn = _button(
@@ -2200,14 +2193,7 @@ class _OnboardingController(NSObject):
         r = self._refs
         fs, ss = r.get("form_stack"), r.get("signedin_stack")
         token = (cfg.get("heard_token") or "").strip()
-        # Anonymous-trial tokens are real bearers but the wizard should
-        # still show the sign-in form — the whole point of the step is
-        # to convert anon → verified. Without this gate the "Extend
-        # your trial" screen reads as "✓ Signed in" the moment the
-        # daemon's anon-trial fetch lands, which silently swallows the
-        # entire sign-up flow for fresh installs.
-        is_anon = bool(cfg.get("heard_is_anonymous"))
-        if token and not is_anon and not self._signin_show_form:
+        if token and not self._signin_show_form:
             if fs is not None:
                 fs.setHidden_(True)
             if ss is not None:
@@ -2381,11 +2367,6 @@ class _OnboardingController(NSObject):
                 config.set_value("heard_plan", info.plan)
                 config.set_value("heard_email", info.email)
                 config.set_value("heard_trial_expires_at", int(info.trial_expires_at or 0))
-                # Sign-in produces a verified account; clear the anon
-                # flag and pin used-flag so a future sign-out doesn't
-                # silently mint a new anon trial on this device.
-                config.set_value("heard_is_anonymous", False)
-                config.set_value("heard_anon_trial_used", True)
                 cf.setStringValue_("")
                 self._signin_code_sent = False
                 self._signin_show_form = False
@@ -2462,11 +2443,6 @@ class _OnboardingController(NSObject):
                 config.set_value("heard_plan", info.plan)
                 config.set_value("heard_email", info.email)
                 config.set_value("heard_trial_expires_at", int(info.trial_expires_at or 0))
-                # Sign-in produces a verified account; clear the anon
-                # flag and pin used-flag so a future sign-out doesn't
-                # silently mint a new anon trial on this device.
-                config.set_value("heard_is_anonymous", False)
-                config.set_value("heard_anon_trial_used", True)
                 field.setStringValue_("")
                 self._signin_code_sent = False
                 self._signin_show_form = False

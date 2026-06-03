@@ -30,7 +30,6 @@ from heard import (
     config,
     defects,
     harness,
-    heard_api,
     history,
     hotkey,
     notify,
@@ -163,7 +162,6 @@ class Daemon:
         # already set, or if the user has been signed out (heard_plan
         # = "expired" or "signed_out") so we don't re-create anon
         # state on a deliberate sign-out.
-        self._maybe_start_anon_trial()
         self.sessions = SessionStore()
         # Multi-agent router. Decides per-event whether to speak,
         # drop, or defer to a digest summary, based on how many
@@ -737,85 +735,10 @@ class Daemon:
             return kokoro
         return NullTTS()
 
-    def _maybe_start_anon_trial(self) -> None:
-        """Retired 2026-06-02. Anonymous sign-in created two auth paths
-        through onboarding (sign-in vs. silent device-bound trial) and
-        was the source of "signed in but no email" bugs in the menu
-        bar plus a 5K/day cap so tight it was a worse first impression
-        than just asking for sign-in. The endpoint at /v1/auth/anonymous
-        now returns 410 Gone; this function is the matching no-op on
-        the client side. Wizard makes sign-in the only path forward."""
-        return
-
-    def _anon_trial_fetch(self) -> None:
-        """Background worker for ``_maybe_start_anon_trial``. See its
-        docstring for the policy."""
-        device_id = heard_api.load_or_create_device_id(config.DATA_DIR)
-        base_url = (
-            self.cfg.get("heard_api_base") or "https://api.heard.dev"
-        )
-        backoff_s = 2.0
-        for attempt in range(5):
-            try:
-                info = heard_api.request_anon_trial(
-                    device_id, base_url=base_url
-                )
-            except heard_api.HeardApiError as e:
-                if e.status == 402:
-                    _log("anon_trial_already_burned", reason=e.reason)
-                    try:
-                        config.set_value("heard_anon_trial_used", True)
-                    except Exception:
-                        pass
-                    return
-                if e.status == 0:
-                    _log(
-                        "anon_trial_retry",
-                        attempt=attempt,
-                        reason=e.reason,
-                    )
-                    time.sleep(backoff_s)
-                    backoff_s = min(backoff_s * 2, 30.0)
-                    continue
-                _log(
-                    "anon_trial_failed",
-                    status=e.status,
-                    reason=e.reason,
-                )
-                return
-            except Exception as e:  # noqa: BLE001
-                _log("anon_trial_unexpected", err=str(e))
-                return
-
-            # Success. Persist the three config keys ManagedTTS + the
-            # menu bar's plan UI care about, then reload so _make_tts
-            # re-picks. heard_anon_trial_used is the gate that keeps
-            # us from re-trialing across reinstalls on the same device
-            # (the server enforces this anyway via accounts.device_id;
-            # the local flag is just faster than a round-trip 402).
-            try:
-                config.set_value("heard_token", info.token)
-                config.set_value("heard_plan", info.plan)
-                config.set_value(
-                    "heard_trial_expires_at", info.trial_expires_at
-                )
-                config.set_value("heard_is_anonymous", info.is_anonymous)
-                config.set_value("heard_anon_trial_used", True)
-            except Exception as e:  # noqa: BLE001
-                _log("anon_trial_persist_failed", err=str(e))
-                return
-            _log(
-                "anon_trial_minted",
-                plan=info.plan,
-                expires_at=info.trial_expires_at,
-            )
-            try:
-                self._reload_config()
-            except Exception as e:  # noqa: BLE001
-                _log("anon_trial_reload_failed", err=str(e))
-            return
-
-        _log("anon_trial_gave_up")
+    # _maybe_start_anon_trial + _anon_trial_fetch were ripped out
+    # 2026-06-02 with the rest of the anon-trial path. The wizard now
+    # requires sign-in; the server endpoint returns 410 Gone. See
+    # signup.ts:authAnonTrial for the server-side stub.
 
     def _hotkey_signature(self, cfg: dict) -> tuple:
         """Snapshot of every config value that affects hotkey wiring.
