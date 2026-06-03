@@ -118,6 +118,95 @@ def uninstall(agent: str) -> None:
     typer.echo(f"Removed hook for {agent}.")
 
 
+def _harness_observability_snapshot(tail_lines: int = 5000) -> dict | None:
+    """Parse the tail of daemon.log into a quick harness-health
+    snapshot for `heard status`. Bounded read — large logs would
+    otherwise make `heard status` slow to print.
+
+    Returns None when the log is missing / unreadable; returns a dict
+    with hit/miss/punt counts and synth-latency p50/p95 otherwise.
+    Best-effort — any parse error on an individual line is skipped
+    rather than blowing up the report.
+    """
+    log = config.LOG_PATH
+    if not log.exists():
+        return None
+    try:
+        with log.open(encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    recent = lines[-tail_lines:] if len(lines) > tail_lines else lines
+
+    harness_speak = 0
+    fastpath_speak = 0
+    v1_speak = 0   # event_speak with no via= tag → v1 fallback path
+    harness_punt = 0
+    cache_hits = 0     # haiku_cache lines with cache_read > 0
+    cache_misses = 0   # haiku_cache harness lines with cache_read == 0
+    synth_ms: list[int] = []
+
+    for line in recent:
+        if "ev=event_speak" in line:
+            if "via=harness" in line:
+                harness_speak += 1
+            elif "via=fastpath" in line:
+                fastpath_speak += 1
+            else:
+                v1_speak += 1
+        elif "ev=event_harness_punt" in line:
+            harness_punt += 1
+        elif "ev=haiku_cache" in line and "path=harness" in line:
+            # Strict: only harness calls. wm_compress + warmup are
+            # separate calls with different cache lifecycles.
+            if "path=harness_warmup" in line:
+                continue
+            # crude key=value parse — sufficient for our log shape
+            kv = dict(
+                p.split("=", 1) for p in line.strip().split() if "=" in p
+            )
+            cr = int(kv.get("cache_read", "0") or 0)
+            if cr > 0:
+                cache_hits += 1
+            else:
+                cache_misses += 1
+        elif "ev=synth_ok" in line:
+            kv = dict(
+                p.split("=", 1) for p in line.strip().split() if "=" in p
+            )
+            try:
+                synth_ms.append(int(kv.get("ms", "0") or 0))
+            except (ValueError, TypeError):
+                pass
+
+    p50 = p95 = 0
+    if synth_ms:
+        synth_ms.sort()
+        p50 = synth_ms[len(synth_ms) // 2]
+        p95 = synth_ms[max(0, int(len(synth_ms) * 0.95) - 1)]
+
+    total_speak = harness_speak + fastpath_speak + v1_speak
+    return {
+        "tail_lines": len(recent),
+        "harness_speak": harness_speak,
+        "fastpath_speak": fastpath_speak,
+        "v1_speak": v1_speak,
+        "total_speak": total_speak,
+        "harness_punt": harness_punt,
+        "cache_hits": cache_hits,
+        "cache_misses": cache_misses,
+        "synth_p50_ms": p50,
+        "synth_p95_ms": p95,
+        "synth_samples": len(synth_ms),
+    }
+
+
+def _format_pct(num: int, denom: int) -> str:
+    if denom <= 0:
+        return "n/a"
+    return f"{(100.0 * num / denom):.0f}%"
+
+
 @app.command(hidden=True)
 def status() -> None:
     """Show daemon + install status, plus the Layer 2 Agent State
@@ -130,6 +219,42 @@ def status() -> None:
     for name, adapter in ADAPTERS.items():
         installed = "installed" if adapter.is_installed() else "not installed"
         typer.echo(f"{name:<14}{installed}")
+
+    # Harness observability — a quick health snapshot from the last
+    # ~5000 daemon-log lines. Catches "cache stopped firing" /
+    # "punt rate spiked" / "latency regressed" classes of regressions
+    # without K. having to grep the log themselves. Best-effort —
+    # silently skipped if the log is missing.
+    snap = _harness_observability_snapshot()
+    if snap:
+        typer.echo("")
+        typer.echo(f"harness  (last {snap['tail_lines']} log lines):")
+        total = snap["total_speak"]
+        typer.echo(
+            f"  via:        harness={snap['harness_speak']} "
+            f"({_format_pct(snap['harness_speak'], total)})  "
+            f"fastpath={snap['fastpath_speak']} "
+            f"({_format_pct(snap['fastpath_speak'], total)})  "
+            f"v1-fallback={snap['v1_speak']} "
+            f"({_format_pct(snap['v1_speak'], total)})"
+        )
+        cache_total = snap["cache_hits"] + snap["cache_misses"]
+        typer.echo(
+            f"  cache:      hit-rate "
+            f"{_format_pct(snap['cache_hits'], cache_total)}  "
+            f"({snap['cache_hits']} hits / {snap['cache_misses']} misses)"
+        )
+        punt_denom = snap["harness_speak"] + snap["harness_punt"]
+        typer.echo(
+            f"  punt-rate:  {_format_pct(snap['harness_punt'], punt_denom)}  "
+            f"({snap['harness_punt']} punts → v1)"
+        )
+        if snap["synth_samples"] > 0:
+            typer.echo(
+                f"  synth:      p50={snap['synth_p50_ms']}ms  "
+                f"p95={snap['synth_p95_ms']}ms  "
+                f"(n={snap['synth_samples']})"
+            )
 
     # Agent State scoreboard (Layer 2). Only printed when the daemon
     # is up and at least one agent is active. The daemon already
@@ -925,6 +1050,104 @@ def preferences_list(
         typer.echo(
             f"  {r.slot.ljust(width)}  {_format_pref_value(r.value):24}  ({r.source})"
         )
+
+
+@prefs_app.command("explain")
+def preferences_explain(slot: str) -> None:
+    """Print the schema description for SLOT — what this preference
+    controls, what values are allowed, and the schema default.
+
+    Useful when you (or Claude on your behalf) want to know what a
+    slot DOES before setting it. The schema text is the same text
+    distillation (F4) will eventually read to decide whether a piece
+    of user feedback maps to this slot vs. logging out-of-vocab."""
+    from heard import preferences as prefs_mod
+
+    schema = prefs_mod.load_schema()
+    slots = schema.get("slots", {})
+    if slot not in slots:
+        typer.echo(f"unknown slot: {slot}", err=True)
+        typer.echo(f"available: {', '.join(prefs_mod.slot_names())}", err=True)
+        raise typer.Exit(1)
+
+    spec = slots[slot]
+    typer.echo(f"{slot}")
+    typer.echo(f"  type:        {spec.get('type', '?')}")
+    typer.echo(f"  default:     {_format_pref_value(spec.get('default'))}")
+
+    stype = spec.get("type")
+    if stype == "enum" and spec.get("values"):
+        typer.echo(f"  values:      {', '.join(spec['values'])}")
+    elif stype == "int":
+        lo = spec.get("min")
+        hi = spec.get("max")
+        if lo is not None or hi is not None:
+            bounds = f"{lo if lo is not None else '−∞'} … {hi if hi is not None else '∞'}"
+            typer.echo(f"  range:       {bounds}")
+    elif stype == "mapping":
+        if spec.get("item_keys"):
+            typer.echo(f"  keys:        {', '.join(spec['item_keys'])}")
+        if spec.get("item_values"):
+            typer.echo(f"  values:      {', '.join(spec['item_values'])}")
+
+    typer.echo("")
+    typer.echo("  description:")
+    desc = (spec.get("description") or "").strip()
+    for line in desc.splitlines():
+        typer.echo(f"    {line}")
+
+
+@prefs_app.command("why")
+def preferences_why(slot: str) -> None:
+    """Show how SLOT's currently-active value got decided — which
+    overlay layer (default / user / project) won, and what value each
+    layer would contribute. Useful when a preference behaves
+    differently than you expect — "why does hook_endings say required
+    when I never set it?" — usually the answer is a project-scope
+    .heard.yaml override."""
+    from heard import preferences as prefs_mod
+
+    schema = prefs_mod.load_schema()
+    if slot not in schema.get("slots", {}):
+        typer.echo(f"unknown slot: {slot}", err=True)
+        raise typer.Exit(1)
+
+    cwd = os.getcwd()
+    schema_default = schema["slots"][slot].get("default")
+    user_prefs = prefs_mod.load_user_prefs()
+    project_prefs = prefs_mod.load_project_prefs(cwd)
+
+    # Active value via the standard resolver — keeps this in sync if
+    # the overlay-stack semantics ever change.
+    resolved = prefs_mod.resolve(cwd=cwd)
+    active = resolved.get(slot)
+
+    # Identify the winning layer.
+    if slot in project_prefs:
+        winner = "project"
+        # Validate before claiming — invalid project value falls
+        # through to user/default.
+        try:
+            prefs_mod.validate(slot, project_prefs[slot])
+        except prefs_mod.ValidationError:
+            winner = "(project value invalid — fell through)"
+    elif slot in user_prefs:
+        winner = "user"
+        try:
+            prefs_mod.validate(slot, user_prefs[slot])
+        except prefs_mod.ValidationError:
+            winner = "(user value invalid — fell through)"
+    else:
+        winner = "default"
+
+    typer.echo(f"{slot} = {_format_pref_value(active)}  ({winner})")
+    typer.echo("")
+    typer.echo("Overlay stack (top wins on conflict):")
+    proj_val = project_prefs.get(slot, "—")
+    user_val = user_prefs.get(slot, "—")
+    typer.echo(f"  project    : {_format_pref_value(proj_val)}")
+    typer.echo(f"  user       : {_format_pref_value(user_val)}")
+    typer.echo(f"  default    : {_format_pref_value(schema_default)}")
 
 
 @prefs_app.command("get")

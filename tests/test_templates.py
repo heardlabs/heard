@@ -36,6 +36,32 @@ def test_edit_keeps_extensionless_name():
     assert line == "Editing Dockerfile."
 
 
+def test_edit_keeps_extension_for_ambiguous_short_stem():
+    """K. heard "Editing me." while we were editing src/me.ts — sounds
+    like the AI is editing the listener. For stems that parse as
+    English pronouns / conjunctions / common abbreviations, keep the
+    extension so TTS reads "me dot ts" instead."""
+    line = templates.pre_tool_line("Edit", {"file_path": "/api/src/me.ts"})
+    assert line == "Editing me.ts."
+
+    line = templates.pre_tool_line("Edit", {"file_path": "/api/src/do.go"})
+    assert line == "Editing do.go."
+
+    line = templates.pre_tool_line("Edit", {"file_path": "/proj/and.py"})
+    assert line == "Editing and.py."
+
+
+def test_edit_drops_extension_for_unambiguous_short_stem():
+    """3-char stems that AREN'T common English words still get the
+    extension dropped — "app.py" reads cleanly as "app", no need
+    to add "dot py"."""
+    line = templates.pre_tool_line("Edit", {"file_path": "/proj/app.py"})
+    assert line == "Editing app."
+
+    line = templates.pre_tool_line("Edit", {"file_path": "/proj/api.ts"})
+    assert line == "Editing api."
+
+
 def test_read_is_silent():
     assert templates.pre_tool_line("Read", {"file_path": "/tmp/foo.txt"}) is None
 

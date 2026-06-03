@@ -54,6 +54,93 @@ class _FakeKokoro:
 _FakeKokoro.__name__ = "KokoroTTS"
 
 
+def _make_active_session(daemon, session_id: str, repo_name: str = "") -> None:
+    """Inject a SessionInfo into the router so _resolve_focused_voice
+    sees the session as active. Mirrors what router.note_event would
+    do on a real hook event."""
+    from heard.multi_agent import SessionInfo
+    info = SessionInfo(session_id=session_id, cwd="", repo_name=repo_name)
+    daemon.router._sessions[session_id] = info  # noqa: SLF001
+
+
+def test_resolve_focused_voice_returns_none_when_no_focused_id(tmp_path, monkeypatch):
+    """Plain text harness responses (no JSON, no focused_agent) → no
+    voice override → caller falls back to persona default."""
+    daemon = _make_daemon(tmp_path, monkeypatch, {})
+    assert daemon._resolve_focused_voice(None, {}) is None
+    assert daemon._resolve_focused_voice("", {}) is None
+
+
+def test_resolve_focused_voice_skipped_when_only_one_active_session(tmp_path, monkeypatch):
+    """K. bug 2026-06-02: with one Claude window active, the harness
+    can still declare focused_agent (and it's correct to do so — the
+    text IS about that agent). But the auto-pool voice routing only
+    makes sense to differentiate CONCURRENT agents. Solo session
+    must keep the persona voice."""
+    daemon = _make_daemon(
+        tmp_path, monkeypatch,
+        {"multi_agent_auto_voices": True, "agent_voices": {}},
+    )
+    _make_active_session(daemon, "abc12345-only", repo_name="heard")
+    voice = daemon._resolve_focused_voice(
+        "abc12345", {"multi_agent_auto_voices": True},
+    )
+    assert voice is None
+
+
+def test_resolve_focused_voice_skipped_when_focus_is_current_session(tmp_path, monkeypatch):
+    """When the harness focuses on the SAME session the event came
+    from, the persona voice is the right voice. The auto-pool
+    exists for cross-agent narration, not for self-narration."""
+    daemon = _make_daemon(
+        tmp_path, monkeypatch,
+        {"multi_agent_auto_voices": True, "agent_voices": {}},
+    )
+    _make_active_session(daemon, "abc12345-this", repo_name="heard")
+    _make_active_session(daemon, "def67890-that", repo_name="other")
+    voice = daemon._resolve_focused_voice(
+        "abc12345",
+        {"multi_agent_auto_voices": True},
+        current_session_id="abc12345-this",
+    )
+    assert voice is None
+
+
+def test_resolve_focused_voice_returns_autopool_for_background_agent(tmp_path, monkeypatch):
+    """The actual useful case: 2+ agents active, harness narrates
+    ABOUT a background agent → daemon routes to that agent's
+    auto-pool voice so the listener can tell whose work is being
+    described by ear."""
+    daemon = _make_daemon(
+        tmp_path, monkeypatch,
+        {"multi_agent_auto_voices": True, "agent_voices": {}},
+    )
+    _make_active_session(daemon, "aaaaaaaa-focal", repo_name="heard")
+    _make_active_session(daemon, "bbbbbbbb-other", repo_name="api")
+    voice = daemon._resolve_focused_voice(
+        "bbbbbbbb",
+        {"multi_agent_auto_voices": True, "agent_voices": {}},
+        current_session_id="aaaaaaaa-focal",
+    )
+    assert voice is not None  # an auto-pool voice ID
+
+
+def test_resolve_focused_voice_returns_none_on_unknown_prefix(tmp_path, monkeypatch):
+    """Defensive — harness hallucinated a prefix that doesn't match
+    any active session. Don't guess; return None and let the daemon
+    use its default routing."""
+    daemon = _make_daemon(
+        tmp_path, monkeypatch,
+        {"multi_agent_auto_voices": True, "agent_voices": {}},
+    )
+    _make_active_session(daemon, "abc12345-x", repo_name="heard")
+    _make_active_session(daemon, "def67890-y", repo_name="api")
+    voice = daemon._resolve_focused_voice(
+        "xxxxxxxx", {"multi_agent_auto_voices": True},
+    )
+    assert voice is None
+
+
 def test_voice_picks_kokoro_field_when_backend_is_kokoro(tmp_path, monkeypatch):
     daemon = _make_daemon(tmp_path, monkeypatch, {"elevenlabs_api_key": "sk_test_123"})
     daemon.tts = _FakeKokoro()

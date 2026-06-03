@@ -38,15 +38,43 @@ def _basename(path: str | None) -> str:
     return os.path.basename(path or "")
 
 
+# Stems that, on their own, parse as English pronouns / conjunctions /
+# prepositions / abbreviations and would confuse the listener. K. heard
+# "Editing me." while we were editing heard-api/src/me.ts — the spoken
+# narration was technically correct but sounded like the AI was editing
+# the listener. For these stems we keep the extension so TTS reads
+# "me dot ts" rather than just "me".
+_AMBIGUOUS_SHORT_STEMS: frozenset[str] = frozenset({
+    # 2 chars — pronouns / shorthand
+    "me", "do", "go", "is", "it", "in", "on", "of", "at", "an",
+    "or", "as", "if", "no", "so", "to", "by", "my", "we", "he",
+    "us", "up", "am", "ok", "id", "ui", "io", "ip",
+    # 3 chars — common confusing tokens (functions, conjunctions, etc.)
+    "and", "the", "but", "for", "any", "all", "you", "she", "her",
+    "him", "his", "out", "now", "way", "new", "old", "yes", "may",
+    "can", "did", "let", "got", "see", "say", "use", "run", "log",
+})
+
+
 def _spoken_filename(path: str | None) -> str:
     """Filename for TTS — drops the extension so we don't speak ".py"
     aloud ("ui dot py"). Bare files like Dockerfile / Makefile keep
-    their full name; dotfiles like .zshrc keep their stem."""
+    their full name; dotfiles like .zshrc keep their stem.
+
+    Exception: when the stem alone would parse as an English word
+    (pronoun, conjunction, common abbreviation), keep the extension
+    so the listener gets context. "me.ts" → spoken as "me dot ts"
+    (the listener registers "code file") rather than "me" (which
+    sounds like a pronoun)."""
     name = _basename(path)
     if not name:
         return ""
     stem, ext = os.path.splitext(name)
-    return stem if stem else name
+    if not stem:
+        return name
+    if ext and stem.lower() in _AMBIGUOUS_SHORT_STEMS:
+        return name
+    return stem
 
 
 _BUILD_VERBS = ("build", "compile", "bundle")
