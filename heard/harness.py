@@ -329,6 +329,23 @@ def should_use_fast_path(
     return False
 
 
+# Tokens the harness LLM uses (or veers into) when it decides this
+# event isn't worth narrating. The prompt instructs `(silence)` with
+# parens, but Haiku often drops them — we strip parens / punctuation /
+# whitespace before matching so bare `silence` and `Silence.` don't
+# leak through to TTS and get spoken out loud.
+_SILENCE_MARKERS = frozenset({
+    "silence", "silent", "nothing", "none", "skip", "pass", "no",
+})
+
+
+def _looks_like_silence_marker(text: str) -> bool:
+    if not text:
+        return True
+    stripped = text.strip().strip("()[]{}\"'`.,;:!? \t\n").lower()
+    return stripped in _SILENCE_MARKERS
+
+
 def narrate(
     event: dict[str, Any],
     *,
@@ -397,7 +414,7 @@ def narrate(
         return None
 
     text = raw.strip()
-    if not text or text.lower() in ("none", "(silence)", "(nothing)"):
+    if not text or _looks_like_silence_marker(text):
         # Harness produced a silence-marker. Treat as deliberate skip.
         return HarnessDecision(speak=False, scope="one-line", altitude="human")
 
