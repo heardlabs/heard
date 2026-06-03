@@ -52,8 +52,9 @@ Download the latest [`Heard.zip`](https://github.com/heardlabs/heard/releases/la
 
 ## What it does
 
-- **Narrates tool calls + intermediate prose**, not just final summaries. "Looking at your test failures." "Three failures in auth.py."
-- **Multi-agent aware.** Run 3+ agents in parallel; Heard auto-routes narration in distinct voices so you can actually follow the work.
+- **Narrates with judgment, not just transcription.** Heard decides what to say based on context — your recent activity, what tool just ran, whether something is a decision moment or routine progress. Not every tool call gets the same airtime.
+- **Two listening modes you switch between.** **Co-pilot** for screen-on work — short hooks and signposts. **Companion** for eyes-off (driving, cooking, walking) — fuller briefings that name the choice, surface the decision, end with a hook into action.
+- **Multi-agent aware.** Run 3+ agents in parallel; Heard voices the most salient one and quietly summarises the others. Each gets a distinct voice so you can tell them apart by ear.
 - **Four personas, fork-your-own.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator).
 - **Works with any coding CLI.** First-class adapters for Claude Code + Codex; `heard run <command>` wraps anything else.
 
@@ -70,21 +71,26 @@ Download the latest [`Heard.zip`](https://github.com/heardlabs/heard/releases/la
 
 Fork your own — drop a Markdown file with frontmatter into `~/Library/Application Support/heard/personas/`.
 
-## Running multiple agents
+## Listening modes
 
-Heard auto-detects 2+ concurrent sessions and shifts mode.
+Switch from the menu bar → Mode.
 
 | Mode | When | What you hear |
 |---|---|---|
-| **Solo** | One session active | Full narration in your persona's voice. |
-| **Swarm** | 2+ sessions concurrent | Most-recent session narrates; background agents pierce only on failures and questions, with a periodic digest. Each gets a distinct voice. |
-| **Pinned** | You picked one in the menu | Focus locks to that session. |
+| **Co-pilot** *(default)* | At the screen, coding | Short hooks and signposts. Routine tool churn gets a one-liner; decisions and finals get fuller narration. The details live in the diff you can read. |
+| **Companion** | Hands-off — driving, cooking, walking | Lean but substantive briefings. State the choice, surface the decision, plain English over developer-speak, every turn ends with a hook into action. |
+
+## Running multiple agents
+
+Heard's brain handles cross-agent salience automatically — when 2+ sessions are firing, the one with the most salient signal (blocked, decision moment, failure) gets voiced; the others get summarised. Each session is given a distinct voice so you can tell them apart by ear.
+
+Pin a specific session if you want to focus: menu bar → Active agents → click one. Click again to unpin.
 
 ## Tuning
 
-Four verbosity profiles (`quiet` → `brief` → `normal` → `verbose`), tunable globally or per-repo via `.heard.yaml`. Failures and wait-state questions always pierce.
+The basics — persona, voice, speed, mode, pause/resume — all live in the menu bar. Hotkeys: ⇧⌥. to pause, ⇧⌥, to resume.
 
-Switch personas, change verbosity, pause/resume — all from the menu bar. Hotkeys: ⇧⌥. to pause, ⇧⌥, to resume.
+Deeper knobs (verbosity profiles, per-repo overrides, narration preferences) live in Settings or `.heard.yaml`. Most users never need to touch them — Heard's listening modes cover the common cases on their own.
 
 ## FAQ
 
@@ -94,7 +100,7 @@ Switch personas, change verbosity, pause/resume — all from the menu bar. Hotke
 Depends on which backends you opt into.
 
 - **Voice synth.** ElevenLabs sends spoken text over HTTPS. **Kokoro** runs fully locally — nothing leaves the machine.
-- **Persona rewrites.** If you provide an Anthropic key, Heard sends short candidate lines to Claude Haiku 4.5 to rewrite in-character. Skip the key and Heard uses neutral templates locally.
+- **Narration.** Heard sends compact event summaries (what tool ran, the agent's response text, recent context) to Claude Haiku 4.5 to decide what to say and shape it in your persona's voice. Either through your own Anthropic key, through Heard's managed proxy if you're signed in, or — with no key and no sign-in — falls back to neutral templates locally.
 - **Telemetry.** None. No analytics, no crash reporters, no phone-home.
 </details>
 
@@ -122,7 +128,7 @@ macOS 13+ · Claude Code + Codex first-class · Cursor and Aider planned · anyt
 
 ## Status
 
-v0.4 — multi-agent routing, profile-based verbosity, automatic ElevenLabs ⇄ Kokoro failover. Used daily by the author. APIs may still change before v1.
+v1.0.x — cross-event-judgment narration via the Heard brain (one Haiku call per meaningful event sees your recent context, the active agents, and the current event, then decides what to say). Co-pilot / Companion listening modes, multi-agent salience, automatic ElevenLabs ⇄ Kokoro failover. Used daily by the author. Backward-compatible API surface; deeper knobs may move into preferences over time.
 
 ## License
 
