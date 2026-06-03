@@ -373,6 +373,59 @@ class Daemon:
             coexists=True,
         )
 
+    def _resolve_focused_voice(
+        self,
+        focused_agent_id: str | None,
+        cfg: dict,
+    ) -> str | None:
+        """Step 6g — resolve the harness's declared focused agent to a
+        voice override.
+
+        The harness sees 8-char prefixes of session IDs in its Active
+        agents table (`_render_agent_table`) and uses those as
+        `focused_agent` values. Sometimes it'll echo back the full ID;
+        either way, we resolve by prefix match against the active
+        session list. Single match wins; zero or multiple matches
+        return None (defensive — fall back to the caller's default
+        voice routing rather than guess).
+
+        Voice resolution reuses the router's existing
+        `_voice_for_locked` path: manual `agent_voices` map wins,
+        then auto-pool from the project pool keyed by repo_name,
+        then None (= persona default). We pass is_focus=False so the
+        auto-pool fires — the whole point of declaring a focused
+        agent is to voice in that agent's pool voice rather than the
+        active session's persona default.
+
+        Returns None when:
+          * no focused_agent_id declared
+          * no active session matches the prefix
+          * multiple sessions match (ambiguous)
+          * the matched session has no voice mapping
+        """
+        if not focused_agent_id:
+            return None
+        # noqa for accessing router internals — this resolution path is
+        # owned by the daemon; the router has no public method for
+        # "look up a session ID by prefix" (intentional — the router
+        # owns full IDs end-to-end internally).
+        active_sessions = list(self.router._sessions.keys())  # noqa: SLF001
+        matches = [
+            s for s in active_sessions if s.startswith(focused_agent_id)
+        ]
+        if len(matches) != 1:
+            return None
+        full_session_id = matches[0]
+        agent_voices = cfg.get("agent_voices") or {}
+        auto_voices = bool(cfg.get("multi_agent_auto_voices", True))
+        with self.router._lock:  # noqa: SLF001
+            return self.router._voice_for_locked(  # noqa: SLF001
+                full_session_id,
+                agent_voices=agent_voices,
+                auto_voices=auto_voices,
+                is_focus=False,
+            )
+
     def _start_harness_warmup(self) -> None:
         """Architecture step 6c — fire one synthetic harness call on a
         background thread to warm the Anthropic prompt cache.
@@ -1912,6 +1965,14 @@ class Daemon:
                     return
                 # Harness produced text — bypass the v1 verbosity /
                 # multi_agent / persona-rewrite path entirely.
+                # Step 6g — if the harness declared a focused agent,
+                # resolve to that session's voice (auto-pool or
+                # manual override) so the spoken voice matches who
+                # the narration is about. None → use the current
+                # session's default routing.
+                focused_voice = self._resolve_focused_voice(
+                    decision.focused_agent_id, cfg,
+                )
                 _log(
                     "event_speak",
                     kind=kind,
@@ -1920,6 +1981,8 @@ class Daemon:
                     chars=len(decision.text),
                     via="harness",
                     scope=decision.scope,
+                    altitude=decision.altitude,
+                    focused_agent=(decision.focused_agent_id or ""),
                 )
                 info = self.router._sessions.get(session_id)  # noqa: SLF001
                 history_meta = {
@@ -1930,12 +1993,14 @@ class Daemon:
                     "repo_name": getattr(info, "repo_name", "") or "",
                     "cwd": cwd or "",
                     "via": "harness",
+                    "focused_agent": decision.focused_agent_id or "",
                 }
                 self._start_speech(
                     decision.text,
                     cfg=cfg,
                     persona=persona,
                     session_id=session_id,
+                    voice_override=focused_voice,
                     history_meta=history_meta,
                 )
                 return

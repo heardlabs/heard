@@ -75,6 +75,12 @@ class HarnessDecision:
     `used_fallback=True` is set when narrate() returned without making
     an LLM call (fast-path gate triggered, harness disabled, etc.).
     Helps the daemon log the path taken for A/B analysis.
+
+    `focused_agent_id` is the harness's declared focus when 2+ agents
+    are active (step 6g — salience arbitration). None when single-
+    agent (no ambiguity to arbitrate) or when the model didn't
+    declare. Daemon uses this for per-agent voice routing and
+    cross-agent narration auditing in event_speak logs.
     """
 
     speak: bool
@@ -82,6 +88,7 @@ class HarnessDecision:
     scope: str = "summary"      # "one-line" | "summary" | "full"
     altitude: str = "human"     # "technical" | "human" | "strategic"
     used_fallback: bool = False
+    focused_agent_id: str | None = None
 
 
 def is_enabled(cfg: dict[str, Any]) -> bool:
@@ -375,20 +382,24 @@ def narrate(
         # Harness produced a silence-marker. Treat as deliberate skip.
         return HarnessDecision(speak=False, scope="one-line", altitude="human")
 
-    # Step 6f — model-declared scope + altitude. The harness is
-    # encouraged to return a JSON object {"text": "...", "scope": ...,
-    # "altitude": ...} so the daemon can log richer signals and the
-    # future salience-arbitration logic can learn from per-event
-    # altitude choices. Plain text is still accepted — it just gets
-    # the conservative default (summary / human) the way the
-    # prototype always did.
-    spoken, scope, altitude = _parse_harness_response(text)
+    # Steps 6f + 6g — model-declared scope + altitude + focus. The
+    # harness is encouraged to return a JSON object with text +
+    # scope + altitude + optional focused_agent so the daemon can
+    # log richer signals, route per-agent voices, and let future
+    # learning (F4 distillation) see what kind of utterance fired.
+    # Plain text is still accepted — it gets the conservative
+    # defaults (summary / human / no focus).
+    spoken, scope, altitude, focused = _parse_harness_response(text)
     if not spoken:
         # Empty text inside a JSON wrapper → punt to v1, same as a
         # silence marker would.
         return None
     return HarnessDecision(
-        speak=True, text=spoken, scope=scope, altitude=altitude,
+        speak=True,
+        text=spoken,
+        scope=scope,
+        altitude=altitude,
+        focused_agent_id=focused,
     )
 
 
@@ -396,23 +407,34 @@ _VALID_SCOPES: frozenset[str] = frozenset({"one-line", "summary", "full"})
 _VALID_ALTITUDES: frozenset[str] = frozenset({"technical", "human", "strategic"})
 
 
-def _parse_harness_response(raw: str) -> tuple[str, str, str]:
-    """Parse the harness LLM response. Returns ``(text, scope, altitude)``.
+def _parse_harness_response(
+    raw: str,
+) -> tuple[str, str, str, str | None]:
+    """Parse the harness LLM response.
+    Returns ``(text, scope, altitude, focused_agent_id)``.
 
     Two shapes accepted, mirroring the OUTPUT FORMAT block in
     `_HARNESS_INSTRUCTION_BLOCK`:
 
-      * JSON: ``{"text": "...", "scope": "...", "altitude": "..."}``
-        — preferred; lets the model declare its own narration
-        altitude so the daemon can log + learn from it.
+      * JSON: ``{"text": "...", "scope": "...", "altitude": "...",
+        "focused_agent": "..."}`` — preferred; lets the model declare
+        its own narration altitude + focus so the daemon can log +
+        learn + route per-agent voices.
       * Plain text — fallback for when JSON feels forced. Treated
-        as scope="summary" / altitude="human" (the v1 prototype's
-        hardcoded defaults).
+        as scope="summary" / altitude="human" / no focus (the v1
+        prototype's hardcoded defaults).
 
     Unknown / missing scope or altitude values fall back to defaults
-    rather than the whole response. We'd rather speak the model's
-    text and log the wrong altitude than punt the whole call because
-    of a one-char typo.
+    rather than failing the whole response. We'd rather speak the
+    model's text and log the wrong altitude than punt the whole
+    call because of a one-char typo.
+
+    focused_agent is optional. Returns None when:
+      * the JSON didn't include the field
+      * the field value isn't a non-empty string
+      * the response was plain text
+    Daemon resolves whether the declared ID matches an active
+    session — string sanity-check is the parser's only job.
     """
     raw = raw.strip()
     if raw.startswith("{") and raw.endswith("}"):
@@ -428,9 +450,15 @@ def _parse_harness_response(raw: str) -> tuple[str, str, str]:
                 scope = "summary"
             if altitude not in _VALID_ALTITUDES:
                 altitude = "human"
-            return text, scope, altitude
+            focused_raw = data.get("focused_agent")
+            focused: str | None = None
+            if isinstance(focused_raw, str):
+                trimmed = focused_raw.strip()
+                if trimmed:
+                    focused = trimmed
+            return text, scope, altitude, focused
     # Plain text — use the conservative defaults.
-    return raw, "summary", "human"
+    return raw, "summary", "human", None
 
 
 # ----- prompt building ----------------------------------------------------
@@ -856,24 +884,32 @@ THINGS THAT ALMOST NEVER DESERVE NARRATION:
 
 OUTPUT FORMAT — you may return one of two shapes:
 
-  Preferred (declare scope + altitude so the daemon can log richer
-  signals and the future salience-arbitration logic can learn):
+  Preferred (declare scope + altitude + focus so the daemon can log
+  richer signals, route the right voice, and learn from your choices):
 
     {"text": "<spoken narration>",
      "scope": "one-line" | "summary" | "full",
-     "altitude": "technical" | "human" | "strategic"}
+     "altitude": "technical" | "human" | "strategic",
+     "focused_agent": "<session-id of the agent your text is about>"}
 
   Acceptable (when JSON feels forced or you're returning silence):
 
     Plain narration text, no JSON wrapping.
 
-When emitting JSON: the `text` field is what gets spoken. Pick
-scope + altitude that honestly describe what your narration
-actually does — `one-line` for a single sentence, `summary` for a
-short multi-clause sentence, `full` for a fuller several-sentence
-narration. Altitude: `technical` when you're naming filenames /
-errors / mechanism, `human` when you're describing intent or
-outcome, `strategic` when you're framing the broader arc.
+When emitting JSON:
+  * `text` is what gets spoken.
+  * Pick `scope` + `altitude` honestly. `one-line` is a single
+    sentence; `summary` is a short multi-clause sentence; `full` is
+    a fuller several-sentence narration. Altitude: `technical` when
+    naming filenames / errors / mechanism, `human` when describing
+    intent or outcome, `strategic` when framing the broader arc.
+  * `focused_agent` matters when 2+ agents are active. Set it to
+    the SHORT prefix of the session ID (the `[xxxxxxxx]` label in
+    the Active agents table) whose work your text is primarily
+    about. When you're narrating a cross-agent moment without a
+    clear focus, omit the field. With one active agent the field
+    is unnecessary; either omit or set to that agent's ID — both
+    work.
 
 Don't lie about altitude or scope just to look concise. The daemon
 falls back to plain-text parsing if the JSON is malformed, so

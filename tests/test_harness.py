@@ -154,33 +154,35 @@ def test_narrate_empty_response_becomes_none():
 
 
 def test_parse_harness_response_plain_text_uses_defaults():
-    text, scope, altitude = harness._parse_harness_response(
+    text, scope, altitude, focused = harness._parse_harness_response(
         "Running the tests."
     )
     assert text == "Running the tests."
     assert scope == "summary"
     assert altitude == "human"
+    assert focused is None
 
 
 def test_parse_harness_response_strips_whitespace():
-    text, _, _ = harness._parse_harness_response("  Hello world.  ")
+    text, _, _, _ = harness._parse_harness_response("  Hello world.  ")
     assert text == "Hello world."
 
 
 def test_parse_harness_response_json_honors_declared_scope_altitude():
-    text, scope, altitude = harness._parse_harness_response(
+    text, scope, altitude, focused = harness._parse_harness_response(
         '{"text": "Picked the patch.", "scope": "full", '
         '"altitude": "strategic"}'
     )
     assert text == "Picked the patch."
     assert scope == "full"
     assert altitude == "strategic"
+    assert focused is None
 
 
 def test_parse_harness_response_json_with_unknown_scope_defaults():
     """Bad scope/altitude values fall back to defaults — we don't punt
     the whole narration over a typo."""
-    text, scope, altitude = harness._parse_harness_response(
+    text, scope, altitude, _ = harness._parse_harness_response(
         '{"text": "ok", "scope": "encyclopedic", "altitude": "vibes"}'
     )
     assert text == "ok"
@@ -192,7 +194,7 @@ def test_parse_harness_response_malformed_json_falls_back_to_plain_text():
     """If the model emits {} but with broken JSON inside, treat the
     whole string as plain text rather than punting. Defensive — the
     user still gets narration."""
-    text, scope, altitude = harness._parse_harness_response(
+    text, scope, altitude, _ = harness._parse_harness_response(
         '{"text": "missing close quote, '
     )
     # Whole string is treated as text; defaults applied.
@@ -204,7 +206,7 @@ def test_parse_harness_response_malformed_json_falls_back_to_plain_text():
 def test_parse_harness_response_json_missing_text_field_returns_empty():
     """A JSON wrapper with no text field is functionally silence — the
     caller (narrate) treats empty text as a punt."""
-    text, _, _ = harness._parse_harness_response(
+    text, _, _, _ = harness._parse_harness_response(
         '{"scope": "full", "altitude": "human"}'
     )
     assert text == ""
@@ -250,6 +252,90 @@ def test_narrate_plain_text_response_gets_default_scope_altitude():
     assert out.text == "Done."
     assert out.scope == "summary"
     assert out.altitude == "human"
+
+
+def test_parse_harness_response_extracts_focused_agent():
+    """Step 6g — the harness can declare which agent its text is
+    about by including a focused_agent field in the JSON. The parser
+    surfaces it as a separate tuple element so the daemon can use it
+    for voice routing + logging."""
+    text, _, _, focused = harness._parse_harness_response(
+        '{"text": "ok", "focused_agent": "abc123"}'
+    )
+    assert text == "ok"
+    assert focused == "abc123"
+
+
+def test_parse_harness_response_focused_agent_trimmed():
+    """Whitespace around the focused_agent value is stripped — saves
+    the daemon from having to handle the model's accidental indent."""
+    _, _, _, focused = harness._parse_harness_response(
+        '{"text": "ok", "focused_agent": "  s1  "}'
+    )
+    assert focused == "s1"
+
+
+def test_parse_harness_response_empty_focused_agent_returns_none():
+    """An empty-string focused_agent is functionally absent —
+    don't pass empty strings to the daemon."""
+    _, _, _, focused = harness._parse_harness_response(
+        '{"text": "ok", "focused_agent": ""}'
+    )
+    assert focused is None
+
+
+def test_parse_harness_response_non_string_focused_agent_returns_none():
+    """If the model accidentally returns a number or null, treat as
+    absent rather than crashing or trying to coerce."""
+    _, _, _, focused = harness._parse_harness_response(
+        '{"text": "ok", "focused_agent": 42}'
+    )
+    assert focused is None
+    _, _, _, focused = harness._parse_harness_response(
+        '{"text": "ok", "focused_agent": null}'
+    )
+    assert focused is None
+
+
+def test_narrate_threads_focused_agent_into_decision():
+    """End-to-end: when the model returns JSON with focused_agent,
+    HarnessDecision.focused_agent_id is set. Daemon reads this for
+    per-agent voice routing and event_speak logging."""
+    reg = AgentStateRegistry()
+    response = (
+        '{"text": "API agent finished tests.", '
+        '"scope": "summary", "altitude": "human", '
+        '"focused_agent": "s2"}'
+    )
+    with patch.object(
+        harness.persona_mod, "call_with_prompt", return_value=response
+    ):
+        out = harness.narrate(
+            _ev(),
+            cfg={"harness_enabled": True},
+            persona=_persona(),
+            agent_states=reg,
+        )
+    assert out is not None
+    assert out.focused_agent_id == "s2"
+    assert out.text == "API agent finished tests."
+
+
+def test_narrate_plain_text_has_no_focused_agent():
+    """Plain text responses → no focused_agent declared → field is
+    None. Daemon falls back to the default voice routing."""
+    reg = AgentStateRegistry()
+    with patch.object(
+        harness.persona_mod, "call_with_prompt", return_value="Done."
+    ):
+        out = harness.narrate(
+            _ev(),
+            cfg={"harness_enabled": True},
+            persona=_persona(),
+            agent_states=reg,
+        )
+    assert out is not None
+    assert out.focused_agent_id is None
 
 
 def test_narrate_json_with_empty_text_punts_to_v1():
