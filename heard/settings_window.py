@@ -643,115 +643,64 @@ class SettingsController(NSObject):
     #     and most users won't have per-category opinions on day one.
     # Everything else (9/10 slots) gets a popup or a text field here.
 
-    def _build_tuning_panel(self) -> NSView:
+    # Popup titles for the int prose-threshold slot. Four bands cover
+    # the useful range without making the user type a specific number;
+    # the actual int stays visible in parens so power users still see
+    # what each band maps to.
+    _PROSE_THRESHOLD_TITLES = [
+        "Wake more often (180)",
+        "Default (240)",
+        "Wake less (320)",
+        "Rarely (480)",
+    ]
+    _PROSE_THRESHOLD_BY_TITLE = {
+        "Wake more often (180)": 180,
+        "Default (240)": 240,
+        "Wake less (320)": 320,
+        "Rarely (480)": 480,
+    }
 
+    def _build_tuning_panel(self) -> NSView:
         outer, body = self._panel_shell("tuning")
         self._refs.setdefault("tuning", {})
 
-        intro = _label(
-            "Knobs that shape how Heard narrates. Changes take "
-            "effect on the next event — no restart needed. Reset "
-            "any group to defaults with the button at the bottom.",
-            size=12, dim=True,
-        )
-        _low_priority_text(intro, wrap=True)
-        intro_card = _card([intro])
-        self._add_card(body, intro_card)
-
-        # --- VOLUME / DENSITY ---
-        self._add_section(body, "VOLUME / DENSITY")
+        # --- HOW MUCH ---
+        self._add_section(body, "HOW MUCH")
         routine_pop = _popup(
             ["Skip", "Brief", "Full"],
             target=self, action="onTuningRoutineToolProgressChanged:",
         )
         routine_row = _setting_row(
             "Routine tool progress",
-            'How chatty Heard is on routine tools ("Reading auth.py").',
+            "How chatty for routine tools.",
             routine_pop,
         )
-        prose_field = _text_field(placeholder="240")
-        prose_field.setTarget_(self)
-        prose_field.setAction_("onTuningProseThresholdChanged:")
+        prose_pop = _popup(
+            self._PROSE_THRESHOLD_TITLES,
+            target=self, action="onTuningProseThresholdChanged:",
+        )
         prose_row = _setting_row(
-            "Mid-stream prose threshold",
-            "Char count below which mid-stream prose is routine "
-            "(template). Above, harness narrates with context. "
-            "80–1000. Default 240.",
-            prose_field,
+            "Mid-stream prose",
+            "When to wake the brain for in-flight prose.",
+            prose_pop,
         )
-        self._add_card(body, _card([routine_row, prose_row]))
-
-        # --- SHAPE / STRUCTURE ---
-        self._add_section(body, "SHAPE / STRUCTURE")
-        final_shape_pop = _popup(
-            ["Preserve structure", "Lead then summary", "Headline only"],
-            target=self, action="onTuningLongFinalShapeChanged:",
-        )
-        final_shape_row = _setting_row(
-            "Long final messages",
-            "How to compress a long structured answer — preserve "
-            "the shape, give just the lead + summary, or read only "
-            "the headline.",
-            final_shape_pop,
-        )
-        decision_pop = _popup(
-            ["Emphasize", "Mention", "Skip"],
-            target=self, action="onTuningDecisionSurfacingChanged:",
-        )
-        decision_row = _setting_row(
-            "Decision surfacing",
-            "How to handle moments where the agent picks between "
-            "options before acting.",
-            decision_pop,
-        )
-        self._add_card(body, _card([final_shape_row, decision_row]))
-
-        # --- TONE / REGISTER ---
-        self._add_section(body, "TONE / REGISTER")
-        register_pop = _popup(
-            ["Formal", "Neutral", "Casual"],
-            target=self, action="onTuningRegisterFormalityChanged:",
-        )
-        register_row = _setting_row(
-            "Register",
-            "Tonal register within the persona's range — same "
-            "Jarvis, more or less stiff.",
-            register_pop,
-        )
-        jargon_pop = _popup(
-            ["Aggressive", "Moderate", "Preserve"],
-            target=self, action="onTuningJargonTranslationChanged:",
-        )
-        jargon_row = _setting_row(
-            "Jargon translation",
-            "Plain English vs. developer-speak. Aggressive strips "
-            "most internal jargon (Companion-mode default).",
-            jargon_pop,
-        )
-        hook_pop = _popup(
-            ["Required", "Preferred", "Optional"],
-            target=self, action="onTuningHookEndingsChanged:",
-        )
-        hook_row = _setting_row(
-            "Hook endings",
-            'How often a turn ends with a hook ("okay to keep '
-            'going?"). Companion mode bumps this to Required.',
-            hook_pop,
-        )
-        self._add_card(body, _card([register_row, jargon_row, hook_row]))
-
-        # --- SALIENCE ---
-        self._add_section(body, "SALIENCE")
         error_detail_pop = _popup(
             ["Minimal", "Standard", "Verbose"],
             target=self, action="onTuningErrorDetailChanged:",
         )
         error_detail_row = _setting_row(
             "Error detail",
-            'How much detail in error narrations. Minimal: "Tests '
-            'failed." Standard: "Three failures in auth.py." '
-            "Verbose: the full breakdown.",
+            "How much detail when something errors.",
             error_detail_pop,
+        )
+        decision_pop = _popup(
+            ["Emphasize", "Mention", "Skip"],
+            target=self, action="onTuningDecisionSurfacingChanged:",
+        )
+        decision_row = _setting_row(
+            "Decision moments",
+            "How to surface a decision the agent's making.",
+            decision_pop,
         )
         question_pop = _popup(
             ["Verbatim", "Summarize", "Acknowledge"],
@@ -759,32 +708,71 @@ class SettingsController(NSObject):
         )
         question_row = _setting_row(
             "Agent questions",
-            "How to narrate questions the agent asks you. "
-            "Verbatim reads the full question (Companion default).",
+            "How to read questions the agent asks you.",
             question_pop,
         )
-        self._add_card(body, _card([error_detail_row, question_row]))
+        self._add_card(body, _card([
+            routine_row, prose_row, error_detail_row,
+            decision_row, question_row,
+        ]))
 
-        # --- ADVANCED / RESET ---
-        self._add_section(body, "ADVANCED")
-        advanced_note = _label(
-            "Per-tool-category volume overrides (bash, edit, read, "
-            "web, agent) live in ~/Library/Application Support/heard/"
-            "preferences.yaml — edit directly or use the heard "
-            "preferences CLI.",
-            size=11, dim=True,
+        # --- HOW IT SOUNDS ---
+        self._add_section(body, "HOW IT SOUNDS")
+        register_pop = _popup(
+            ["Formal", "Neutral", "Casual"],
+            target=self, action="onTuningRegisterFormalityChanged:",
         )
-        _low_priority_text(advanced_note, wrap=True)
+        register_row = _setting_row(
+            "Register",
+            "How formal or casual the persona lands.",
+            register_pop,
+        )
+        jargon_pop = _popup(
+            ["Plain English", "Moderate", "Preserve"],
+            target=self, action="onTuningJargonTranslationChanged:",
+        )
+        jargon_row = _setting_row(
+            "Jargon",
+            "Plain English vs. developer-speak.",
+            jargon_pop,
+        )
+        final_shape_pop = _popup(
+            [
+                "Keep all the points",
+                "Lead with the main point",
+                "Headline only",
+            ],
+            target=self, action="onTuningLongFinalShapeChanged:",
+        )
+        final_shape_row = _setting_row(
+            "Long answers",
+            "How to compress a long structured reply.",
+            final_shape_pop,
+        )
+        hook_pop = _popup(
+            ["Required", "Preferred", "Optional"],
+            target=self, action="onTuningHookEndingsChanged:",
+        )
+        hook_row = _setting_row(
+            "Hook endings",
+            "How often a turn ends with a question or pick.",
+            hook_pop,
+        )
+        self._add_card(body, _card([
+            register_row, jargon_row, final_shape_row, hook_row,
+        ]))
+
+        # --- RESET ---
         reset_btn = _button(
-            "Reset all tuning to defaults",
+            "Reset all to defaults",
             target=self,
             action="onTuningResetAll:",
         )
-        self._add_card(body, _card([advanced_note, reset_btn]))
+        self._add_card(body, _card([reset_btn]))
 
         self._refs["tuning"].update({
             "routine_tool_progress": routine_pop,
-            "intermediate_prose_threshold": prose_field,
+            "intermediate_prose_threshold": prose_pop,
             "long_final_shape": final_shape_pop,
             "decision_surfacing": decision_pop,
             "register_formality": register_pop,
@@ -1038,33 +1026,45 @@ class SettingsController(NSObject):
         _select(r.get("routine_tool_progress"),
                 resolved.get("routine_tool_progress", "brief").capitalize())
 
-        prose_field = r.get("intermediate_prose_threshold")
-        if prose_field is not None:
-            try:
-                prose_field.setStringValue_(
-                    str(resolved.get("intermediate_prose_threshold", 240))
-                )
-            except Exception:
-                pass
+        # Prose threshold — pick the closest band whose number is ≥ the
+        # resolved int, falling back to "Default (240)" if nothing
+        # matches (shouldn't happen with the schema-clamped range).
+        prose_val = resolved.get("intermediate_prose_threshold", 240)
+        prose_title = "Default (240)"
+        for t, v in self._PROSE_THRESHOLD_BY_TITLE.items():
+            if v == prose_val:
+                prose_title = t
+                break
+        _select(r.get("intermediate_prose_threshold"), prose_title)
 
         _final_shape_titles = {
-            "preserve_structure": "Preserve structure",
-            "lead_then_summary": "Lead then summary",
+            "preserve_structure": "Keep all the points",
+            "lead_then_summary": "Lead with the main point",
             "headline_only": "Headline only",
         }
         _select(
             r.get("long_final_shape"),
             _final_shape_titles.get(
                 resolved.get("long_final_shape", "preserve_structure"),
-                "Preserve structure",
+                "Keep all the points",
             ),
         )
         _select(r.get("decision_surfacing"),
                 resolved.get("decision_surfacing", "emphasize").capitalize())
         _select(r.get("register_formality"),
                 resolved.get("register_formality", "neutral").capitalize())
-        _select(r.get("jargon_translation"),
-                resolved.get("jargon_translation", "moderate").capitalize())
+        _jargon_titles = {
+            "aggressive": "Plain English",
+            "moderate": "Moderate",
+            "preserve": "Preserve",
+        }
+        _select(
+            r.get("jargon_translation"),
+            _jargon_titles.get(
+                resolved.get("jargon_translation", "moderate"),
+                "Moderate",
+            ),
+        )
         _select(r.get("hook_endings"),
                 resolved.get("hook_endings", "preferred").capitalize())
         _select(r.get("error_detail_level"),
@@ -1411,20 +1411,16 @@ class SettingsController(NSObject):
             self._tuning_set("routine_tool_progress", title)
 
     def onTuningProseThresholdChanged_(self, sender) -> None:
-        raw = (sender.stringValue() or "").strip()
-        if not raw:
-            return
-        try:
-            value = int(raw)
-        except ValueError:
-            return
-        self._tuning_set("intermediate_prose_threshold", value)
+        title = (sender.titleOfSelectedItem() or "").strip()
+        value = self._PROSE_THRESHOLD_BY_TITLE.get(title)
+        if value is not None:
+            self._tuning_set("intermediate_prose_threshold", value)
 
     def onTuningLongFinalShapeChanged_(self, sender) -> None:
         title = (sender.titleOfSelectedItem() or "").strip().lower()
         mapping = {
-            "preserve structure": "preserve_structure",
-            "lead then summary": "lead_then_summary",
+            "keep all the points": "preserve_structure",
+            "lead with the main point": "lead_then_summary",
             "headline only": "headline_only",
         }
         if title in mapping:
@@ -1442,8 +1438,13 @@ class SettingsController(NSObject):
 
     def onTuningJargonTranslationChanged_(self, sender) -> None:
         title = (sender.titleOfSelectedItem() or "").strip().lower()
-        if title in ("aggressive", "moderate", "preserve"):
-            self._tuning_set("jargon_translation", title)
+        mapping = {
+            "plain english": "aggressive",
+            "moderate": "moderate",
+            "preserve": "preserve",
+        }
+        if title in mapping:
+            self._tuning_set("jargon_translation", mapping[title])
 
     def onTuningHookEndingsChanged_(self, sender) -> None:
         title = (sender.titleOfSelectedItem() or "").strip().lower()
