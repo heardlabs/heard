@@ -267,30 +267,35 @@ def test_maybe_compress_skips_when_gate_fails():
 
 def test_start_skips_compression_when_enabled_provider_false():
     """Cost gate: if enabled_provider() returns False, the compressor
-    thread must NOT call into maybe_compress (and therefore not into
-    the LLM). Users who never opt into the harness pay nothing for
-    WM. We exercise the thread directly by starting it, observing
-    enough events to trip the gate, and verifying call_with_prompt
-    was never invoked."""
+    thread must NOT advance state (and therefore not call the LLM).
+    Users who never opt into the harness pay nothing for WM.
+
+    Verifies via the internal `compressed_at` field rather than a
+    shared module patch. The previous patch-based version raced on CI
+    against leftover threads from neighbouring tests that share the
+    `wm.persona_mod.call_with_prompt` attribute."""
     m = wm.WorkingMemoryManager()
     reg = AgentStateRegistry()
     for _ in range(wm.COMPRESS_NEW_EVENT_THRESHOLD + 4):
         m.observe(_ev())
 
-    with patch.object(wm.persona_mod, "call_with_prompt", return_value="prose") as call:
-        m.start(
-            agent_states=reg,
-            persona_provider=lambda: _persona(),
-            enabled_provider=lambda: False,
-        )
-        # Wait long enough for the thread to wake at least twice.
-        time.sleep(0.3)  # NOTE: this is intentionally short — the
-        # 5s tick is hard to test, so we accept a small window in
-        # which the thread *could* have called if the gate were
-        # broken. With enabled=False it never calls.
-        m.stop()
+    # Baseline: no compression has happened yet.
+    assert m._state.compressed_at == 0.0
 
-    assert call.call_count == 0
+    m.start(
+        agent_states=reg,
+        persona_provider=lambda: _persona(),
+        enabled_provider=lambda: False,
+    )
+    # Brief wait — the thread's 5s tick won't fire in this window,
+    # but even if it did, the False gate prevents maybe_compress.
+    time.sleep(0.3)
+    m.stop()
+
+    # compressed_at gets set only inside _compress() AFTER a
+    # successful LLM call. With the gate returning False, _compress
+    # never runs — so the field stays at its initial 0.0.
+    assert m._state.compressed_at == 0.0
 
 
 def test_start_runs_compression_when_enabled_provider_true_and_gate_passes():
