@@ -375,10 +375,62 @@ def narrate(
         # Harness produced a silence-marker. Treat as deliberate skip.
         return HarnessDecision(speak=False, scope="one-line", altitude="human")
 
-    # The prototype doesn't yet ask the model to declare scope /
-    # altitude — those are deferred to a future iteration. Defaults
-    # below match the most common case (a human-altitude summary).
-    return HarnessDecision(speak=True, text=text, scope="summary", altitude="human")
+    # Step 6f — model-declared scope + altitude. The harness is
+    # encouraged to return a JSON object {"text": "...", "scope": ...,
+    # "altitude": ...} so the daemon can log richer signals and the
+    # future salience-arbitration logic can learn from per-event
+    # altitude choices. Plain text is still accepted — it just gets
+    # the conservative default (summary / human) the way the
+    # prototype always did.
+    spoken, scope, altitude = _parse_harness_response(text)
+    if not spoken:
+        # Empty text inside a JSON wrapper → punt to v1, same as a
+        # silence marker would.
+        return None
+    return HarnessDecision(
+        speak=True, text=spoken, scope=scope, altitude=altitude,
+    )
+
+
+_VALID_SCOPES: frozenset[str] = frozenset({"one-line", "summary", "full"})
+_VALID_ALTITUDES: frozenset[str] = frozenset({"technical", "human", "strategic"})
+
+
+def _parse_harness_response(raw: str) -> tuple[str, str, str]:
+    """Parse the harness LLM response. Returns ``(text, scope, altitude)``.
+
+    Two shapes accepted, mirroring the OUTPUT FORMAT block in
+    `_HARNESS_INSTRUCTION_BLOCK`:
+
+      * JSON: ``{"text": "...", "scope": "...", "altitude": "..."}``
+        — preferred; lets the model declare its own narration
+        altitude so the daemon can log + learn from it.
+      * Plain text — fallback for when JSON feels forced. Treated
+        as scope="summary" / altitude="human" (the v1 prototype's
+        hardcoded defaults).
+
+    Unknown / missing scope or altitude values fall back to defaults
+    rather than the whole response. We'd rather speak the model's
+    text and log the wrong altitude than punt the whole call because
+    of a one-char typo.
+    """
+    raw = raw.strip()
+    if raw.startswith("{") and raw.endswith("}"):
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            text = (data.get("text") or "").strip()
+            scope = data.get("scope") or "summary"
+            altitude = data.get("altitude") or "human"
+            if scope not in _VALID_SCOPES:
+                scope = "summary"
+            if altitude not in _VALID_ALTITUDES:
+                altitude = "human"
+            return text, scope, altitude
+    # Plain text — use the conservative defaults.
+    return raw, "summary", "human"
 
 
 # ----- prompt building ----------------------------------------------------
@@ -802,8 +854,33 @@ THINGS THAT ALMOST NEVER DESERVE NARRATION:
   * Subsequent `cd` / `ls` / `pwd` calls
   * Repeated identical operations with no new outcome
 
-Otherwise return the narration text directly, no prefix, no quotes,
-no markdown.
+OUTPUT FORMAT — you may return one of two shapes:
+
+  Preferred (declare scope + altitude so the daemon can log richer
+  signals and the future salience-arbitration logic can learn):
+
+    {"text": "<spoken narration>",
+     "scope": "one-line" | "summary" | "full",
+     "altitude": "technical" | "human" | "strategic"}
+
+  Acceptable (when JSON feels forced or you're returning silence):
+
+    Plain narration text, no JSON wrapping.
+
+When emitting JSON: the `text` field is what gets spoken. Pick
+scope + altitude that honestly describe what your narration
+actually does — `one-line` for a single sentence, `summary` for a
+short multi-clause sentence, `full` for a fuller several-sentence
+narration. Altitude: `technical` when you're naming filenames /
+errors / mechanism, `human` when you're describing intent or
+outcome, `strategic` when you're framing the broader arc.
+
+Don't lie about altitude or scope just to look concise. The daemon
+falls back to plain-text parsing if the JSON is malformed, so
+correctness > format.
+
+Whichever shape you return: no markdown, no triple-backtick blocks,
+no commentary outside the response.
 """
 
 

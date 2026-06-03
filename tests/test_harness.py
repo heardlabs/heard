@@ -150,6 +150,124 @@ def test_narrate_empty_response_becomes_none():
     assert out is None or (out.speak is False)
 
 
+# --- step 6f — model-declared scope + altitude ---------------------------
+
+
+def test_parse_harness_response_plain_text_uses_defaults():
+    text, scope, altitude = harness._parse_harness_response(
+        "Running the tests."
+    )
+    assert text == "Running the tests."
+    assert scope == "summary"
+    assert altitude == "human"
+
+
+def test_parse_harness_response_strips_whitespace():
+    text, _, _ = harness._parse_harness_response("  Hello world.  ")
+    assert text == "Hello world."
+
+
+def test_parse_harness_response_json_honors_declared_scope_altitude():
+    text, scope, altitude = harness._parse_harness_response(
+        '{"text": "Picked the patch.", "scope": "full", '
+        '"altitude": "strategic"}'
+    )
+    assert text == "Picked the patch."
+    assert scope == "full"
+    assert altitude == "strategic"
+
+
+def test_parse_harness_response_json_with_unknown_scope_defaults():
+    """Bad scope/altitude values fall back to defaults — we don't punt
+    the whole narration over a typo."""
+    text, scope, altitude = harness._parse_harness_response(
+        '{"text": "ok", "scope": "encyclopedic", "altitude": "vibes"}'
+    )
+    assert text == "ok"
+    assert scope == "summary"
+    assert altitude == "human"
+
+
+def test_parse_harness_response_malformed_json_falls_back_to_plain_text():
+    """If the model emits {} but with broken JSON inside, treat the
+    whole string as plain text rather than punting. Defensive — the
+    user still gets narration."""
+    text, scope, altitude = harness._parse_harness_response(
+        '{"text": "missing close quote, '
+    )
+    # Whole string is treated as text; defaults applied.
+    assert "missing close quote" in text
+    assert scope == "summary"
+    assert altitude == "human"
+
+
+def test_parse_harness_response_json_missing_text_field_returns_empty():
+    """A JSON wrapper with no text field is functionally silence — the
+    caller (narrate) treats empty text as a punt."""
+    text, _, _ = harness._parse_harness_response(
+        '{"scope": "full", "altitude": "human"}'
+    )
+    assert text == ""
+
+
+def test_narrate_threads_model_declared_scope_altitude_into_decision():
+    """End-to-end: when the model returns JSON, scope + altitude land
+    on the HarnessDecision (which the daemon logs as event_speak
+    metadata)."""
+    reg = AgentStateRegistry()
+    response = (
+        '{"text": "Tests are green.", "scope": "one-line", '
+        '"altitude": "technical"}'
+    )
+    with patch.object(
+        harness.persona_mod, "call_with_prompt", return_value=response
+    ):
+        out = harness.narrate(
+            _ev(),
+            cfg={"harness_enabled": True},
+            persona=_persona(),
+            agent_states=reg,
+        )
+    assert out is not None
+    assert out.speak is True
+    assert out.text == "Tests are green."
+    assert out.scope == "one-line"
+    assert out.altitude == "technical"
+
+
+def test_narrate_plain_text_response_gets_default_scope_altitude():
+    reg = AgentStateRegistry()
+    with patch.object(
+        harness.persona_mod, "call_with_prompt", return_value="Done."
+    ):
+        out = harness.narrate(
+            _ev(),
+            cfg={"harness_enabled": True},
+            persona=_persona(),
+            agent_states=reg,
+        )
+    assert out is not None
+    assert out.text == "Done."
+    assert out.scope == "summary"
+    assert out.altitude == "human"
+
+
+def test_narrate_json_with_empty_text_punts_to_v1():
+    """JSON wrapper with no text field → empty text → daemon punts."""
+    reg = AgentStateRegistry()
+    response = '{"scope": "full", "altitude": "strategic"}'
+    with patch.object(
+        harness.persona_mod, "call_with_prompt", return_value=response
+    ):
+        out = harness.narrate(
+            _ev(),
+            cfg={"harness_enabled": True},
+            persona=_persona(),
+            agent_states=reg,
+        )
+    assert out is None
+
+
 # --- prompt assembly -----------------------------------------------------
 
 
