@@ -103,10 +103,11 @@ from heard.settings_widgets import (
 # Tab definitions
 # ---------------------------------------------------------------------------
 
-TAB_IDS = ["account", "voice", "keys", "shortcuts", "advanced"]
+TAB_IDS = ["account", "voice", "tuning", "keys", "shortcuts", "advanced"]
 TAB_LABELS = {
     "account": "Account",
     "voice": "Voice",
+    "tuning": "Tuning",
     "keys": "Keys",
     "shortcuts": "Shortcuts",
     "advanced": "Advanced",
@@ -114,6 +115,7 @@ TAB_LABELS = {
 TAB_SYMBOLS = {
     "account": "person.crop.circle",
     "voice": "waveform",
+    "tuning": "slider.horizontal.3",
     "keys": "key",
     "shortcuts": "keyboard",
     "advanced": "gearshape.2",
@@ -390,6 +392,8 @@ class SettingsController(NSObject):
             return self._build_account_panel()
         if ident == "voice":
             return self._build_voice_panel()
+        if ident == "tuning":
+            return self._build_tuning_panel()
         if ident == "keys":
             return self._build_keys_panel()
         if ident == "shortcuts":
@@ -624,6 +628,173 @@ class SettingsController(NSObject):
         })
         return outer
 
+    # --- TUNING tab --------------------------------------------------------
+    #
+    # Surfaces the preferences_schema.yaml slots as direct user knobs.
+    # Replaces the originally-planned F4 distillation worker (parked for
+    # now — needed user-feedback volume we don't have yet). The same
+    # substrate (heard/preferences.py) backs both this UI surface and
+    # the hidden `heard preferences` CLI commands; either path round-
+    # trips through set_value() → validate() → write to
+    # $CONFIG_DIR/preferences.yaml → daemon reload.
+    #
+    # Skipped from the UI surface (still editable via CLI / YAML):
+    #   * tool_category_volume — mapping; needs a more complex editor
+    #     and most users won't have per-category opinions on day one.
+    # Everything else (9/10 slots) gets a popup or a text field here.
+
+    def _build_tuning_panel(self) -> NSView:
+
+        outer, body = self._panel_shell("tuning")
+        self._refs.setdefault("tuning", {})
+
+        intro = _label(
+            "Knobs that shape how Heard narrates. Changes take "
+            "effect on the next event — no restart needed. Reset "
+            "any group to defaults with the button at the bottom.",
+            size=12, dim=True,
+        )
+        _low_priority_text(intro, wrap=True)
+        intro_card = _card([intro])
+        self._add_card(body, intro_card)
+
+        # --- VOLUME / DENSITY ---
+        self._add_section(body, "VOLUME / DENSITY")
+        routine_pop = _popup(
+            ["Skip", "Brief", "Full"],
+            target=self, action="onTuningRoutineToolProgressChanged:",
+        )
+        routine_row = _setting_row(
+            "Routine tool progress",
+            'How chatty Heard is on routine tools ("Reading auth.py").',
+            routine_pop,
+        )
+        prose_field = _text_field(placeholder="240")
+        prose_field.setTarget_(self)
+        prose_field.setAction_("onTuningProseThresholdChanged:")
+        prose_row = _setting_row(
+            "Mid-stream prose threshold",
+            "Char count below which mid-stream prose is routine "
+            "(template). Above, harness narrates with context. "
+            "80–1000. Default 240.",
+            prose_field,
+        )
+        self._add_card(body, _card([routine_row, prose_row]))
+
+        # --- SHAPE / STRUCTURE ---
+        self._add_section(body, "SHAPE / STRUCTURE")
+        final_shape_pop = _popup(
+            ["Preserve structure", "Lead then summary", "Headline only"],
+            target=self, action="onTuningLongFinalShapeChanged:",
+        )
+        final_shape_row = _setting_row(
+            "Long final messages",
+            "How to compress a long structured answer — preserve "
+            "the shape, give just the lead + summary, or read only "
+            "the headline.",
+            final_shape_pop,
+        )
+        decision_pop = _popup(
+            ["Emphasize", "Mention", "Skip"],
+            target=self, action="onTuningDecisionSurfacingChanged:",
+        )
+        decision_row = _setting_row(
+            "Decision surfacing",
+            "How to handle moments where the agent picks between "
+            "options before acting.",
+            decision_pop,
+        )
+        self._add_card(body, _card([final_shape_row, decision_row]))
+
+        # --- TONE / REGISTER ---
+        self._add_section(body, "TONE / REGISTER")
+        register_pop = _popup(
+            ["Formal", "Neutral", "Casual"],
+            target=self, action="onTuningRegisterFormalityChanged:",
+        )
+        register_row = _setting_row(
+            "Register",
+            "Tonal register within the persona's range — same "
+            "Jarvis, more or less stiff.",
+            register_pop,
+        )
+        jargon_pop = _popup(
+            ["Aggressive", "Moderate", "Preserve"],
+            target=self, action="onTuningJargonTranslationChanged:",
+        )
+        jargon_row = _setting_row(
+            "Jargon translation",
+            "Plain English vs. developer-speak. Aggressive strips "
+            "most internal jargon (Companion-mode default).",
+            jargon_pop,
+        )
+        hook_pop = _popup(
+            ["Required", "Preferred", "Optional"],
+            target=self, action="onTuningHookEndingsChanged:",
+        )
+        hook_row = _setting_row(
+            "Hook endings",
+            'How often a turn ends with a hook ("okay to keep '
+            'going?"). Companion mode bumps this to Required.',
+            hook_pop,
+        )
+        self._add_card(body, _card([register_row, jargon_row, hook_row]))
+
+        # --- SALIENCE ---
+        self._add_section(body, "SALIENCE")
+        error_detail_pop = _popup(
+            ["Minimal", "Standard", "Verbose"],
+            target=self, action="onTuningErrorDetailChanged:",
+        )
+        error_detail_row = _setting_row(
+            "Error detail",
+            'How much detail in error narrations. Minimal: "Tests '
+            'failed." Standard: "Three failures in auth.py." '
+            "Verbose: the full breakdown.",
+            error_detail_pop,
+        )
+        question_pop = _popup(
+            ["Verbatim", "Summarize", "Acknowledge"],
+            target=self, action="onTuningQuestionHandlingChanged:",
+        )
+        question_row = _setting_row(
+            "Agent questions",
+            "How to narrate questions the agent asks you. "
+            "Verbatim reads the full question (Companion default).",
+            question_pop,
+        )
+        self._add_card(body, _card([error_detail_row, question_row]))
+
+        # --- ADVANCED / RESET ---
+        self._add_section(body, "ADVANCED")
+        advanced_note = _label(
+            "Per-tool-category volume overrides (bash, edit, read, "
+            "web, agent) live in ~/Library/Application Support/heard/"
+            "preferences.yaml — edit directly or use the heard "
+            "preferences CLI.",
+            size=11, dim=True,
+        )
+        _low_priority_text(advanced_note, wrap=True)
+        reset_btn = _button(
+            "Reset all tuning to defaults",
+            target=self,
+            action="onTuningResetAll:",
+        )
+        self._add_card(body, _card([advanced_note, reset_btn]))
+
+        self._refs["tuning"].update({
+            "routine_tool_progress": routine_pop,
+            "intermediate_prose_threshold": prose_field,
+            "long_final_shape": final_shape_pop,
+            "decision_surfacing": decision_pop,
+            "register_formality": register_pop,
+            "jargon_translation": jargon_pop,
+            "hook_endings": hook_pop,
+            "error_detail_level": error_detail_pop,
+            "question_handling": question_pop,
+        })
+        return outer
+
     # --- KEYS tab ----------------------------------------------------------
 
     def _build_keys_panel(self) -> NSView:
@@ -830,9 +1001,76 @@ class SettingsController(NSObject):
         status = client.get_status() or {}
         self._refresh_account(cfg, status)
         self._refresh_voice(cfg)
+        self._refresh_tuning(cfg)
         self._refresh_keys(cfg)
         self._refresh_shortcuts(cfg)
         self._refresh_advanced(cfg, status)
+
+    def _refresh_tuning(self, _cfg: dict) -> None:
+        """Reflect the currently-resolved preferences (overlay-stack
+        applied) in the Tuning tab's popups + fields. Called by
+        _refresh_all on the periodic tick AND after a reset / setting
+        change so the UI tracks what the daemon is actually reading."""
+        from heard import preferences as prefs_mod
+        try:
+            resolved = prefs_mod.resolve()
+        except Exception:
+            return
+        r = self._refs.get("tuning") or {}
+
+        def _select(popup, target_title: str) -> None:
+            if popup is None:
+                return
+            for i in range(popup.numberOfItems() if hasattr(popup, "numberOfItems") else 0):
+                item = popup.itemAtIndex_(i)
+                if item and item.title().lower() == target_title.lower():
+                    popup.selectItemAtIndex_(i)
+                    return
+            # _GhostPopUp doesn't expose numberOfItems / itemAtIndex_ —
+            # fall back to setTitleByValue_ if the widget supports it.
+            sel_setter = getattr(popup, "selectByTitle_", None)
+            if sel_setter is not None:
+                try:
+                    sel_setter(target_title)
+                except Exception:
+                    pass
+
+        _select(r.get("routine_tool_progress"),
+                resolved.get("routine_tool_progress", "brief").capitalize())
+
+        prose_field = r.get("intermediate_prose_threshold")
+        if prose_field is not None:
+            try:
+                prose_field.setStringValue_(
+                    str(resolved.get("intermediate_prose_threshold", 240))
+                )
+            except Exception:
+                pass
+
+        _final_shape_titles = {
+            "preserve_structure": "Preserve structure",
+            "lead_then_summary": "Lead then summary",
+            "headline_only": "Headline only",
+        }
+        _select(
+            r.get("long_final_shape"),
+            _final_shape_titles.get(
+                resolved.get("long_final_shape", "preserve_structure"),
+                "Preserve structure",
+            ),
+        )
+        _select(r.get("decision_surfacing"),
+                resolved.get("decision_surfacing", "emphasize").capitalize())
+        _select(r.get("register_formality"),
+                resolved.get("register_formality", "neutral").capitalize())
+        _select(r.get("jargon_translation"),
+                resolved.get("jargon_translation", "moderate").capitalize())
+        _select(r.get("hook_endings"),
+                resolved.get("hook_endings", "preferred").capitalize())
+        _select(r.get("error_detail_level"),
+                resolved.get("error_detail_level", "standard").capitalize())
+        _select(r.get("question_handling"),
+                resolved.get("question_handling", "verbatim").capitalize())
 
     def _refresh_account(self, cfg: dict, status: dict) -> None:
         r = self._refs["account"]
@@ -1145,6 +1383,93 @@ class SettingsController(NSObject):
         title = (sender.titleOfSelectedItem() or "").strip().lower()
         config.set_value("multi_agent_auto_voices", title == "distinct voices")
         _reload_daemon()
+
+    # --- Tuning tab handlers ----------------------------------------------
+    # Each one resolves the popup's selected title (or the text field's
+    # contents) to the schema-canonical value, validates via the same
+    # preferences.set_value() the CLI uses, and reloads the daemon.
+    # Invalid input is swallowed (the popup snaps back on the next refresh
+    # tick); we never crash the Settings window over a bad pref write.
+
+    def _tuning_set(self, slot: str, value) -> None:
+        from heard import preferences as prefs_mod
+        try:
+            prefs_mod.set_value(slot, value)
+        except prefs_mod.ValidationError:
+            return
+        try:
+            prefs_mod.append_history(
+                "set", slot=slot, value=value, source="explicit",
+            )
+        except Exception:
+            pass
+        _reload_daemon()
+
+    def onTuningRoutineToolProgressChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        if title in ("skip", "brief", "full"):
+            self._tuning_set("routine_tool_progress", title)
+
+    def onTuningProseThresholdChanged_(self, sender) -> None:
+        raw = (sender.stringValue() or "").strip()
+        if not raw:
+            return
+        try:
+            value = int(raw)
+        except ValueError:
+            return
+        self._tuning_set("intermediate_prose_threshold", value)
+
+    def onTuningLongFinalShapeChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        mapping = {
+            "preserve structure": "preserve_structure",
+            "lead then summary": "lead_then_summary",
+            "headline only": "headline_only",
+        }
+        if title in mapping:
+            self._tuning_set("long_final_shape", mapping[title])
+
+    def onTuningDecisionSurfacingChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        if title in ("emphasize", "mention", "skip"):
+            self._tuning_set("decision_surfacing", title)
+
+    def onTuningRegisterFormalityChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        if title in ("formal", "neutral", "casual"):
+            self._tuning_set("register_formality", title)
+
+    def onTuningJargonTranslationChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        if title in ("aggressive", "moderate", "preserve"):
+            self._tuning_set("jargon_translation", title)
+
+    def onTuningHookEndingsChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        if title in ("required", "preferred", "optional"):
+            self._tuning_set("hook_endings", title)
+
+    def onTuningErrorDetailChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        if title in ("minimal", "standard", "verbose"):
+            self._tuning_set("error_detail_level", title)
+
+    def onTuningQuestionHandlingChanged_(self, sender) -> None:
+        title = (sender.titleOfSelectedItem() or "").strip().lower()
+        if title in ("verbatim", "summarize", "acknowledge"):
+            self._tuning_set("question_handling", title)
+
+    def onTuningResetAll_(self, _sender) -> None:
+        from heard import preferences as prefs_mod
+        n = prefs_mod.reset_all()
+        if n > 0:
+            try:
+                prefs_mod.append_history("reset", source="explicit")
+            except Exception:
+                pass
+        _reload_daemon()
+        self._refresh_tuning(config.load())
 
     # Keys.
     def onLLMKeyChanged_(self, sender) -> None:
