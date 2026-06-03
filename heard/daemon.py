@@ -242,6 +242,17 @@ class Daemon:
         # bursts during a normal turn would silently lose the first
         # one or two beats.
         self._queue_max = 5
+        # Track the last few edited file paths so the fast-path
+        # classifier can recognise repeat edits to the same file
+        # and route the 2nd+ to the harness (which has cross-event
+        # context). Without this, consecutive edits to the same
+        # file all narrate the same template line ("Editing X.")
+        # which is repetitive AND uninformative. Bounded deque so
+        # the memory cost is fixed regardless of session length.
+        import collections
+        self._recent_edit_paths: collections.deque[str] = collections.deque(
+            maxlen=8,
+        )
         self._start_hotkey()
         self._start_audio_monitor()
         # Layer 3 — Working Memory compressor thread. Idle-loops on
@@ -1897,7 +1908,11 @@ class Daemon:
         # vs 500ms-1s+ when an LLM is in the loop.
         if harness.is_enabled(cfg):
             active_count = len(self.router.list_active())
-            if harness.should_use_fast_path(req, multi_agent_active=active_count > 1):
+            if harness.should_use_fast_path(
+                req,
+                multi_agent_active=active_count > 1,
+                recent_edit_paths=tuple(self._recent_edit_paths),
+            ):
                 # Verbosity profile still applies: quiet mode still
                 # mutes trivia, brief mode still digests bursts, etc.
                 if kind == "tool_pre":
@@ -1940,6 +1955,14 @@ class Daemon:
                     chars=len(neutral),
                     via="fastpath",
                 )
+                # Track this edit's abs_path so the NEXT edit to the
+                # same file routes through the harness (avoiding the
+                # "Editing X. Editing X. Editing X." repetition that
+                # comes from the deterministic template firing).
+                if tag in ("tool_edit", "tool_write", "tool_notebook_edit"):
+                    edit_path = ctx.get("abs_path") if isinstance(ctx, dict) else None
+                    if edit_path:
+                        self._recent_edit_paths.append(edit_path)
                 self._start_speech(
                     neutral,
                     cfg=cfg,

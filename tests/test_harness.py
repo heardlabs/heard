@@ -723,6 +723,51 @@ def test_fast_path_multi_agent_disables_fast_path():
     assert harness.should_use_fast_path(routine, multi_agent_active=False) is True
 
 
+def test_fast_path_routes_repeat_edit_to_harness():
+    """First edit fast-paths; second edit to the SAME file routes to
+    harness so it can produce contextual narration instead of
+    repeating "Editing X." K. bug 2026-06-02."""
+    edit = _ev(
+        kind="tool_pre",
+        tag="tool_edit",
+        ctx={"abs_path": "/proj/auth.py"},
+    )
+    # First edit: deque empty → fast-path.
+    assert harness.should_use_fast_path(edit, recent_edit_paths=()) is True
+    # Second edit (same path in deque) → harness.
+    assert harness.should_use_fast_path(
+        edit, recent_edit_paths=("/proj/auth.py",),
+    ) is False
+
+
+def test_fast_path_repeat_edit_different_file_still_fast_paths():
+    """Editing a DIFFERENT file should still fast-path even if other
+    files are in the recent-edit deque — the override is per-file."""
+    edit = _ev(
+        kind="tool_pre",
+        tag="tool_edit",
+        ctx={"abs_path": "/proj/new.py"},
+    )
+    assert harness.should_use_fast_path(
+        edit,
+        recent_edit_paths=("/proj/auth.py", "/proj/session.py"),
+    ) is True
+
+
+def test_fast_path_repeat_check_only_applies_to_edit_writes():
+    """The override is scoped to edit/write/notebook tags — bash
+    commands and other tools don't have the same repetition
+    pathology."""
+    bash = _ev(
+        kind="tool_pre",
+        tag="tool_bash_generic",
+        ctx={"abs_path": "/proj/auth.py"},  # contrived: bash doesn't usually set abs_path
+    )
+    assert harness.should_use_fast_path(
+        bash, recent_edit_paths=("/proj/auth.py",),
+    ) is True
+
+
 def test_fast_path_unknown_kind_is_conservative():
     """An unknown event kind (custom hook, future event type) →
     sent to harness rather than silently routed to a template

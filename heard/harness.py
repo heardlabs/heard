@@ -254,6 +254,7 @@ def should_use_fast_path(
     event: dict[str, Any],
     *,
     multi_agent_active: bool = False,
+    recent_edit_paths: tuple[str, ...] = (),
 ) -> bool:
     """Deterministic classifier — returns True when the daemon
     should bypass the harness and let templates narrate this event
@@ -266,6 +267,12 @@ def should_use_fast_path(
         no cross-agent events)
       * Kind is not in _HARNESS_WAKE_KINDS (not a final)
       * Intermediate prose is short (< _LONG_PROSE_CHARS)
+      * This isn't a repeat edit to a recently-edited file (when
+        we've already narrated "Editing X", a second template
+        firing "Editing X" again is noise. Route to the harness
+        so it can produce contextual narration — "Still iterating
+        on X" / describe what's changing now — instead of a
+        repeated stem-only template line.)
 
     CRITICAL OVERRIDE — failures and questions ALWAYS fast-path
     regardless of single/multi agent state. Architecture step 6d:
@@ -299,6 +306,18 @@ def should_use_fast_path(
     if kind == "intermediate":
         neutral = event.get("neutral") or ""
         if len(neutral) >= _LONG_PROSE_CHARS:
+            return False
+
+    # Repeat-edit override — if this is an edit to a file the daemon
+    # has already narrated about recently, route to the harness for
+    # cross-event context. Without this, three consecutive edits to
+    # the same file produce three identical "Editing X." utterances
+    # — repetitive AND uninformative (the listener knows what file
+    # you're on; what they want is what's being changed).
+    if tag in ("tool_edit", "tool_write", "tool_notebook_edit"):
+        ctx = event.get("ctx") or {}
+        abs_path = ctx.get("abs_path") if isinstance(ctx, dict) else None
+        if abs_path and abs_path in recent_edit_paths:
             return False
 
     if kind in ("tool_pre", "tool_post", "intermediate"):
