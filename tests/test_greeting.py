@@ -43,6 +43,12 @@ def _make_daemon(tmp_path, monkeypatch, cfg_overrides):
         captured.append({"text": text, "kw": kw})
 
     monkeypatch.setattr("heard.daemon.Daemon._start_speech", fake_start_speech)
+    # Force the live-TTS fallback path for the existing assertions —
+    # tests that want to exercise the bundled-MP3 branch override this
+    # in the test body (see test_greeting_uses_bundled_mp3_when_present).
+    monkeypatch.setattr(
+        "heard.daemon.Daemon._welcome_mp3_path", lambda self: None,
+    )
 
     from heard.daemon import Daemon
 
@@ -101,6 +107,40 @@ def test_greeting_uses_active_persona_name(tmp_path, monkeypatch):
     daemon._maybe_greet()
     assert len(captured) == 1
     assert captured[0]["text"].startswith("Hi, I'm Aria.")
+
+
+def test_greeting_uses_bundled_mp3_when_present(tmp_path, monkeypatch):
+    """When ``heard/assets/welcome-jarvis.mp3`` exists, the daemon plays
+    it via afplay regardless of TTS backend — so a fresh-install user
+    hears the persona introduce himself even before sign-in. The live
+    TTS path is bypassed; ``_start_speech`` is NOT called."""
+    daemon, persisted, captured = _make_daemon(
+        tmp_path, monkeypatch,
+        # No TTS backend configured — would fall through to silent skip
+        # on the live path. The bundled MP3 must fire anyway.
+        {"greeted": False, "elevenlabs_api_key": "", "persona": "jarvis"},
+    )
+    # Override the override from _make_daemon: this test wants the
+    # bundled MP3 path to fire.
+    fake_mp3 = tmp_path / "welcome-jarvis.mp3"
+    fake_mp3.write_bytes(b"\x00")  # afplay would fail on this, but Popen is stubbed
+    monkeypatch.setattr(
+        "heard.daemon.Daemon._welcome_mp3_path", lambda self: fake_mp3,
+    )
+    afplay_calls: list = []
+    class _FakePopen:
+        def __init__(self, args, **kw):
+            afplay_calls.append(args)
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+
+    daemon._maybe_greet()
+    assert persisted.get("greeted") is True
+    assert daemon.cfg["greeted"] is True
+    # Live-TTS path skipped — no speech-queue activity.
+    assert captured == []
+    # afplay invoked with the bundled MP3.
+    assert len(afplay_calls) == 1
+    assert str(fake_mp3) in afplay_calls[0]
 
 
 def test_greeting_not_repeated_when_already_greeted(tmp_path, monkeypatch):

@@ -53,6 +53,11 @@ def _make_daemon(tmp_path, monkeypatch, cfg_overrides):
         captured.append({"text": text, "kw": kw})
 
     monkeypatch.setattr("heard.daemon.Daemon._start_speech", fake_start_speech)
+    # Force the live-TTS fallback so the existing assertions on greeting
+    # TEXT continue to work. The bundled-MP3 path has its own test.
+    monkeypatch.setattr(
+        "heard.daemon.Daemon._welcome_mp3_path", lambda self: None,
+    )
 
     from heard.daemon import Daemon
 

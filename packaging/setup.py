@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 from setuptools import setup  # noqa: E402
 
 APP_NAME = "Heard"
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 APP_BUNDLE_ID = "dev.heard.menubar"
 
 APP = [os.path.join(HERE, "app_entry.py")]
@@ -64,6 +64,11 @@ DATA_FILES = [
         [
             os.path.join(ROOT, "heard/assets/menubar.png"),
             os.path.join(ROOT, "heard/assets/menubar@2x.png"),
+            # Pre-recorded Jarvis welcome line — plays via afplay on
+            # first launch regardless of TTS backend, so a fresh-install
+            # user hears the persona introduce himself before sign-in.
+            # Regenerated via scripts/synth_welcome.py when copy changes.
+            os.path.join(ROOT, "heard/assets/welcome-jarvis.mp3"),
         ],
     ),
 ]

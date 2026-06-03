@@ -339,18 +339,62 @@ class Daemon:
         except Exception:
             pass
 
+    def _welcome_mp3_path(self):
+        """Return the path to the bundled Jarvis welcome MP3, or None if
+        the asset isn't present. Pulled out as a method so tests can
+        monkey-patch it to force the live-TTS fallback path without
+        having to munge `heard/assets/`."""
+        from pathlib import Path
+        return Path(__file__).parent / "assets" / "welcome-jarvis.mp3"
+
     def _maybe_greet(self) -> None:
-        """Speak the one-shot welcome line if we haven't yet AND we
-        have a real TTS backend to speak it through. Persists the
-        ``greeted`` flag immediately so a daemon respawn mid-greeting
-        doesn't double-fire. Intentionally fires DURING the wizard —
-        the welcome line is part of the onboarding experience and
-        establishes the persona's voice up front."""
+        """Speak the one-shot welcome line if we haven't yet. Two paths:
+
+        1. **Bundled greeting MP3** (``heard/assets/welcome-jarvis.mp3``)
+           — plays via ``afplay`` regardless of TTS backend, so a
+           fresh-install user who hasn't signed in yet still hears Jarvis
+           introduce himself on the very first wizard screen. This is the
+           "first impression" path. Voiced once at build time using the
+           Jarvis ElevenLabs voice (see ``scripts/synth_welcome.py``).
+        2. **Live TTS** — when no bundled MP3 is on disk (degraded build
+           / fork without the asset), fall through to the live-synth path
+           if a real backend is configured. Skip silently if NullTTS.
+
+        All paths persist the ``greeted`` flag immediately so a daemon
+        respawn mid-greeting doesn't double-fire. Intentionally fires
+        DURING the wizard — the welcome line is part of the onboarding
+        experience and establishes the persona's voice up front."""
         if self.cfg.get("greeted"):
             return
+
+        # Path 1: bundled MP3 (preferred on a fresh install).
+        mp3_path = self._welcome_mp3_path()
+        if mp3_path is not None and mp3_path.is_file():
+            self.cfg["greeted"] = True
+            try:
+                config.set_value("greeted", True)
+            except Exception:
+                pass
+            _log("greet_spoken", persona="jarvis", via="bundled_mp3")
+            try:
+                import subprocess
+                # Detached — don't block the daemon's reload thread on
+                # afplay (~7s of audio). Stderr swallowed so a missing
+                # /usr/bin/afplay on a stripped image doesn't crash us.
+                subprocess.Popen(
+                    ["/usr/bin/afplay", str(mp3_path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception as exc:
+                _log("greet_play_failed", err=repr(exc))
+            return
+
+        # Path 2: live TTS — only if we have a real backend configured.
         if isinstance(self.tts, NullTTS):
-            # No voice configured — silent greeting is no greeting.
-            # Next reload (after sign-in / key paste) will revisit.
+            # No voice configured AND no bundled greeting — silent
+            # greeting is no greeting. Next reload (after sign-in / key
+            # paste) will revisit.
             return
         # Capitalise the persona name for spoken use: "jarvis" → "Jarvis",
         # "aria" → "Aria". Falls back to "Heard" if a custom persona
@@ -372,7 +416,7 @@ class Daemon:
             config.set_value("greeted", True)
         except Exception:
             pass
-        _log("greet_spoken", persona=self.persona.name)
+        _log("greet_spoken", persona=self.persona.name, via="live_tts")
         # Bypass the speech queue's "drop other sessions" logic by
         # passing coexists=True — a hook event arriving moments later
         # shouldn't cancel the greeting before it gets to play.
