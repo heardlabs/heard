@@ -82,7 +82,11 @@ having no doc — future sessions trust this table.
 For Python-only changes (no native deps), iterate without rebuilding the .app:
 
 ```bash
-rsync -a --delete ~/Desktop/Projects/heard/heard/ /Applications/Heard.app/Contents/Resources/lib/python3.13/heard/
+# NOTE: source is the PACKAGE dir (.../heard/heard/heard/), not the repo
+# root. Syncing the repo root here copies CLAUDE.md / tests / .git over the
+# bundle and — with --delete — replaces the package with non-package files,
+# breaking the app. Three `heard` segments, not two.
+rsync -a --delete ~/Desktop/Projects/heard/heard/heard/ /Applications/Heard.app/Contents/Resources/lib/python3.13/heard/
 killall Heard 2>/dev/null
 sleep 1
 rm -f ~/Library/Application\ Support/heard/daemon.sock ~/Library/Application\ Support/heard/daemon.pid
