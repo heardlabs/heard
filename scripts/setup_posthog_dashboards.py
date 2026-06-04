@@ -277,6 +277,37 @@ def daily_active_installs() -> dict:
     }
 
 
+def website_daily_visitors() -> dict:
+    """Distinct visitors per day on heard.dev. Uses PostHog's auto-
+    captured $pageview event with dau math. Pairs with `Daily Active
+    Installs` to compare web-side traffic vs in-app activity over the
+    same window."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("$pageview", "Daily website visitors", math="dau")],
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
+def website_top_pages() -> dict:
+    """Pageview counts broken down by URL path. Tells you which pages
+    on heard.dev actually get traffic — landing vs pricing vs docs vs
+    signup. Bar chart, all-time count over the date window."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("$pageview", "Pageviews")],
+        "breakdownFilter": {
+            "breakdown": "$pathname",
+            "breakdown_type": "event",
+        },
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsBarValue"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
 def installs_by_version() -> dict:
     """Daily count of `app_launched` broken down by `app_version`.
     Lets you see how fast users roll forward to a new release — a
@@ -405,6 +436,10 @@ def main() -> int:
          "Daily app_updated events broken down by to_version — how fast users roll forward."),
         ("Downloads by Source", downloads_by_source,
          "Daily download_started events from heard.dev/download/<source> — install attribution."),
+        ("Daily Website Visitors", website_daily_visitors,
+         "Distinct visitors per day on heard.dev — web traffic alongside app DAU."),
+        ("Top Pages", website_top_pages,
+         "Pageview counts broken down by URL path — what people actually read on heard.dev."),
     ]
 
     for name, builder, description in insights:
