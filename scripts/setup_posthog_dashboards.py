@@ -268,6 +268,80 @@ def daily_active_installs() -> dict:
     }
 
 
+def installs_by_version() -> dict:
+    """Daily count of `app_launched` broken down by `app_version`.
+    Lets you see how fast users roll forward to a new release — a
+    spike on the newest version means the auto-update mechanism is
+    working; a long tail of old versions means users are stuck."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("app_launched", "App launched")],
+        "breakdownFilter": {
+            "breakdown": "app_version",
+            "breakdown_type": "event",
+        },
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
+def synth_failures_by_version() -> dict:
+    """Daily synth_failed broken down by `app_version`. Pairs with
+    Synth Failures by Backend — if a release introduces a regression
+    in the synth path, that version's line spikes here. Compared
+    against Installs by Version (above) tells you the actual rate
+    per active install."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("synth_failed", "Synth failures")],
+        "breakdownFilter": {
+            "breakdown": "app_version",
+            "breakdown_type": "event",
+        },
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
+def updates_landed() -> dict:
+    """Daily count of `app_updated` events broken down by the
+    `to_version` property — how many installs have rolled forward to
+    each release, and how fast. A version that has a low `app_updated`
+    count days after release is one users aren't picking up."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("app_updated", "App updated")],
+        "breakdownFilter": {
+            "breakdown": "to_version",
+            "breakdown_type": "event",
+        },
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
+def downloads_by_source() -> dict:
+    """Daily count of `download_started` events (fired server-side by
+    the heard.dev /download/<source> redirect) broken down by source.
+    Tells you which install path (cc curl, website hero, manual link,
+    etc.) is converting. Pairs with `app_first_launched` to compute
+    download → install conversion per channel."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("download_started", "Downloads started")],
+        "breakdownFilter": {
+            "breakdown": "source",
+            "breakdown_type": "event",
+        },
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
 def wizard_abandonment_by_step() -> dict:
     """Where do users bail out of onboarding? Total wizard_abandoned
     events broken down by `last_step`. Pairs with wizard_dropoff
@@ -314,6 +388,14 @@ def main() -> int:
          "Distinct users firing app_launched per day. DAU proxy."),
         ("Synth Failures by Backend", synth_health,
          "Daily synth_failed count grouped by TTS backend."),
+        ("Installs by Version", installs_by_version,
+         "Daily app_launched broken down by app_version — release roll-forward speed."),
+        ("Synth Failures by Version", synth_failures_by_version,
+         "Daily synth_failed broken down by app_version — catches release regressions."),
+        ("Updates Landed", updates_landed,
+         "Daily app_updated events broken down by to_version — how fast users roll forward."),
+        ("Downloads by Source", downloads_by_source,
+         "Daily download_started events from heard.dev/download/<source> — install attribution."),
     ]
 
     for name, builder, description in insights:

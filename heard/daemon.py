@@ -290,6 +290,7 @@ class Daemon:
         # marker so subsequent boots fire `app_launched` instead. Both
         # events are Tier 1 (anonymous, no consent needed).
         try:
+            from heard import __version__ as _app_version
             from heard import analytics
             backend_name = type(self.tts).__name__
             voice_backend = {
@@ -304,10 +305,32 @@ class Daemon:
                     {"voice_backend": voice_backend},
                 )
             else:
+                # Detect a version bump since last boot — fires the
+                # `app_updated` event so we can build an update funnel
+                # (how fast do users roll forward, who's stuck on old
+                # versions, did this release break anything per the
+                # synth_failed rate). The version delta logic intentionally
+                # ignores the equal case (no event) and the empty case
+                # (first boot on this code path, no prior value to
+                # compare against).
+                prior = (self.cfg.get("last_boot_version") or "").strip()
+                if prior and prior != _app_version:
+                    analytics.capture(
+                        "app_updated",
+                        {"from_version": prior, "to_version": _app_version},
+                    )
                 analytics.capture(
                     "app_launched",
                     {"voice_backend": voice_backend},
                 )
+            # Persist the version we just booted so the next boot can
+            # detect a delta. Done after the capture call so a crash
+            # mid-publish doesn't mark the version as "seen."
+            try:
+                if (self.cfg.get("last_boot_version") or "") != _app_version:
+                    config.set_value("last_boot_version", _app_version)
+            except Exception:
+                pass
         except Exception:
             pass
         # Architecture step 6c — warm the harness prompt cache so the

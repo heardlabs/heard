@@ -44,11 +44,11 @@ Bring an [ElevenLabs](https://elevenlabs.io) key for the best voices, or use **K
 
 Paste this into Claude Code, Codex, or any AI coding tool:
 
-> Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
+> Install Heard so you narrate your responses to me. Run: `curl -L https://heard.dev/download/cc -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
 
 ### Manual
 
-Download the latest [`Heard.zip`](https://github.com/heardlabs/heard/releases/latest/download/Heard.zip), drag `Heard.app` into `/Applications`, double-click to launch. Onboarding walks you through voice / API key / hotkey / which agents to wire up.
+Download the latest [`Heard.zip`](https://heard.dev/download/manual?format=zip), drag `Heard.app` into `/Applications`, double-click to launch. Onboarding walks you through voice / API key / hotkey / which agents to wire up.
 
 ## What it does
 
@@ -101,7 +101,6 @@ Depends on which backends you opt into.
 
 - **Voice synth.** ElevenLabs sends spoken text over HTTPS. **Kokoro** runs fully locally — nothing leaves the machine.
 - **Narration.** Heard sends compact event summaries (what tool ran, the agent's response text, recent context) to Claude Haiku 4.5 to decide what to say and shape it in your persona's voice. Either through your own Anthropic key, through Heard's managed proxy if you're signed in, or — with no key and no sign-in — falls back to neutral templates locally.
-- **Telemetry.** None. No analytics, no crash reporters, no phone-home.
 </details>
 
 <details>

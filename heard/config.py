@@ -125,6 +125,13 @@ DEFAULTS: dict[str, Any] = {
     # `app_first_launched` analytics and the welcome-greeting trigger.
     # Empty = never booted before.
     "app_first_launched_at": 0,
+    # Version string the daemon booted with last time. On the NEXT
+    # boot, the daemon compares this to its current __version__ — if
+    # they differ AND this isn't an empty (first-ever) value, we fire
+    # `app_updated { from_version, to_version }` for the update funnel.
+    # Persisted in `daemon.__init__` after the capture call so a crash
+    # mid-publish doesn't lose the signal.
+    "last_boot_version": "",
     # Off by default: the call ends, you get back to your terminal,
     # whoever you were on the call with might still be talking and
     # you'd rather not have Heard suddenly resume mid-sentence. Opt
