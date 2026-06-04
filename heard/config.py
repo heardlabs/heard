@@ -108,6 +108,23 @@ DEFAULTS: dict[str, Any] = {
     # server-side already and skipped here regardless. Default on with
     # a one-time disclosure in the dashboard; opt out via this flag.
     "byok_telemetry": True,
+    # Product analytics (Tier 2) — opt-in. Off by default so we never
+    # fire identified usage events (narration_spoken, setting_changed,
+    # session_*) without explicit consent. Tier 1 anonymous health
+    # events (wizard funnel, install counts, error rates) fire
+    # regardless — they're operationally necessary and carry no PII.
+    # See heard/analytics.py for the full two-tier contract.
+    "product_analytics": False,
+    # Anonymous per-install UUID for product analytics. Generated on
+    # first call to analytics.install_id() — leaving this empty in
+    # DEFAULTS so a wipe + re-install gets a fresh UUID (otherwise the
+    # second install on the same Mac would look like a returning user).
+    "install_id": "",
+    # Epoch seconds the app first booted on this Mac. Marks the
+    # "this is the first launch" signal that drives both
+    # `app_first_launched` analytics and the welcome-greeting trigger.
+    # Empty = never booted before.
+    "app_first_launched_at": 0,
     # Off by default: the call ends, you get back to your terminal,
     # whoever you were on the call with might still be talking and
     # you'd rather not have Heard suddenly resume mid-sentence. Opt

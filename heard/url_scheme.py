@@ -114,6 +114,27 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
     config.set_value("heard_plan", plan or "trial")
     if email:
         config.set_value("heard_email", email)
+        # Use the email's SHA-256 as the analytics user_id when we don't
+        # have an explicit one from the server. Stable + deterministic +
+        # no raw email in PostHog. If api.heard.dev ever returns a
+        # Supabase user.id in the claim response, swap this for that.
+        try:
+            from hashlib import sha256
+
+            from heard import analytics
+            uid = sha256(email.strip().lower().encode()).hexdigest()
+            config.set_value("heard_user_id", uid)
+            analytics.identify(
+                uid,
+                email=email,
+                properties={
+                    "plan": plan or "trial",
+                    "signed_in_at": int(trial_expires_at or 0),
+                },
+            )
+            analytics.capture("signin_completed", {"method": "web"})
+        except Exception:
+            pass
     config.set_value("heard_trial_expires_at", int(trial_expires_at or 0))
     _reload_and_selftest()
     _bring_onboarding_forward_signed_in(email or "your account")

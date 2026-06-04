@@ -1057,7 +1057,22 @@ class SettingsController(NSObject):
             "Turn off to keep BYOK + local activity invisible to Heard.",
             telemetry_check,
         )
-        self._add_card(body, _card([telemetry_row]))
+        # Tier 2 product analytics — opt-in. Tier 1 (anonymous health
+        # metrics: install count, wizard funnel, error rates) fires
+        # regardless; this toggle gates identified usage tracking
+        # (narration counts, settings used, day-N retention). See
+        # heard/analytics.py for the full contract.
+        analytics_check = _checkbox(
+            "", target=self, action="onProductAnalyticsToggled:",
+        )
+        analytics_row = _setting_row(
+            "Help improve Heard with usage analytics",
+            "Sends anonymized counts (narrations played, settings tuned, "
+            "session length) to our PostHog dashboard. Never the text. "
+            "Off by default.",
+            analytics_check,
+        )
+        self._add_card(body, _card([telemetry_row, analytics_row]))
 
         self._refs["advanced"].update({
             "cc": cc_check,
@@ -1067,6 +1082,7 @@ class SettingsController(NSObject):
             "kokoro_dl": kokoro_dl_btn,
             "kokoro_del": kokoro_del_btn,
             "byok_telemetry": telemetry_check,
+            "product_analytics": analytics_check,
         })
         return outer
 
@@ -1302,6 +1318,11 @@ class SettingsController(NSObject):
         if bt is not None:
             bt.setState_(1 if cfg.get("byok_telemetry", True) else 0)
 
+        # Tier 2 product analytics checkbox — default OFF (opt-in).
+        pa = r.get("product_analytics")
+        if pa is not None:
+            pa.setState_(1 if cfg.get("product_analytics", False) else 0)
+
         try:
             from heard.tts.kokoro import KokoroTTS
             installed = KokoroTTS(config.MODELS_DIR).is_downloaded()
@@ -1440,6 +1461,20 @@ class SettingsController(NSObject):
     def onByokTelemetryToggled_(self, sender) -> None:
         config.set_value("byok_telemetry", bool(sender.state()))
         _reload_daemon()
+
+    def onProductAnalyticsToggled_(self, sender) -> None:
+        on = bool(sender.state())
+        config.set_value("product_analytics", on)
+        # When the user opts in, fire a marker event right away so the
+        # PostHog timeline has a "consent_granted" anchor. When they opt
+        # out, no event (we just stop emitting Tier 2 events going
+        # forward; we don't surface a separate "they opted out" signal).
+        if on:
+            try:
+                from heard import analytics
+                analytics.capture("analytics_consent_granted", {})
+            except Exception:
+                pass
 
     def onAgentVoicesModeChanged_(self, sender) -> None:
         idx = int(sender.selectedSegment())
@@ -1604,14 +1639,26 @@ class SettingsController(NSObject):
         adapter = ADAPTERS.get(name)
         if adapter is None:
             return
+        action = None
         try:
             if want_installed and not adapter.is_installed():
                 adapter.install()
+                action = "installed"
             elif not want_installed and adapter.is_installed():
                 adapter.uninstall()
+                action = "uninstalled"
         except Exception as e:
             print(f"adapter {name} toggle failed: {e}", file=sys.stderr)
         self._refresh_advanced(config.load(), client.get_status() or {})
+        if action is not None:
+            try:
+                from heard import analytics
+                analytics.capture(
+                    "hook_installed" if action == "installed" else "hook_uninstalled",
+                    {"agent": name},
+                )
+            except Exception:
+                pass
 
     def onOpenAXSettings_(self, _sender) -> None:
         import subprocess
@@ -2162,6 +2209,25 @@ class _OnboardingWindowDelegate(NSObject):
     ambient-utility product stance."""
 
     def windowWillClose_(self, _notification):
+        # If the window closes WITHOUT _finish() having run, this is an
+        # abandonment — user clicked the red X mid-flow. Fire the
+        # analytics event BEFORE _mark_onboarded so the captured state
+        # reflects "they were at step N when they bailed."
+        try:
+            from heard import analytics
+            from heard import config as _config
+            already_onboarded = bool(_config.load().get("onboarded"))
+            if not already_onboarded:
+                ctl = _OnboardingController.shared()
+                screens = getattr(ctl, "_screens", []) or []
+                idx = getattr(ctl, "_screen_idx", 0) or 0
+                last_key = screens[idx][0] if 0 <= idx < len(screens) else "unknown"
+                analytics.capture("wizard_abandoned", {
+                    "last_step": last_key,
+                    "step_idx": idx,
+                })
+        except Exception:
+            pass
         try:
             _mark_onboarded()
         except Exception:
@@ -2373,6 +2439,13 @@ class _OnboardingController(NSObject):
         if enter_fn is not None:
             enter_fn()
         self._update_chrome()
+        # Phase 1 analytics — drop-off per step. _key is "welcome" |
+        # "signin" | "agents" (the current 3-screen wizard).
+        try:
+            from heard import analytics
+            analytics.capture("wizard_viewed", {"step": _key, "step_idx": idx})
+        except Exception:
+            pass
 
     def _update_chrome(self) -> None:
         idx, last = self._screen_idx, len(self._screens) - 1
@@ -2414,6 +2487,11 @@ class _OnboardingController(NSObject):
 
     def _finish(self) -> None:
         _mark_onboarded()
+        try:
+            from heard import analytics
+            analytics.capture("wizard_completed", {})
+        except Exception:
+            pass
         try:
             client.send({"cmd": "reload"})  # belt-and-suspenders; helper does this too
         except Exception:

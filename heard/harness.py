@@ -430,6 +430,14 @@ def narrate(
         # Empty text inside a JSON wrapper → punt to v1, same as a
         # silence marker would.
         return None
+    if _looks_like_silence_marker(spoken):
+        # Silence marker WRAPPED in a JSON object — e.g. Haiku returns
+        # {"text": "silence"} or {"text": "(silence)"} instead of the
+        # bare marker the prompt asks for. The outer check at the top of
+        # `narrate` only sees the JSON wrapper, so without this second
+        # check the marker leaks through the parser and Heard literally
+        # speaks the word "silence". Treat it as a deliberate skip.
+        return HarnessDecision(speak=False, scope="one-line", altitude="human")
     return HarnessDecision(
         speak=True,
         text=spoken,

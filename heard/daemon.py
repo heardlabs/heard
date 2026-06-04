@@ -286,6 +286,30 @@ class Daemon:
         self.pending_update: updater.UpdateInfo | None = None
         self._start_update_check()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
+        # Phase 1 analytics. mark_first_launch_if_new flips the persisted
+        # marker so subsequent boots fire `app_launched` instead. Both
+        # events are Tier 1 (anonymous, no consent needed).
+        try:
+            from heard import analytics
+            backend_name = type(self.tts).__name__
+            voice_backend = {
+                "ManagedTTS": "managed",
+                "ElevenLabsTTS": "elevenlabs",
+                "KokoroTTS": "kokoro",
+                "NullTTS": "null",
+            }.get(backend_name, "other")
+            if analytics.mark_first_launch_if_new():
+                analytics.capture(
+                    "app_first_launched",
+                    {"voice_backend": voice_backend},
+                )
+            else:
+                analytics.capture(
+                    "app_launched",
+                    {"voice_backend": voice_backend},
+                )
+        except Exception:
+            pass
         # Architecture step 6c — warm the harness prompt cache so the
         # first real event after daemon boot hits a cache HIT, not a
         # full cold-start miss. Background thread because the warming
@@ -377,6 +401,11 @@ class Daemon:
                 pass
             _log("greet_spoken", persona="jarvis", via="bundled_mp3")
             try:
+                from heard import analytics
+                analytics.capture("greeting_played", {"via": "bundled_mp3", "persona": "jarvis"})
+            except Exception:
+                pass
+            try:
                 import subprocess
                 # Detached — don't block the daemon's reload thread on
                 # afplay (~7s of audio). Stderr swallowed so a missing
@@ -417,6 +446,11 @@ class Daemon:
         except Exception:
             pass
         _log("greet_spoken", persona=self.persona.name, via="live_tts")
+        try:
+            from heard import analytics
+            analytics.capture("greeting_played", {"via": "live_tts", "persona": self.persona.name})
+        except Exception:
+            pass
         # Bypass the speech queue's "drop other sessions" logic by
         # passing coexists=True — a hook event arriving moments later
         # shouldn't cancel the greeting before it gets to play.
@@ -1230,6 +1264,14 @@ class Daemon:
                 if e.status != 402:
                     self._record_error("managed", str(e))
                 _log("synth_failed", backend=type(self.tts).__name__, err=str(e))
+                try:
+                    from heard import analytics
+                    analytics.capture("synth_failed", {
+                        "backend": type(self.tts).__name__,
+                        "error_kind": f"ManagedHTTP{getattr(e, 'status', '')}",
+                    })
+                except Exception:
+                    pass
                 path.unlink(missing_ok=True)
                 continue
             if isinstance(e, ElevenLabsError):
@@ -1306,6 +1348,14 @@ class Daemon:
                     kind="synth_generic",
                 )
                 _log("synth_failed", backend=type(self.tts).__name__, err=str(e))
+                try:
+                    from heard import analytics
+                    analytics.capture("synth_failed", {
+                        "backend": type(self.tts).__name__,
+                        "error_kind": type(e).__name__,
+                    })
+                except Exception:
+                    pass
                 path.unlink(missing_ok=True)
                 continue
             synth_ms = int((time.monotonic() - t0) * 1000)
@@ -2064,6 +2114,30 @@ class Daemon:
                     altitude=decision.altitude,
                     focused_agent=(decision.focused_agent_id or ""),
                 )
+                try:
+                    from heard import analytics
+                    if analytics.sampled():
+                        cl = len(decision.text)
+                        if cl < 100:
+                            char_bucket = "0-99"
+                        elif cl < 200:
+                            char_bucket = "100-199"
+                        elif cl < 400:
+                            char_bucket = "200-399"
+                        else:
+                            char_bucket = "400+"
+                        analytics.capture("narration_spoken", {
+                            "kind": kind,
+                            "tag": tag,
+                            "persona": persona.name,
+                            "backend": type(self.tts).__name__,
+                            "char_count_bucket": char_bucket,
+                            "via": "harness",
+                            "scope": decision.scope,
+                            "altitude": decision.altitude,
+                        })
+                except Exception:
+                    pass
                 info = self.router._sessions.get(session_id)  # noqa: SLF001
                 history_meta = {
                     "kind": kind,
@@ -2187,6 +2261,29 @@ class Daemon:
         self.sessions.note_topic(session_id, tag)
 
         _log("event_speak", kind=kind, tag=tag, persona=persona.name, chars=len(final))
+        # Tier 2 sampled — only fires if `product_analytics: true` AND the
+        # 1:10 dice roll hits. char_count bucketed for cardinality safety.
+        try:
+            from heard import analytics
+            if analytics.sampled():
+                if len(final) < 100:
+                    char_bucket = "0-99"
+                elif len(final) < 200:
+                    char_bucket = "100-199"
+                elif len(final) < 400:
+                    char_bucket = "200-399"
+                else:
+                    char_bucket = "400+"
+                analytics.capture("narration_spoken", {
+                    "kind": kind,
+                    "tag": tag,
+                    "persona": persona.name,
+                    "backend": type(self.tts).__name__,
+                    "char_count_bucket": char_bucket,
+                    "via": "v1",
+                })
+        except Exception:
+            pass
         if DEBUG:
             _log("event_speak_detail", text=final)
         # Bundle the context the spoken-history log needs after the
