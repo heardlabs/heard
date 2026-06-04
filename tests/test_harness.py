@@ -133,6 +133,39 @@ def test_think_say_silence_in_say_is_suppressed():
     assert "Routine cd" in out.think
 
 
+def test_fenced_json_is_parsed_not_spoken_whole():
+    """Real wild failure: the model wrapped its {think, say} in a
+    ```json fence. The parser didn't recognize fenced JSON, fell to the
+    plain-text path, and read the ENTIRE blob — think field and all —
+    aloud. The fence must be stripped before parsing so only `say` is
+    spoken."""
+    reg = AgentStateRegistry()
+    fenced = (
+        "```json\n"
+        + json.dumps({"think": "internal reasoning about the work",
+                      "say": "Tests pass; deploying now.", "scope": "summary"})
+        + "\n```"
+    )
+    with patch.object(harness.persona_mod, "call_with_prompt", return_value=fenced):
+        out = harness.narrate(
+            _ev(),
+            cfg={"harness_enabled": True, "harness_think_say": True},
+            persona=_persona(),
+            agent_states=reg,
+        )
+    assert out is not None and out.speak is True
+    assert out.text == "Tests pass; deploying now."
+    assert "think" not in out.text and "```" not in out.text
+    assert out.think == "internal reasoning about the work"
+
+
+def test_strip_code_fence_variants():
+    assert harness._strip_code_fence('{"a":1}') == '{"a":1}'
+    assert harness._strip_code_fence('```json\n{"a":1}\n```') == '{"a":1}'
+    assert harness._strip_code_fence('```\n{"a":1}\n```') == '{"a":1}'
+    assert harness._strip_code_fence('  plain text  ') == 'plain text'
+
+
 def test_think_say_block_present_only_when_flag_on():
     p = _persona()
     assert "TWO-STREAM OUTPUT" not in harness._build_system_text(p)

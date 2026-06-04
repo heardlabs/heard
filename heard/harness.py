@@ -446,7 +446,13 @@ def narrate(
         # Daemon falls through to v1 — that's the safety net.
         return None
 
-    text = raw.strip()
+    # Strip any markdown code fence the model wrapped its JSON in
+    # (```json\n{…}\n```). Without this the fenced blob fails the
+    # `startswith("{")` JSON check, falls through to the plain-text
+    # path, and the ENTIRE object — `think` field and all — gets read
+    # aloud. Do it BEFORE the silence checks + parse so everything
+    # downstream sees clean JSON.
+    text = _strip_code_fence(raw)
     if not text or _looks_like_silence_marker(text) or _starts_with_silence_token(text):
         # Harness produced a silence-marker — possibly with leaked rationale
         # trailing it (`(silence)\n\nThe agent is deliberating…`). Either way
@@ -521,7 +527,7 @@ def _parse_harness_response(
     Daemon resolves whether the declared ID matches an active
     session — string sanity-check is the parser's only job.
     """
-    raw = raw.strip()
+    raw = _strip_code_fence(raw)
     if raw.startswith("{") and raw.endswith("}"):
         try:
             data = json.loads(raw)
@@ -549,6 +555,23 @@ def _parse_harness_response(
     return raw, "summary", "human", None
 
 
+def _strip_code_fence(text: str) -> str:
+    """Remove a wrapping markdown code fence the model sometimes adds
+    around its JSON despite the prompt ('```json\\n{…}\\n```'). Returns
+    the inner content. Idempotent on unfenced text. Without this the
+    JSON parse fails and the whole blob (think field included) is
+    spoken — the precise failure that broke think/speak in the wild."""
+    t = text.strip()
+    if not t.startswith("```"):
+        return t
+    nl = t.find("\n")
+    t = t[nl + 1:] if nl != -1 else t[3:]  # drop ``` / ```json opener
+    t = t.rstrip()
+    if t.endswith("```"):
+        t = t[:-3]
+    return t.strip()
+
+
 def _extract_think(raw: str) -> str:
     """Pull the private `think` field out of a two-stream JSON response.
 
@@ -556,7 +579,7 @@ def _extract_think(raw: str) -> str:
     field isn't a string. The think is the harness's silent reasoning
     stream — logged for inspection, NEVER spoken. Separating it into
     its own field is what keeps rationale structurally out of TTS."""
-    raw = raw.strip()
+    raw = _strip_code_fence(raw)
     if not (raw.startswith("{") and raw.endswith("}")):
         return ""
     try:
