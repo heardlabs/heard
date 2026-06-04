@@ -224,17 +224,6 @@ DEFAULTS: dict[str, Any] = {
     # off-switch (`config set harness_think_say false`) if that cost
     # ever proves not worth it. No effect when harness_enabled is False.
     "harness_think_say": True,
-    # Depth — the SECOND mode axis, orthogonal to `mode` (the surface
-    # axis: copilot/companion). Together they form the 2x2:
-    #   * "full"  — default. Rich narration; structured finals get the
-    #               full headline + next-steps treatment.
-    #   * "light" — signpost only. Bias hard to one-line; a long
-    #               structured final becomes a one-sentence pointer
-    #               ("mapped what's tracked / not / next — it's on your
-    #               screen, want the rundown?") instead of a recital.
-    # Depth biases the per-utterance scope the harness already picks; it
-    # is NOT a separate mechanism. No effect when harness_enabled is False.
-    "depth": "full",
 }
 
 
