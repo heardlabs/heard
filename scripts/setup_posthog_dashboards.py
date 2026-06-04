@@ -264,6 +264,26 @@ def synth_health() -> dict:
     }
 
 
+def daily_engaged_users() -> dict:
+    """Distinct installs that played at least one narration on a given
+    day. The cleanest "actively using it" signal — fires once per
+    local day per install on the first successful synth, regardless of
+    TTS backend (managed / BYOK / Kokoro), regardless of opt-in.
+
+    Pairs with `Daily Active Installs` to distinguish two cohorts:
+      * Active installs but no engaged usage = daemon booted but the
+        user didn't hear anything (auto-restarts, silent install
+        state, broken backend).
+      * Engaged users = the real product DAU."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("narration_played_today", "Daily engaged users", math="dau")],
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
 def daily_active_installs() -> dict:
     """DAU proxy — distinct users firing app_launched per day. PostHog
     merges pre-signin install_id with post-signin user_id via the
@@ -425,7 +445,9 @@ def main() -> int:
         ("Wizard Abandonment by Step", wizard_abandonment_by_step,
          "Absolute count of wizard_abandoned events broken down by where the user bailed."),
         ("Daily Active Installs", daily_active_installs,
-         "Distinct users firing app_launched per day. DAU proxy."),
+         "Distinct users firing app_launched per day. Daemon-boots proxy — overcounts auto-restarts."),
+        ("Daily Engaged Users", daily_engaged_users,
+         "Distinct installs that actually played a narration each day. The real DAU signal."),
         ("Synth Failures by Backend", synth_health,
          "Daily synth_failed count grouped by TTS backend."),
         ("Installs by Version", installs_by_version,

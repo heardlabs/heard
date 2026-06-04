@@ -108,13 +108,24 @@ DEFAULTS: dict[str, Any] = {
     # server-side already and skipped here regardless. Default on with
     # a one-time disclosure in the dashboard; opt out via this flag.
     "byok_telemetry": True,
-    # Product analytics (Tier 2) — opt-in. Off by default so we never
-    # fire identified usage events (narration_spoken, setting_changed,
-    # session_*) without explicit consent. Tier 1 anonymous health
-    # events (wizard funnel, install counts, error rates) fire
-    # regardless — they're operationally necessary and carry no PII.
-    # See heard/analytics.py for the full two-tier contract.
-    "product_analytics": False,
+    # Product analytics (Tier 2) — opt-out. Default ON, matching the
+    # industry-norm posture (Linear / Notion / Vercel / GitHub all
+    # default on with a clear disclosure + a toggle to disable). Tier 2
+    # events are anonymized + categorical (no narration text, no
+    # project paths, no file / function names — same distillation rule
+    # from architecture-v2 applies to capture too), so the conservative
+    # opt-in posture wasn't earning meaningful privacy protection — only
+    # a near-empty dataset. Users who want full silence flip this off
+    # in Settings → Advanced → Privacy. Tier 1 anonymous health events
+    # fire regardless — see heard/analytics.py.
+    "product_analytics": True,
+    # YYYY-MM-DD of the last day we fired `narration_played_today`. That
+    # Tier 1 event is the cleanest "user actively used it today" signal
+    # — fires once per local day per install, anonymous, regardless of
+    # TTS backend and regardless of opt-in. The daemon checks this date
+    # against today's date on each successful synth and only fires
+    # the event if today's marker isn't already set.
+    "last_active_day": "",
     # Anonymous per-install UUID for product analytics. Generated on
     # first call to analytics.install_id() — leaving this empty in
     # DEFAULTS so a wipe + re-install gets a fresh UUID (otherwise the

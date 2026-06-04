@@ -57,16 +57,22 @@ DEFAULT_SAMPLE_RATE = 10
 _TIER_1_EVENTS = frozenset({
     "app_first_launched",
     "app_launched",
+    "app_updated",
     "wizard_viewed",
     "wizard_completed",
     "wizard_abandoned",
     "hook_installed",
+    "hook_uninstalled",
     "greeting_played",
     "synth_failed",
     "audio_cutoff_detected",
     "harness_fallback",
     "app_crashed",
     "defect_reported",
+    # The once-per-day "user actually heard Heard today" signal.
+    # Fires at most once per local day per install — see
+    # `Daemon._speak` in heard/daemon.py for the gating.
+    "narration_played_today",
 })
 
 # --- internal state ------------------------------------------------------

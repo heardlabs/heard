@@ -1057,19 +1057,22 @@ class SettingsController(NSObject):
             "Turn off to keep BYOK + local activity invisible to Heard.",
             telemetry_check,
         )
-        # Tier 2 product analytics — opt-in. Tier 1 (anonymous health
-        # metrics: install count, wizard funnel, error rates) fires
-        # regardless; this toggle gates identified usage tracking
-        # (narration counts, settings used, day-N retention). See
-        # heard/analytics.py for the full contract.
+        # Tier 2 product analytics — opt-out (default ON). Tier 1
+        # anonymous health metrics fire regardless; this toggle gates
+        # identified usage tracking (narration counts, settings used,
+        # day-N retention). See heard/analytics.py for the full
+        # contract. Default-on matches the industry norm — Linear,
+        # Notion, GitHub, Vercel all ship with anonymized usage on by
+        # default + a clear toggle to disable. Never includes
+        # narration text or project paths.
         analytics_check = _checkbox(
             "", target=self, action="onProductAnalyticsToggled:",
         )
         analytics_row = _setting_row(
-            "Help improve Heard with usage analytics",
-            "Sends anonymized counts (narrations played, settings tuned, "
-            "session length) to our PostHog dashboard. Never the text. "
-            "Off by default.",
+            "Send anonymous usage analytics",
+            "Counts of narrations played, settings tuned, and session "
+            "length. Never the narration text, never your project paths. "
+            "On by default — turn off to opt out.",
             analytics_check,
         )
         self._add_card(body, _card([telemetry_row, analytics_row]))
@@ -1318,10 +1321,10 @@ class SettingsController(NSObject):
         if bt is not None:
             bt.setState_(1 if cfg.get("byok_telemetry", True) else 0)
 
-        # Tier 2 product analytics checkbox — default OFF (opt-in).
+        # Tier 2 product analytics checkbox — default ON (opt-out).
         pa = r.get("product_analytics")
         if pa is not None:
-            pa.setState_(1 if cfg.get("product_analytics", False) else 0)
+            pa.setState_(1 if cfg.get("product_analytics", True) else 0)
 
         try:
             from heard.tts.kokoro import KokoroTTS

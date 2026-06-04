@@ -10,7 +10,7 @@ import os
 # bundle the updater reads CFBundleShortVersionString from Info.plist
 # instead, so a missed bump here won't trigger a phantom "update"
 # banner — see heard.updater.resolved_current_version.)
-__version__ = "1.0.15"
+__version__ = "1.0.16"
 
 # The frozen Python inside Heard.app has no system CA path, so any
 # HTTPS call (urllib voice download, anthropic SDK, elevenlabs SDK)

@@ -1384,6 +1384,29 @@ class Daemon:
             synth_ms = int((time.monotonic() - t0) * 1000)
             _log("synth_ok", backend=type(self.tts).__name__, ms=synth_ms, chars=len(chunk))
             self._last_error = None  # successful synth clears the badge
+            # Tier 1 "user actually used Heard today" signal. Fires once
+            # per local day per install, regardless of TTS backend
+            # (managed / BYOK / Kokoro), regardless of product_analytics
+            # opt-in (Tier 1 is anonymous + always-on). The DAU on this
+            # event is the cleanest "actively engaged users" line — it
+            # bypasses `app_launched` (false positive on auto-restarts)
+            # and `narration_spoken` (sampled + Tier 2).
+            try:
+                from datetime import date
+                today = date.today().isoformat()
+                if self.cfg.get("last_active_day") != today:
+                    self.cfg["last_active_day"] = today
+                    try:
+                        config.set_value("last_active_day", today)
+                    except Exception:
+                        pass
+                    from heard import analytics
+                    analytics.capture(
+                        "narration_played_today",
+                        {"backend": type(self.tts).__name__},
+                    )
+            except Exception:
+                pass
             # 1H: report BYOK/local synth chars to the dashboard so the
             # heatmap reflects total usage (managed already counted
             # server-side). Fire-and-forget; no-op for managed/null
