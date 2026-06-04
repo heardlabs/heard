@@ -842,6 +842,45 @@ def recap_cmd(
     typer.echo(resp.get("text") or "")
 
 
+@app.command(name="mute-session", hidden=True)
+def mute_session_cmd() -> None:
+    """[Internal] Mute THIS Claude Code session — Heard stops narrating
+    it (your other agents keep narrating). Resolves the session from
+    $CLAUDE_CODE_SESSION_ID. Driven by the /quiet slash command; undo
+    with /unquiet."""
+    import os as _os  # noqa: PLC0415
+
+    from heard import client as _client  # noqa: PLC0415
+    sid = (_os.environ.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+    if not sid:
+        typer.echo("(no session — CLAUDE_CODE_SESSION_ID not set)", err=True)
+        raise typer.Exit(1)
+    resp = _client.mute_session(sid)
+    if not resp.get("ok"):
+        typer.echo(f"(mute failed — {resp.get('error') or 'unknown'})", err=True)
+        raise typer.Exit(1)
+    typer.echo("This session is muted — Heard won't narrate it until /unquiet.")
+
+
+@app.command(name="unmute-session", hidden=True)
+def unmute_session_cmd() -> None:
+    """[Internal] Un-mute THIS Claude Code session — Heard resumes
+    narrating it. Resolves the session from $CLAUDE_CODE_SESSION_ID.
+    Driven by the /unquiet slash command."""
+    import os as _os  # noqa: PLC0415
+
+    from heard import client as _client  # noqa: PLC0415
+    sid = (_os.environ.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+    if not sid:
+        typer.echo("(no session — CLAUDE_CODE_SESSION_ID not set)", err=True)
+        raise typer.Exit(1)
+    resp = _client.unmute_session(sid)
+    if not resp.get("ok"):
+        typer.echo(f"(unmute failed — {resp.get('error') or 'unknown'})", err=True)
+        raise typer.Exit(1)
+    typer.echo("This session is back — Heard will narrate it again.")
+
+
 @app.command(name="feedback", hidden=True)
 def feedback_cmd(
     text: str = typer.Argument(..., help="Preference feedback about the most recent utterance."),

@@ -464,6 +464,30 @@ def recap(cwd: str | None = None, speak: bool = True, timeout_s: float = 20.0) -
     return resp or {"ok": False, "text": "", "error": "no_response"}
 
 
+def mute_session(session_id: str, timeout_s: float = 10.0) -> dict:
+    """Silence ONE Claude Code session by id (not all of Heard). Returns
+    {"ok": bool, "session_id": str, "error": str?}. The daemon observes
+    the session's events but speaks nothing from it until unmuted."""
+    if not is_daemon_alive():
+        return {"ok": False, "error": "daemon_not_alive"}
+    try:
+        resp = request({"cmd": "mute_session", "session_id": session_id or ""}, timeout_s=timeout_s)
+    except Exception as e:
+        return {"ok": False, "error": f"send_failed: {e}"}
+    return resp or {"ok": False, "error": "no_response"}
+
+
+def unmute_session(session_id: str, timeout_s: float = 10.0) -> dict:
+    """Resume narration for a session muted via mute_session()."""
+    if not is_daemon_alive():
+        return {"ok": False, "error": "daemon_not_alive"}
+    try:
+        resp = request({"cmd": "unmute_session", "session_id": session_id or ""}, timeout_s=timeout_s)
+    except Exception as e:
+        return {"ok": False, "error": f"send_failed: {e}"}
+    return resp or {"ok": False, "error": "no_response"}
+
+
 def report_defect(category: str, note: str = "", source: str = "cli") -> None:
     """Send a defect report to the daemon. Routed to defect_reports.jsonl
     with tech_context (backend, voice, persona, mic state, etc.) auto-

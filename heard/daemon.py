@@ -253,6 +253,11 @@ class Daemon:
         self._recent_edit_paths: collections.deque[str] = collections.deque(
             maxlen=8,
         )
+        # Per-session mute. Holds the session_ids the user has silenced
+        # via /quiet — events from these are observed (state/memory stay
+        # complete) but never narrated, until /unquiet. In-memory: a
+        # daemon restart clears mutes (acceptable — a session is bounded).
+        self._muted_sessions: set[str] = set()
         self._start_hotkey()
         self._start_audio_monitor()
         # Layer 3 — Working Memory compressor thread. Idle-loops on
@@ -2008,6 +2013,16 @@ class Daemon:
         except Exception:
             pass
 
+        # Per-session mute — the user silenced THIS session via /quiet
+        # (it's doing something trivial they don't want narrated). We
+        # still OBSERVED it above (Agent State / Working / Project Memory
+        # stay complete, so recap, Q&A, and cross-agent context aren't
+        # blinded) — we just speak nothing further from it until /unquiet.
+        if session_id in self._muted_sessions:
+            _log("event_drop", kind=kind, tag=tag,
+                 reason="session_muted", session=session_id[:8])
+            return
+
         cfg = config.load(cwd=cwd)
         persona = self._persona_for(cfg)
         session = self.sessions.touch(session_id, cwd=cwd)
@@ -2477,6 +2492,28 @@ class Daemon:
         if cmd == "unmute":
             self._do_unmute(source=req.get("source") or "socket")
             return None
+        if cmd == "mute_session":
+            # Silence ONE Claude Code session (not all of Heard). The
+            # /quiet slash command sends its $CLAUDE_CODE_SESSION_ID here.
+            sid = (req.get("session_id") or "").strip()
+            if not sid:
+                return json.dumps(
+                    {"ok": False, "error": "missing_session_id"}
+                ).encode("utf-8")
+            self._muted_sessions.add(sid)
+            # Flush anything already queued from this session so it goes
+            # quiet immediately, not after the backlog drains.
+            with self._queue_cv:
+                before = len(self._queue)
+                self._queue = [e for e in self._queue if e[3] != sid]
+                flushed = before - len(self._queue)
+            _log("session_muted", session=sid[:8], flushed=flushed)
+            return json.dumps({"ok": True, "session_id": sid}).encode("utf-8")
+        if cmd == "unmute_session":
+            sid = (req.get("session_id") or "").strip()
+            self._muted_sessions.discard(sid)
+            _log("session_unmuted", session=sid[:8])
+            return json.dumps({"ok": True, "session_id": sid}).encode("utf-8")
         if cmd == "resume_intent":
             text = (req.get("text") or "").strip()
             self._handle_resume_intent(text)

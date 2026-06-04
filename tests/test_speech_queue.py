@@ -155,6 +155,56 @@ def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
     assert len(spoken) == 1 + cap, f"expected {1 + cap} played, got {len(spoken)}: {spoken}"
 
 
+def test_mute_session_adds_flushes_and_unmute_clears(tmp_path, monkeypatch):
+    """Per-session mute: the socket cmd adds the id to the muted set and
+    flushes that session's queued items so it goes quiet immediately;
+    unmute removes it. Events from a muted session are dropped early in
+    _handle_event."""
+    import json
+    daemon = _make_daemon(tmp_path, monkeypatch)
+    sid = "b8b8ee84-0696-4195-8f39-e96ad79fbb76"
+    other = "7a734d54-aaaa"
+
+    # Pin the worker on a dummy so the real items stay observable in the
+    # queue (the worker would otherwise drain them before we check).
+    started, proceed = threading.Event(), threading.Event()
+
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
+        if text == "pin":
+            started.set()
+            proceed.wait(timeout=2.0)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+    daemon._start_speech("pin", coexists=True)
+    assert started.wait(timeout=1.0)
+
+    # Now queue items from both sessions; both sit in the queue.
+    daemon._start_speech("muted-session-line", session_id=sid, coexists=True)
+    daemon._start_speech("other-session-line", session_id=other, coexists=True)
+
+    daemon._handle(json.dumps({"cmd": "mute_session", "session_id": sid}))
+    assert sid in daemon._muted_sessions
+    # The muted session's queued line was flushed; the other survives.
+    with daemon._queue_cv:
+        remaining = [e[0] for e in daemon._queue]
+    assert "muted-session-line" not in remaining
+    assert "other-session-line" in remaining
+
+    # A fresh event from the muted session is dropped (no enqueue).
+    # Worker still pinned on "pin", so the queue is stable to measure.
+    with daemon._queue_cv:
+        before = len(daemon._queue)
+    daemon._handle_event({"kind": "tool_pre", "tag": "tool_bash_generic",
+                          "neutral": "ls", "session": {"id": sid, "cwd": "/x"}})
+    with daemon._queue_cv:
+        assert len(daemon._queue) == before, "muted session's event must not enqueue"
+
+    # Unmute restores it.
+    daemon._handle(json.dumps({"cmd": "unmute_session", "session_id": sid}))
+    assert sid not in daemon._muted_sessions
+    proceed.set()
+
+
 def test_priority_ack_jumps_to_front_of_queue(tmp_path, monkeypatch):
     """A priority enqueue (the immediate-ack lane) must land at the FRONT
     so it plays next, ahead of backlogged narration — not stale by the
