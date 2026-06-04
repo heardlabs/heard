@@ -403,21 +403,55 @@ def main() -> int:
             ins = upsert_insight(name, description, builder(), dashboard["id"])
             # Force a fresh compute so the dashboard doesn't serve the
             # pre-event "all zeros" cache that PostHog assigns to newly-
-            # created insights. Without this step the dashboard tiles
-            # stay stuck on "0" until a user clicks each tile's eye icon
-            # to manually trigger a recompute.
+            # created insights.
             try:
                 _request(
                     "GET",
                     f"/api/projects/{PROJECT_ID}/insights/{ins['id']}/?refresh=force_blocking",
                 )
             except Exception:
-                # Recompute is best-effort — failures here don't block
-                # the insight save itself.
                 pass
             print(f"  ✓ {name} (id={ins.get('id')})")
         except Exception as e:
             print(f"  ✗ {name}: {e}")
+
+    # PostHog's dashboard renderer requires each tile to have an
+    # explicit `layouts` field (grid position + size). API-created
+    # tiles default to layouts={}, which makes the tile render as an
+    # empty preview placeholder with an eye icon — even though the
+    # insight has data. Patch in a 2-column grid layout for every
+    # tile, ordered by the tile's `order` field (the order they were
+    # added to the dashboard).
+    try:
+        dash = _request("GET", f"/api/projects/{PROJECT_ID}/dashboards/{dashboard['id']}/")
+        tiles = sorted(
+            (dash.get("tiles") or []),
+            key=lambda t: (t.get("order") or 0, t.get("id") or 0),
+        )
+        new_tiles = []
+        for i, t in enumerate(tiles):
+            tid = t["id"]
+            row, col = divmod(i, 2)
+            new_tiles.append({
+                "id": tid,
+                "layouts": {
+                    # 12-col grid; w=6 = half width. Two tiles per row.
+                    "sm": {"i": str(tid), "x": col * 6, "y": row * 5,
+                            "w": 6, "h": 5, "minH": 4, "minW": 3},
+                    # Single-col mobile fallback — full width, stacked.
+                    "xs": {"i": str(tid), "x": 0, "y": i * 5,
+                            "w": 1, "h": 5, "minH": 4, "minW": 1},
+                },
+            })
+        if new_tiles:
+            _request(
+                "PATCH",
+                f"/api/projects/{PROJECT_ID}/dashboards/{dashboard['id']}/",
+                {"tiles": new_tiles},
+            )
+            print(f"  ✓ Layouts applied to {len(new_tiles)} tiles")
+    except Exception as e:
+        print(f"  ✗ Tile layout patch failed: {e}")
 
     print()
     print(f"Dashboard URL: {POSTHOG_HOST}/project/{PROJECT_ID}/dashboard/{dashboard['id']}")
