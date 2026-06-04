@@ -40,6 +40,7 @@ module is "pilot, decisions only, reads fresh state every call."
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -346,6 +347,30 @@ def _looks_like_silence_marker(text: str) -> bool:
     return stripped in _SILENCE_MARKERS
 
 
+# A silence decision the model annotated with leaked rationale —
+# e.g. `(silence)\n\nThe agent is still deliberating…`. The whole
+# `_looks_like_silence_marker` check only fires when the ENTIRE output
+# reduces to a marker, so the trailing explanation sails past it and
+# Heard speaks the token PLUS the reason it was staying quiet (the exact
+# thing the silence was meant to avoid). This matches the BRACKETED token
+# form only — `(silence)`, `[none]`, `"(skip)"` — never a bare leading
+# word, so legitimate narration that merely starts with "No"
+# ("No errors — tests passed.") is left untouched.
+_SILENCE_TOKEN_PREFIX_RE = re.compile(
+    r"^[\"'`\s]*[(\[{]\s*(?:"
+    + "|".join(re.escape(m) for m in sorted(_SILENCE_MARKERS))
+    + r")\s*[)\]}]",
+    re.IGNORECASE,
+)
+
+
+def _starts_with_silence_token(text: str) -> bool:
+    """True when the response BEGINS with a bracketed silence token,
+    even if the model appended rationale after it. See the regex note
+    above for why this is scoped to the bracketed form."""
+    return bool(_SILENCE_TOKEN_PREFIX_RE.match(text))
+
+
 def narrate(
     event: dict[str, Any],
     *,
@@ -414,8 +439,10 @@ def narrate(
         return None
 
     text = raw.strip()
-    if not text or _looks_like_silence_marker(text):
-        # Harness produced a silence-marker. Treat as deliberate skip.
+    if not text or _looks_like_silence_marker(text) or _starts_with_silence_token(text):
+        # Harness produced a silence-marker — possibly with leaked rationale
+        # trailing it (`(silence)\n\nThe agent is deliberating…`). Either way
+        # it's a deliberate skip; never speak the token OR its explanation.
         return HarnessDecision(speak=False, scope="one-line", altitude="human")
 
     # Steps 6f + 6g — model-declared scope + altitude + focus. The
@@ -430,13 +457,13 @@ def narrate(
         # Empty text inside a JSON wrapper → punt to v1, same as a
         # silence marker would.
         return None
-    if _looks_like_silence_marker(spoken):
+    if _looks_like_silence_marker(spoken) or _starts_with_silence_token(spoken):
         # Silence marker WRAPPED in a JSON object — e.g. Haiku returns
-        # {"text": "silence"} or {"text": "(silence)"} instead of the
-        # bare marker the prompt asks for. The outer check at the top of
-        # `narrate` only sees the JSON wrapper, so without this second
-        # check the marker leaks through the parser and Heard literally
-        # speaks the word "silence". Treat it as a deliberate skip.
+        # {"text": "silence"} or {"text": "(silence)\n\nThe agent is…"}
+        # instead of the bare marker the prompt asks for. The outer check
+        # at the top of `narrate` only sees the JSON wrapper, so without
+        # this second check the marker (and any leaked rationale after it)
+        # gets spoken out loud. Treat it as a deliberate skip.
         return HarnessDecision(speak=False, scope="one-line", altitude="human")
     return HarnessDecision(
         speak=True,
@@ -716,6 +743,13 @@ Return "(silence)" ONLY for these specific cases:
     loud to a colleague — a routine `cd` into a directory, an `ls`
     that returned the obvious files, reading a file you've already
     described.
+
+When you choose silence, return ONLY the bare token "(silence)" —
+nothing before it, nothing after it. Do NOT explain your reasoning
+("the agent is still deliberating…", "no decision to make yet…",
+"I'll speak when there's something to act on"). That explanation
+gets read aloud, which is the exact noise the silence was meant to
+spare the listener. The token alone. No commentary.
 
 Silence is the exception, not the default. If you find yourself
 returning "(silence)" more than once in a row, you're being too

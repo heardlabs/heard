@@ -11,6 +11,7 @@ tests run without network / API keys.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -86,6 +87,48 @@ def test_narrate_returns_speak_false_on_silence_marker():
         )
     assert out is not None
     assert out.speak is False
+
+
+def test_narrate_silence_token_with_leaked_rationale_is_suppressed():
+    """Regression: the model emits `(silence)` then explains WHY it's
+    staying quiet. The whole-string marker check misses it (the trailing
+    prose makes it a long string), so without the prefix check Heard
+    speaks the token AND the rationale. Real case from history.jsonl
+    2026-06-04T02:53:28Z. Both plain-text and JSON-wrapped shapes."""
+    leaked_plain = (
+        '"(silence)"\n\nThe agent is working through diagnostic reasoning '
+        "— sifting candidates, recalibrating heuristics. This is internal "
+        "deliberation, not a result yet. I'll speak when there's something "
+        "to act on."
+    )
+    leaked_json = json.dumps({"text": "(silence)\n\nNo decision to make yet."})
+    reg = AgentStateRegistry()
+    for resp in (leaked_plain, leaked_json):
+        with patch.object(harness.persona_mod, "call_with_prompt", return_value=resp):
+            out = harness.narrate(
+                _ev(),
+                cfg={"harness_enabled": True},
+                persona=_persona(),
+                agent_states=reg,
+            )
+        assert out is not None and out.speak is False, f"leaked through: {resp[:40]!r}"
+
+
+def test_narrate_does_not_suppress_narration_starting_with_no():
+    """Guard against over-matching: legitimate narration that merely
+    begins with a silence-marker WORD ("No errors…") must still speak.
+    Only the BRACKETED token form means silence."""
+    reg = AgentStateRegistry()
+    for text in ("No errors — tests passed.", "Nothing broke; the build is green."):
+        with patch.object(harness.persona_mod, "call_with_prompt", return_value=text):
+            out = harness.narrate(
+                _ev(),
+                cfg={"harness_enabled": True},
+                persona=_persona(),
+                agent_states=reg,
+            )
+        assert out is not None and out.speak is True, f"wrongly suppressed: {text!r}"
+        assert out.text == text
 
 
 def test_narrate_silence_marker_is_case_insensitive():
