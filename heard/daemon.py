@@ -1563,6 +1563,7 @@ class Daemon:
         voice_override: str | None = None,
         history_meta: dict | None = None,
         coexists: bool = False,
+        priority: bool = False,
     ) -> None:
         """Queue an utterance behind whatever's currently playing.
 
@@ -1611,11 +1612,24 @@ class Daemon:
                 dropped = before - len(self._queue)
                 if dropped:
                     _log("queue_drop_other_session", dropped=dropped, session=session_id)
-            self._queue.append((text, cfg, persona, session_id, voice_override, history_meta or {}))
-            if len(self._queue) > self._queue_max:
-                dropped = len(self._queue) - self._queue_max
-                self._queue = self._queue[-self._queue_max:]
-                _log("queue_drop", dropped=dropped)
+            item = (text, cfg, persona, session_id, voice_override, history_meta or {})
+            if priority:
+                # Immediate-ack lane. A short "On it — checking the logs"
+                # is the agent's CURRENT action; it's stale within seconds.
+                # Jump it to the FRONT so it plays next (after whatever's
+                # mid-sentence), not behind a backlog of queued narration.
+                # Trim keeps the front (the ack) and drops the oldest tail.
+                self._queue.insert(0, item)
+                if len(self._queue) > self._queue_max:
+                    dropped = len(self._queue) - self._queue_max
+                    self._queue = self._queue[:self._queue_max]
+                    _log("queue_drop", dropped=dropped)
+            else:
+                self._queue.append(item)
+                if len(self._queue) > self._queue_max:
+                    dropped = len(self._queue) - self._queue_max
+                    self._queue = self._queue[-self._queue_max:]
+                    _log("queue_drop", dropped=dropped)
             if self._speech_worker is None or not self._speech_worker.is_alive():
                 self._speech_worker = threading.Thread(
                     target=self._drain_queue, daemon=True
@@ -2086,6 +2100,11 @@ class Daemon:
                     persona=persona,
                     session_id=session_id,
                     history_meta=history_meta,
+                    # Short assistant preambles ("On it — …") are the
+                    # responsive stream: jump the queue so they're not
+                    # stale by the time they play. Tool announcements
+                    # keep the normal FIFO lane.
+                    priority=(kind == "intermediate"),
                 )
                 return
 

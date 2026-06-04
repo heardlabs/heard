@@ -155,6 +155,39 @@ def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
     assert len(spoken) == 1 + cap, f"expected {1 + cap} played, got {len(spoken)}: {spoken}"
 
 
+def test_priority_ack_jumps_to_front_of_queue(tmp_path, monkeypatch):
+    """A priority enqueue (the immediate-ack lane) must land at the FRONT
+    so it plays next, ahead of backlogged narration — not stale by the
+    time it's reached. Pin the worker so the queue is observable."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    started = threading.Event()
+    proceed = threading.Event()
+
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
+        if text == "inflight":
+            started.set()
+            proceed.wait(timeout=2.0)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    daemon._start_speech("inflight")
+    assert started.wait(timeout=1.0), "worker never picked up 'inflight'"
+
+    # Backlog of normal narration, then a priority ack arrives last.
+    daemon._start_speech("narration-1")
+    daemon._start_speech("narration-2")
+    daemon._start_speech("on it — checking now", priority=True)
+
+    with daemon._queue_cv:
+        order = [e[0] for e in daemon._queue]
+    # Ack is at the front despite arriving last; normals keep their order.
+    assert order[0] == "on it — checking now", f"ack not at front: {order}"
+    assert order == ["on it — checking now", "narration-1", "narration-2"]
+
+    proceed.set()
+
+
 def test_silence_interrupts_in_flight_synth(tmp_path, monkeypatch):
     """Tapping silence while ElevenLabs is mid-synth must take effect
     immediately — earlier we waited for the HTTP round-trip to
