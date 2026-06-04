@@ -262,6 +262,55 @@ def test_recap_calls_llm_with_recap_prompt_and_label():
     assert "catch them up" in captured["system"]
 
 
+def test_last_turn_slice_isolates_the_final_turn():
+    recs = [
+        {"kind": "tool_post", "text": "turn1 work"},
+        {"kind": "final", "text": "turn1 final"},
+        {"kind": "tool_pre", "text": "turn2 work-a"},
+        {"kind": "tool_post", "text": "turn2 work-b"},
+        {"kind": "final", "text": "turn2 final"},
+    ]
+    turn = pm._last_turn_slice(recs)
+    texts = [r["text"] for r in turn]
+    assert texts == ["turn2 work-a", "turn2 work-b", "turn2 final"]
+    # No finals yet → last dozen (here, all of them).
+    assert pm._last_turn_slice([{"kind": "tool_pre", "text": "x"}]) == [
+        {"kind": "tool_pre", "text": "x"}]
+
+
+def test_recap_turn_scopes_to_session_and_last_turn():
+    # Two sessions in the same project; recap_turn must use only s1's
+    # last turn, not s2's work and not s1's earlier turn.
+    pm.record(_ev(sid="s1", kind="final", neutral="s1 OLD turn"))
+    pm.record(_ev(sid="s2", kind="final", neutral="s2 work — should be ignored"))
+    pm.record(_ev(sid="s1", kind="tool_post", neutral="s1 latest tool"))
+    pm.record(_ev(sid="s1", kind="final", neutral="s1 LATEST essay about auth"))
+
+    captured = {}
+
+    def _capture(system_text, user_msg, **kwargs):
+        captured["user"] = user_msg
+        captured["label"] = kwargs.get("log_path_label")
+        return "Caught you up on the auth essay."
+
+    from heard import persona as persona_mod
+    with patch.object(persona_mod, "call_with_prompt", side_effect=_capture):
+        out = pm.recap_turn(
+            cwd="/Users/k31z/Desktop/Projects/heard/heard",
+            session_id="s1", persona=_persona(),
+        )
+    assert out == "Caught you up on the auth essay."
+    assert captured["label"] == "recap_turn"
+    assert "s1 LATEST essay about auth" in captured["user"]
+    assert "s2 work" not in captured["user"]       # other session excluded
+    assert "s1 OLD turn" not in captured["user"]    # earlier turn excluded
+
+
+def test_recap_turn_none_without_session_or_records():
+    assert pm.recap_turn(cwd="/x", session_id="", persona=_persona()) is None
+    assert pm.recap_turn(cwd="/x", session_id="ghost", persona=_persona()) is None
+
+
 def test_recap_returns_none_on_call_exception():
     pm.record(_ev())
     from heard import persona as persona_mod

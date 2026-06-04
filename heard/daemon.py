@@ -2630,14 +2630,24 @@ class Daemon:
             # was already narrated. Sibling of `ask`, sharing its speech
             # path and per-project cwd scoping.
             #
-            # Request:  {"cmd": "recap", "cwd": "...", "speak": true}
+            # Request:  {"cmd": "recap", "cwd": "...", "speak": true,
+            #            "session_id": "..."}  — session_id present →
+            #            recap JUST that session's last turn (the /heard
+            #            "I missed the essay here" case); absent → broad
+            #            project recap (the /catchup "what have you been
+            #            up to" case).
             # Response: {"ok": bool, "text": "...", "error": str?}
             cwd = req.get("cwd")
             speak_aloud = bool(req.get("speak", True))
+            sid = (req.get("session_id") or "").strip()
             cfg = config.load(cwd=cwd)
             persona = self._persona_for(cfg)
             try:
-                text = project_memory.recap(cwd=cwd, persona=persona)
+                if sid:
+                    text = project_memory.recap_turn(
+                        cwd=cwd, session_id=sid, persona=persona)
+                else:
+                    text = project_memory.recap(cwd=cwd, persona=persona)
             except Exception:
                 text = None
             if not text:

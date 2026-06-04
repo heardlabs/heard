@@ -820,21 +820,29 @@ def recap_cmd(
         True, "--speak/--no-speak",
         help="Play the recap aloud through Heard (default on).",
     ),
+    turn: bool = typer.Option(
+        False, "--turn",
+        help="Recap JUST this session's last turn (resolved from "
+             "$CLAUDE_CODE_SESSION_ID) instead of the whole project.",
+    ),
 ) -> None:
-    """[Internal] Catch-me-up — re-summarize recent work in this
-    project out loud. The pull counterpart to Heard's push narration:
-    invoke it (e.g. via a `/heard` slash command in the CC window)
-    when you stepped away while a long response scrolled past. It
-    re-summarizes FRESH and condensed; it does not replay what was
-    already narrated.
+    """[Internal] Catch-me-up — re-summarize recent work out loud.
 
-    Resolves the project by passing the current cwd to the daemon, so
-    the recap is about whichever project you're standing in."""
+    Two scopes:
+      * default — broad recap of the whole project (the `/catchup`
+        "what have you been up to" case).
+      * --turn — just THIS session's last turn (the `/heard` "I missed
+        the essay that scrolled past here" case), scoped via
+        $CLAUDE_CODE_SESSION_ID.
+
+    Re-summarizes FRESH and condensed; does not replay what was already
+    narrated. Resolves the project by passing the current cwd."""
     import os as _os  # noqa: PLC0415
 
     from heard import client as _client  # noqa: PLC0415
     cwd = _os.getcwd()
-    resp = _client.recap(cwd=cwd, speak=speak)
+    sid = (_os.environ.get("CLAUDE_CODE_SESSION_ID") or "").strip() if turn else None
+    resp = _client.recap(cwd=cwd, speak=speak, session_id=sid)
     if not resp.get("ok"):
         err = resp.get("error") or "nothing_to_recap"
         typer.echo(f"(no recap — {err})", err=True)

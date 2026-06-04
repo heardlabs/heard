@@ -443,20 +443,25 @@ def ask(question: str, cwd: str | None = None, speak: bool = False, timeout_s: f
     return resp or {"ok": False, "answer": "", "error": "no_response"}
 
 
-def recap(cwd: str | None = None, speak: bool = True, timeout_s: float = 20.0) -> dict:
+def recap(cwd: str | None = None, speak: bool = True, timeout_s: float = 20.0,
+          session_id: str | None = None) -> dict:
     """On-demand 'catch me up' recap of recent work in a project.
 
     The pull counterpart to Heard's push narration. Returns a dict
     {"ok": bool, "text": str, "error": str?}, mirroring ask()'s
     timeout / safety-net semantics. `speak=True` (default) plays the
-    recap aloud through the standard speech path — the whole point is
-    to hear it while you're heads-down in another window.
+    recap aloud through the standard speech path.
+
+    `session_id` set → recap JUST that session's last turn (the narrow
+    "I missed the essay here" case). Omitted → broad project recap.
     """
     if not is_daemon_alive():
         return {"ok": False, "text": "", "error": "daemon_not_alive"}
     payload = {"cmd": "recap", "speak": bool(speak)}
     if cwd:
         payload["cwd"] = cwd
+    if session_id:
+        payload["session_id"] = session_id
     try:
         resp = request(payload, timeout_s=timeout_s)
     except Exception as e:

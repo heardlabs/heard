@@ -254,6 +254,55 @@ def recap(
         return None
 
 
+def recap_turn(
+    *,
+    cwd: str | None,
+    session_id: str,
+    persona,
+    recent_limit: int = 80,
+    max_tokens: int = 350,
+) -> str | None:
+    """Recap just the LAST TURN of ONE session — the narrow sibling of
+    recap(). For "I missed the long thing that just scrolled past in the
+    window I'm in." Scoped to `session_id` (the current CC session) and
+    to its most recent turn, not the whole project. Returns None when
+    that session has nothing recorded yet.
+    """
+    from heard import persona as persona_mod  # noqa: PLC0415
+
+    sid = (session_id or "").strip()
+    if not sid:
+        return None
+    mine = [r for r in iter_recent(cwd=cwd, limit=recent_limit)
+            if (r.get("session_id") or "") == sid]
+    if not mine:
+        return None
+    turn = _last_turn_slice(mine)
+    system_text = _compose_system_text(persona, _RECAP_TURN_INSTRUCTION_BLOCK)
+    user_msg = _build_recap_turn_user_message(turn)
+    try:
+        return persona_mod.call_with_prompt(
+            system_text,
+            user_msg,
+            max_tokens=max_tokens,
+            log_path_label="recap_turn",
+        )
+    except Exception:
+        return None
+
+
+def _last_turn_slice(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The most recent turn's worth of records: from just after the
+    previous `final` up through the latest `final`. No finals yet
+    (mid-turn) → the last dozen records."""
+    final_idx = [i for i, r in enumerate(records) if r.get("kind") == "final"]
+    if not final_idx:
+        return records[-12:]
+    last = final_idx[-1]
+    start = final_idx[-2] + 1 if len(final_idx) >= 2 else 0
+    return records[start:last + 1]
+
+
 # ----- prompt assembly (pure, no LLM) ------------------------------------
 
 
@@ -305,6 +354,36 @@ Rules:
 Output format: plain prose for the voice. No markdown, no quotes, no
 "Recap:" prefix, no bullet points.
 """
+
+
+_RECAP_TURN_INSTRUCTION_BLOCK = """\
+The person you work for missed the last thing you just did in this one
+session — a long response that scrolled past while they looked away —
+and asked you to give it to them again, condensed.
+
+Recap JUST THAT LAST TURN, nothing else. Not the whole project, not
+earlier work — only the thing that just finished here.
+
+Rules:
+  * First person, owned (see ONE BRAIN above). It's the work you just
+    did for them.
+  * Condense the long thing to its spine: the decision or result, the
+    one or two reasons that matter, and what's next. A few sentences.
+  * If it offered them choices or a next step, surface that — it's
+    probably why they want the recap.
+  * Plain-spoken but not dumbed down (half-technical ear).
+
+Output format: plain prose for the voice. No markdown, no preamble.
+"""
+
+
+def _build_recap_turn_user_message(records: list[dict[str, Any]]) -> str:
+    log_text = "\n".join(_render_record(r) for r in records)
+    return (
+        "The last turn in this session (oldest first):\n"
+        + log_text
+        + "\n\nGive me just that last turn again, condensed."
+    )
 
 
 def _build_system_text(persona) -> str:
