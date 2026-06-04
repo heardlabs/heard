@@ -891,6 +891,18 @@ def test_fast_path_substring_failure_in_tag_also_templates():
     ) is True
 
 
+def test_short_intermediate_ack_fast_paths_even_under_multi_agent():
+    """Immediate-ack carve-out: a short preamble ("On it — checking the
+    logs") should speak verbatim and instantly even mid-swarm, not wait
+    on a harness round-trip. Low latency beats persona-shaping on a
+    one-liner, and silence-then-talk reads as Heard being broken."""
+    ack = _ev(kind="intermediate", neutral="On it — checking the logs now.")
+    assert harness.should_use_fast_path(ack, multi_agent_active=True) is True
+    # Longer mid-stream prose still goes to the harness under multi-agent.
+    long_update = _ev(kind="intermediate", neutral="x" * harness._LONG_PROSE_CHARS)
+    assert harness.should_use_fast_path(long_update, multi_agent_active=True) is False
+
+
 def test_critical_events_bypass_even_under_multi_agent():
     """Step 6d — failures during a swarm are MORE critical, not
     less. Template bypass must trump the multi-agent guard."""

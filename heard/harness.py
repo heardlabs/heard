@@ -301,6 +301,18 @@ def should_use_fast_path(
     if is_critical_template_event(event):
         return True
 
+    # Immediate-ack carve-out. A short assistant preamble ("On it —
+    # checking the logs", "Let me grep for that") is the agent saying
+    # what it's ABOUT to do. It needs no cross-agent reasoning, and a
+    # harness round-trip (~1s) turns it into silence-then-talk — which
+    # reads as Heard being slow or broken. Speak short prose verbatim
+    # and instantly, even mid-swarm: on a one-liner, low latency beats
+    # persona-shaping. This lifts the same < _LONG_PROSE_CHARS allowance
+    # the single-agent path already grants (below) up into multi-agent.
+    # Longer mid-stream prose still goes to the harness for context.
+    if kind == "intermediate" and 0 < len((event.get("neutral") or "").strip()) < _LONG_PROSE_CHARS:
+        return True
+
     if multi_agent_active:
         return False
 
@@ -419,10 +431,12 @@ def narrate(
     # so project-local prefs in .heard.yaml shape narration for that
     # repo only.
     mode = (cfg.get("mode") or "copilot").strip().lower()
+    depth = (cfg.get("depth") or "full").strip().lower()
     think_say = bool(cfg.get("harness_think_say", False))
     prefs_text = _resolve_prefs_text(cwd=cwd)
     system_text = _build_system_text(
-        persona, prefs_stub=prefs_text, mode=mode, think_say=think_say
+        persona, prefs_stub=prefs_text, mode=mode,
+        think_say=think_say, depth=depth,
     )
     user_msg = _build_user_message(
         event=event,
@@ -1318,29 +1332,58 @@ reason freely — what's going on, whether this is even worth a word,
 how to frame it, what to skip. And a SPEAKING stream, which is the
 ONLY thing the listener ever hears. Keep them completely apart.
 
-Return a JSON object with both:
+Return a JSON object. Put `say` FIRST, then `think`:
 
-  {"think": "<your private reasoning — NEVER spoken. Your scratchpad.
-             Decide HERE whether to speak, what matters, what to drop.
-             Every 'should I say this / the agent is just deliberating /
-             I'll wait until…' thought lives here and dies here>",
-   "say":   "<the clean spoken line — ONLY finished first-person
-             narration about the work, OR the bare token (silence) if
-             your thinking concluded there's nothing worth saying>",
+  {"say":   "<the clean spoken line — ONLY finished narration about the
+             work, OR the bare token (silence) if there's nothing worth
+             saying>",
    "scope": "one-line" | "summary" | "full",
    "altitude": "technical" | "human" | "strategic",
-   "focused_agent": "<session-id, or omit>"}
+   "focused_agent": "<session-id, or omit>",
+   "think": "<your private reasoning — NEVER spoken. Brief: a sentence
+             or two of scratchpad. The 'should I speak / nothing to act
+             on / I'll wait' reasoning lives here and dies here>"}
 
 Hard rules:
-  * `think` is never read aloud — it's a different stream, it cannot
-    leak. Put ALL meta-reasoning, hedging, and decision-process there.
-  * `say` is ONLY what a listener should hear: a clean first-person
-    line about the WORK, or exactly "(silence)". Never put reasoning,
-    "I'll pause", "the agent is…", or any talk about your own
-    narration choices into `say`. If the thinking decided to stay
-    quiet, `say` is the bare token "(silence)" and nothing else.
-  * Think first, then say. The thinking shapes the line; the spoken
-    line carries none of the thinking.
+  * Output the RAW JSON object and NOTHING else — no ``` code fences,
+    no <json> tags, no prose before or after the braces. Stray
+    wrapping breaks the parser and your think gets read aloud.
+  * `say` comes first and stays short. `think` is brief — a sentence
+    or two, not an essay. A bloated think risks the JSON getting cut
+    off before `say` is safe.
+  * `think` is never read aloud — a different stream, it cannot leak.
+    Put ALL meta-reasoning, hedging, and decision-process there.
+  * `say` is ONLY what a listener should hear: a clean line about the
+    WORK, or exactly "(silence)". Never put reasoning, "I'll pause",
+    "the agent is…", or any talk about your own narration choices into
+    `say`. If you're staying quiet, `say` is the bare token "(silence)".
+"""
+
+
+_HARNESS_DEPTH_LIGHT_ADDENDUM = """\
+LIGHT DEPTH — the listener wants the gist, not the briefing. This
+OVERRIDES any "preserve every headline / voice the priority list"
+guidance above when they conflict.
+
+Bias HARD toward brevity. You are a signpost, not a transcript — the
+full detail is THERE when the listener wants it; they can ask any time,
+or read it later. Do NOT assume where their eyes are right now (they
+might be away from the keyboard). So:
+  * Prefer `one-line`. Use `summary` only when one line genuinely
+    can't carry the point. Do NOT use `full` except for a real failure
+    or a question to the user.
+  * A long, structured final — even one with sections and a next-steps
+    list — gets a SIGNPOST, not a recital. Name the shape in a sentence
+    and offer the detail; never read every headline aloud.
+      NOT: "Three things are tracked — app version, website visits,
+           download clicks. What's not tracked: GitHub downloads, app
+           auto-update… For next steps, in priority order…"
+      YES: "Mapped what's tracked, what's not, and the next steps.
+           Want me to run through it?"
+    Don't say "it's on your screen" or otherwise assume they're
+    looking — just offer the detail.
+  * Cut hedges, context, and the why-behind-the-why. Headline plus a
+    short offer if there's more. When in doubt, say less.
 """
 
 
@@ -1350,6 +1393,7 @@ def _build_system_text(
     prefs_stub: str = "",
     mode: str = "copilot",
     think_say: bool = False,
+    depth: str = "full",
 ) -> str:
     """Assemble the byte-stable system block. Order matters for
     caching: most stable stuff first (cross-persona rules + persona
@@ -1373,6 +1417,10 @@ def _build_system_text(
     ]
     if mode == "companion":
         parts.append(_HARNESS_COMPANION_ADDENDUM)
+    if depth == "light":
+        # After the surface addendum so it has the last word on length —
+        # light depth trims whatever copilot/companion would have said.
+        parts.append(_HARNESS_DEPTH_LIGHT_ADDENDUM)
     if think_say:
         # Appended last among instruction blocks so its output-format
         # override is the model's final word on shape.
