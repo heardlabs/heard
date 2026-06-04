@@ -99,7 +99,16 @@ def upsert_insight(
 
     Uses the modern `query` schema (HogQL-backed insights). PostHog
     deprecated the older `filters` format for new accounts in 2024;
-    new keys can't write legacy-filter insights at all."""
+    new keys can't write legacy-filter insights at all.
+
+    Critical wrapping: the UI renderer expects every saved insight's
+    `query` to be an `InsightVizNode` with `source` holding the actual
+    TrendsQuery / FunnelsQuery. A bare TrendsQuery is accepted by the
+    API and gets computed, but the UI shows empty preview tiles because
+    its viz layer can't render a raw query without the wrapper. We
+    auto-wrap here so callers can write the simpler inner shape."""
+    if query.get("kind") != "InsightVizNode":
+        query = {"kind": "InsightVizNode", "source": query}
     existing = _request(
         "GET",
         f"/api/projects/{PROJECT_ID}/insights/?search={urllib_quote(name)}",
