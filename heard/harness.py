@@ -528,31 +528,62 @@ def _parse_harness_response(
     session — string sanity-check is the parser's only job.
     """
     raw = _strip_code_fence(raw)
-    if raw.startswith("{") and raw.endswith("}"):
-        try:
-            data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
-            data = None
-        if isinstance(data, dict):
-            # Prefer `say` (Tier-1 think/speak contract); fall back to
-            # `text` (single-stream contract). Either way only the
-            # spoken field crosses to TTS — `think` never does.
-            text = (data.get("say") or data.get("text") or "").strip()
-            scope = data.get("scope") or "summary"
-            altitude = data.get("altitude") or "human"
-            if scope not in _VALID_SCOPES:
-                scope = "summary"
-            if altitude not in _VALID_ALTITUDES:
-                altitude = "human"
-            focused_raw = data.get("focused_agent")
-            focused: str | None = None
-            if isinstance(focused_raw, str):
-                trimmed = focused_raw.strip()
-                if trimmed:
-                    focused = trimmed
-            return text, scope, altitude, focused
-    # Plain text — use the conservative defaults.
+    data = _extract_json_object(raw)
+    if data is not None:
+        # Prefer `say` (Tier-1 think/speak contract); fall back to
+        # `text` (single-stream contract). Either way only the spoken
+        # field crosses to TTS — `think` never does.
+        text = (data.get("say") or data.get("text") or "").strip()
+        scope = data.get("scope") or "summary"
+        altitude = data.get("altitude") or "human"
+        if scope not in _VALID_SCOPES:
+            scope = "summary"
+        if altitude not in _VALID_ALTITUDES:
+            altitude = "human"
+        focused_raw = data.get("focused_agent")
+        focused: str | None = None
+        if isinstance(focused_raw, str):
+            trimmed = focused_raw.strip()
+            if trimmed:
+                focused = trimmed
+        return text, scope, altitude, focused
+    # No parseable JSON object. If the text was clearly a JSON ATTEMPT
+    # (has a brace + a known field) but didn't parse — truncated, or
+    # wrapped in stray ```/<json> junk we couldn't strip — we must NEVER
+    # read the raw `{"think":…}` blob aloud. Recover the spoken field by
+    # regex; if even that fails, return empty so narrate punts to v1.
+    if "{" in raw and ('"say"' in raw or '"think"' in raw or '"text"' in raw):
+        m = re.search(r'"(?:say|text)"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
+        if m:
+            try:
+                recovered = json.loads('"' + m.group(1) + '"').strip()
+            except (json.JSONDecodeError, ValueError):
+                recovered = ""
+            return recovered, "summary", "human", None
+        return "", "summary", "human", None
+    # Genuine plain text — use the conservative defaults.
     return raw, "summary", "human", None
+
+
+def _extract_json_object(text: str) -> dict | None:
+    """Pull a JSON object out of the model's response, tolerant of the
+    junk it wraps around it — leading/trailing ``` fences, <json> tags,
+    or stray prose. Slices from the first `{` to the last `}` and parses
+    that. Returns the dict, or None if there's no parseable object.
+
+    This is the workhorse that stopped the leaks: requiring the WHOLE
+    string to be `{…}` meant a single trailing ``` or </json> dropped
+    the response to the plain-text path and Heard read the raw blob —
+    think field and all — out loud."""
+    i = text.find("{")
+    j = text.rfind("}")
+    if i == -1 or j == -1 or j < i:
+        return None
+    try:
+        data = json.loads(text[i:j + 1])
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _strip_code_fence(text: str) -> str:
@@ -579,14 +610,8 @@ def _extract_think(raw: str) -> str:
     field isn't a string. The think is the harness's silent reasoning
     stream — logged for inspection, NEVER spoken. Separating it into
     its own field is what keeps rationale structurally out of TTS."""
-    raw = _strip_code_fence(raw)
-    if not (raw.startswith("{") and raw.endswith("}")):
-        return ""
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        return ""
-    if isinstance(data, dict):
+    data = _extract_json_object(_strip_code_fence(raw))
+    if data is not None:
         think = data.get("think")
         if isinstance(think, str):
             return think.strip()

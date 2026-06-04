@@ -159,6 +159,56 @@ def test_fenced_json_is_parsed_not_spoken_whole():
     assert out.think == "internal reasoning about the work"
 
 
+def test_trailing_junk_around_json_never_spoken_raw():
+    """Real wild leaks: the model emitted valid {think,say} but with a
+    TRAILING ``` fence or a <json>…</json> wrapper, so endswith('}')
+    failed, the blob fell to plain-text, and the whole thing — think
+    included — was read aloud. Extracting first-{ to last-} must recover
+    `say` regardless of the junk around it."""
+    reg = AgentStateRegistry()
+    body = json.dumps({"think": "the agent is mid-deliberation, internal",
+                       "say": "Build's green, deploying."})
+    wrappers = [
+        body + "\n```",                 # trailing fence only
+        "```json\n" + body + "\n```",   # both fences
+        body + "\n</json>",             # xml-ish trailing tag
+        "<json>" + body + "</json>",    # xml-ish both
+        "Here you go: " + body,         # leading prose
+    ]
+    for w in wrappers:
+        with patch.object(harness.persona_mod, "call_with_prompt", return_value=w):
+            out = harness.narrate(
+                _ev(), cfg={"harness_enabled": True, "harness_think_say": True},
+                persona=_persona(), agent_states=reg,
+            )
+        assert out is not None and out.speak is True, f"punted on: {w[:30]!r}"
+        assert out.text == "Build's green, deploying.", f"wrong text for: {w[:30]!r}"
+        assert "think" not in out.text and "{" not in out.text
+
+
+def test_unparseable_json_attempt_is_not_spoken_raw():
+    """Truncated/malformed JSON that we can't recover `say` from must
+    punt (None / empty) — NEVER read the raw {"think":… blob aloud."""
+    reg = AgentStateRegistry()
+    # think present, say truncated away entirely → no say to recover
+    truncated = '{"think": "long internal reasoning that ran on and on and got cut'
+    with patch.object(harness.persona_mod, "call_with_prompt", return_value=truncated):
+        out = harness.narrate(
+            _ev(), cfg={"harness_enabled": True, "harness_think_say": True},
+            persona=_persona(), agent_states=reg,
+        )
+    # punts to v1 (None) rather than speaking the raw think
+    assert out is None or (out.text and "think" not in out.text and "{" not in out.text)
+
+
+def test_extract_json_object_tolerates_wrappers():
+    assert harness._extract_json_object('{"a": 1}') == {"a": 1}
+    assert harness._extract_json_object('```json\n{"a": 1}\n```') == {"a": 1}
+    assert harness._extract_json_object('{"a": 1}\n</json>') == {"a": 1}
+    assert harness._extract_json_object('prose {"a": 1} more') == {"a": 1}
+    assert harness._extract_json_object('no json here') is None
+
+
 def test_strip_code_fence_variants():
     assert harness._strip_code_fence('{"a":1}') == '{"a":1}'
     assert harness._strip_code_fence('```json\n{"a":1}\n```') == '{"a":1}'
@@ -322,17 +372,22 @@ def test_parse_harness_response_json_with_unknown_scope_defaults():
     assert altitude == "human"
 
 
-def test_parse_harness_response_malformed_json_falls_back_to_plain_text():
-    """If the model emits {} but with broken JSON inside, treat the
-    whole string as plain text rather than punting. Defensive — the
-    user still gets narration."""
-    text, scope, altitude, _ = harness._parse_harness_response(
+def test_parse_harness_response_malformed_json_never_spoken_raw():
+    """If the model emits a JSON ATTEMPT that doesn't parse, we must NOT
+    read the raw `{"text":…` blob aloud (that was the wild leak). Recover
+    the spoken field if its quote closed; otherwise return empty so
+    narrate punts to v1 — never the raw braces."""
+    # Recoverable: the say value's quote closed, trailing junk after.
+    text, _, _, _ = harness._parse_harness_response(
+        '{"say": "tests pass", "think": "broken'
+    )
+    assert text == "tests pass"
+    # Unrecoverable: value quote never closed → empty, NOT the raw blob.
+    text2, _, _, _ = harness._parse_harness_response(
         '{"text": "missing close quote, '
     )
-    # Whole string is treated as text; defaults applied.
-    assert "missing close quote" in text
-    assert scope == "summary"
-    assert altitude == "human"
+    assert text2 == ""
+    assert "missing close quote" not in text2
 
 
 def test_parse_harness_response_json_missing_text_field_returns_empty():
