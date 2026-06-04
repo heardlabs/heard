@@ -2514,6 +2514,48 @@ class Daemon:
                     pass
             return json.dumps({"ok": True, "answer": answer}).encode("utf-8")
 
+        if cmd == "recap":
+            # On-demand "catch me up" — a question-LESS recap of recent
+            # agent work in a project, pulled by the user (e.g. /heard in
+            # the CC window) when they were away while a long response
+            # scrolled past. Re-summarizes fresh; does NOT replay what
+            # was already narrated. Sibling of `ask`, sharing its speech
+            # path and per-project cwd scoping.
+            #
+            # Request:  {"cmd": "recap", "cwd": "...", "speak": true}
+            # Response: {"ok": bool, "text": "...", "error": str?}
+            cwd = req.get("cwd")
+            speak_aloud = bool(req.get("speak", True))
+            cfg = config.load(cwd=cwd)
+            persona = self._persona_for(cfg)
+            try:
+                text = project_memory.recap(cwd=cwd, persona=persona)
+            except Exception:
+                text = None
+            if not text:
+                return json.dumps(
+                    {"ok": False, "text": "", "error": "nothing_to_recap"}
+                ).encode("utf-8")
+            if speak_aloud:
+                try:
+                    self._start_speech(
+                        text,
+                        cfg=cfg,
+                        persona=persona,
+                        session_id="__recap__",
+                        coexists=True,
+                        history_meta={
+                            "kind": "recap",
+                            "tag": "recap",
+                            "neutral": "(user requested recap)",
+                            "profile": cfg.get("verbosity", "normal"),
+                            "via": "recap",
+                        },
+                    )
+                except Exception:
+                    pass
+            return json.dumps({"ok": True, "text": text}).encode("utf-8")
+
         # default: plain speak (legacy {"text": "..."} path)
         self._start_speech(req.get("text") or "")
         return None

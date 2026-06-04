@@ -443,6 +443,27 @@ def ask(question: str, cwd: str | None = None, speak: bool = False, timeout_s: f
     return resp or {"ok": False, "answer": "", "error": "no_response"}
 
 
+def recap(cwd: str | None = None, speak: bool = True, timeout_s: float = 20.0) -> dict:
+    """On-demand 'catch me up' recap of recent work in a project.
+
+    The pull counterpart to Heard's push narration. Returns a dict
+    {"ok": bool, "text": str, "error": str?}, mirroring ask()'s
+    timeout / safety-net semantics. `speak=True` (default) plays the
+    recap aloud through the standard speech path — the whole point is
+    to hear it while you're heads-down in another window.
+    """
+    if not is_daemon_alive():
+        return {"ok": False, "text": "", "error": "daemon_not_alive"}
+    payload = {"cmd": "recap", "speak": bool(speak)}
+    if cwd:
+        payload["cwd"] = cwd
+    try:
+        resp = request(payload, timeout_s=timeout_s)
+    except Exception as e:
+        return {"ok": False, "text": "", "error": f"send_failed: {e}"}
+    return resp or {"ok": False, "text": "", "error": "no_response"}
+
+
 def report_defect(category: str, note: str = "", source: str = "cli") -> None:
     """Send a defect report to the daemon. Routed to defect_reports.jsonl
     with tech_context (backend, voice, persona, mic state, etc.) auto-

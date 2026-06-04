@@ -219,6 +219,41 @@ def answer(
         return None
 
 
+def recap(
+    *,
+    cwd: str | None,
+    persona,  # heard.persona.Persona — not type-hinted to avoid import cycle
+    recent_limit: int = _DEFAULT_RECENT_LIMIT,
+    max_tokens: int = 400,
+) -> str | None:
+    """Catch the user up on recent agent work in a project — the
+    question-LESS sibling of answer().
+
+    This is the "pull" counterpart to Heard's push narration: the user
+    invokes it on demand (e.g. a `/heard` slash command in the CC
+    window) when they stepped away while a long response scrolled past.
+    It re-summarizes recent activity FRESH and CONDENSED — it does NOT
+    replay what was already narrated. Returns the recap text, or None
+    on every-path failure or when there's nothing worth recapping.
+    """
+    from heard import persona as persona_mod  # noqa: PLC0415
+
+    records = iter_recent(cwd=cwd, limit=recent_limit)
+    if not records:
+        return None
+    system_text = _build_recap_system_text(persona)
+    user_msg = _build_recap_user_message(records)
+    try:
+        return persona_mod.call_with_prompt(
+            system_text,
+            user_msg,
+            max_tokens=max_tokens,
+            log_path_label="recap",
+        )
+    except Exception:
+        return None
+
+
 # ----- prompt assembly (pure, no LLM) ------------------------------------
 
 
@@ -245,17 +280,53 @@ answer, no "Answer:" prefix.
 """
 
 
+_RECAP_INSTRUCTION_BLOCK = """\
+The human stepped away while the agents kept working in this project,
+and just asked you to catch them up. You have a recent log of what the
+agents did — tool calls, prompts, assistant messages, errors.
+
+Give a fresh, condensed, spoken catch-up — imagine they walked back to
+their desk and asked "where are we?" This is NOT a replay of what was
+already narrated; it's a new synthesis of where things stand.
+
+Rules:
+  * Stay in the persona's voice (above).
+  * Lead with where things stand RIGHT NOW — the current or most
+    recent meaningful thing — then the highlights that got us here.
+  * Condense hard. A few sentences. A catch-up, not a transcript.
+    Skip routine noise (cd, ls, re-reads); surface decisions,
+    results, errors, and what's still in progress.
+  * Past tense for finished work, present for what's still going.
+  * Name files / decisions / errors concretely when they matter.
+  * If basically nothing has happened, say so in one line.
+  * Synthesize — never dump the log back at them.
+
+Output format: plain prose for the voice. No markdown, no quotes, no
+"Recap:" prefix, no bullet points.
+"""
+
+
 def _build_system_text(persona) -> str:
     """Persona body + cross-persona narration rules + Q&A specific
     instruction block. Stable across calls in a session (caches well
     when persona doesn't change)."""
+    return _compose_system_text(persona, _ANSWER_INSTRUCTION_BLOCK)
+
+
+def _build_recap_system_text(persona) -> str:
+    """Same shape as the Q&A system text, swapping in the recap
+    instruction block (no question; condense recent work)."""
+    return _compose_system_text(persona, _RECAP_INSTRUCTION_BLOCK)
+
+
+def _compose_system_text(persona, instruction_block: str) -> str:
     from heard import persona as persona_mod  # noqa: PLC0415
 
     return "\n\n".join(
         [
             persona_mod._SHARED_NARRATION_RULES,
             persona.system_prompt,
-            _ANSWER_INSTRUCTION_BLOCK,
+            instruction_block,
         ]
     )
 
@@ -267,6 +338,15 @@ def _build_user_message(question: str, records: list[dict[str, Any]]) -> str:
     else:
         log_block = "(no project log entries yet — this is the first thing recorded)"
     return f"{log_block}\n\nQuestion from the user:\n{question}"
+
+
+def _build_recap_user_message(records: list[dict[str, Any]]) -> str:
+    log_text = "\n".join(_render_record(r) for r in records)
+    return (
+        "Recent agent activity (oldest first):\n"
+        + log_text
+        + "\n\nCatch me up on where this project stands right now."
+    )
 
 
 def _render_record(r: dict[str, Any]) -> str:

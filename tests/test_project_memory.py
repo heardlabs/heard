@@ -227,6 +227,55 @@ def test_answer_calls_llm_with_assembled_prompt():
     assert captured["kwargs"]["log_path_label"] == "ask"
 
 
+def test_recap_returns_none_when_no_records():
+    """No project history → nothing to catch up on. Recap should punt
+    (None) rather than send the LLM an empty log and speak filler."""
+    assert pm.recap(cwd="/nonexistent/proj", persona=_persona()) is None
+    assert pm.recap(cwd=None, persona=_persona()) is None
+
+
+def test_recap_calls_llm_with_recap_prompt_and_label():
+    pm.record(_ev(neutral="rebalanced the harness silence prompt"))
+    pm.record(_ev(neutral="ran pytest — 62 passed"))
+
+    captured = {}
+
+    def _capture(system_text, user_msg, **kwargs):
+        captured["system"] = system_text
+        captured["user"] = user_msg
+        captured["kwargs"] = kwargs
+        return "Caught you up: rebalanced the silence prompt, tests green."
+
+    from heard import persona as persona_mod
+    with patch.object(persona_mod, "call_with_prompt", side_effect=_capture):
+        out = pm.recap(
+            cwd="/Users/k31z/Desktop/Projects/heard/heard",
+            persona=_persona(),
+        )
+
+    assert out.startswith("Caught you up")
+    # recent activity flows into the prompt, and it's the RECAP path
+    assert "ran pytest — 62 passed" in captured["user"]
+    assert "where this project stands" in captured["user"]
+    assert captured["kwargs"]["log_path_label"] == "recap"
+    # recap system text carries the recap instruction, not the Q&A one
+    assert "catch them up" in captured["system"]
+
+
+def test_recap_returns_none_on_call_exception():
+    pm.record(_ev())
+    from heard import persona as persona_mod
+
+    def _boom(*a, **k):
+        raise RuntimeError("network blip")
+    with patch.object(persona_mod, "call_with_prompt", side_effect=_boom):
+        out = pm.recap(
+            cwd="/Users/k31z/Desktop/Projects/heard/heard",
+            persona=_persona(),
+        )
+    assert out is None
+
+
 def test_answer_returns_none_on_call_failure():
     pm.record(_ev())
     from heard import persona as persona_mod

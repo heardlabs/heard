@@ -814,6 +814,34 @@ def ask_cmd(
     typer.echo(resp.get("answer") or "")
 
 
+@app.command(name="recap", hidden=True)
+def recap_cmd(
+    speak: bool = typer.Option(
+        True, "--speak/--no-speak",
+        help="Play the recap aloud through Heard (default on).",
+    ),
+) -> None:
+    """[Internal] Catch-me-up — re-summarize recent work in this
+    project out loud. The pull counterpart to Heard's push narration:
+    invoke it (e.g. via a `/heard` slash command in the CC window)
+    when you stepped away while a long response scrolled past. It
+    re-summarizes FRESH and condensed; it does not replay what was
+    already narrated.
+
+    Resolves the project by passing the current cwd to the daemon, so
+    the recap is about whichever project you're standing in."""
+    import os as _os  # noqa: PLC0415
+
+    from heard import client as _client  # noqa: PLC0415
+    cwd = _os.getcwd()
+    resp = _client.recap(cwd=cwd, speak=speak)
+    if not resp.get("ok"):
+        err = resp.get("error") or "nothing_to_recap"
+        typer.echo(f"(no recap — {err})", err=True)
+        raise typer.Exit(1)
+    typer.echo(resp.get("text") or "")
+
+
 @app.command(name="feedback", hidden=True)
 def feedback_cmd(
     text: str = typer.Argument(..., help="Preference feedback about the most recent utterance."),
