@@ -606,6 +606,25 @@ def test_user_message_truncates_long_neutral_text():
     assert "x" * 5000 not in msg
 
 
+def test_user_message_gives_final_messages_a_larger_budget():
+    """A final message is the agent's complete response — its tail
+    (what's-not-done, next steps) is exactly what the listener needs,
+    so it gets a much larger budget than routine events. Without this,
+    a structured rundown gets cut off right where 'what's NOT tracked'
+    and the priority list begin, and the harness narrates a stub."""
+    reg = AgentStateRegistry()
+    long_final = "y" * 5000
+    msg = harness._build_user_message(
+        event=_ev(kind="final", tag="final_long", neutral=long_final),
+        agent_states=reg,
+        working_memory="",
+    )
+    # Final gets the larger cap — well past the 600 routine limit.
+    assert "y" * 4000 in msg
+    # Still bounded (not the full 5000) so a runaway final can't bloat.
+    assert "y" * 5000 not in msg
+
+
 def test_user_message_includes_working_memory_when_provided():
     reg = AgentStateRegistry()
     msg = harness._build_user_message(

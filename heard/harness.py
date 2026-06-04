@@ -680,6 +680,36 @@ SCOPE BY SHAPE — concrete examples to anchor the call:
     Read the question as written; don't paraphrase. The listener
     can't always see it on screen and shouldn't have to guess.
 
+  Long, structured final (scope=full):
+    When the agent's final message is a structured rundown — several
+    sections, headers, a "here's what's true / here's what's NOT /
+    here's what's next" shape — do NOT crush it to two sentences.
+    That throws away the headlines the listener actually needs.
+    Instead:
+      * Hit each headline, including the negative ones. "What's NOT
+        tracked" matters as much as what is — name it out loud
+        ("GitHub downloads and app-auto-update events aren't tracked
+        yet"). Don't silently drop a whole section.
+      * If there's a prioritized list of next steps, voice it as a
+        spoken list, in order — a few words each, not the full
+        detail behind each one.
+      * End with a Jarvis hook that hands the floor back: offer to go
+        deeper, or ask what they want to do ("I can walk you through
+        any of those — what's the move?"). Don't end flat.
+      * Stay colloquial and in character — a sharp chief of staff
+        giving a briefing, not reading a table of contents aloud.
+    Example shape (this is the register, not a script):
+      "Two things are already covered automatically — app version's
+      on every event, and website visits are captured. What's not
+      tracked: GitHub downloads and app-auto-update events. So for
+      what's next, in priority order — the app-updated event, the
+      per-version dashboard, the GitHub download poller, then better
+      download attribution. I can go into any of those. What would
+      you like to do?"
+    Length follows the structure here — preserving the headlines and
+    the priority list is worth more words than usual. Don't pad, but
+    don't amputate sections to look concise.
+
 TOOL CATEGORY HINTS:
   * bash: interesting when running tests, builds, installs,
     deploys. Routine ls/cat/pwd usually silent.
@@ -997,8 +1027,11 @@ the event's importance:
     in auth, all related to token refresh.")
   * Decision moment: 25-40 words. State the choice, the
     rationale, the next step.
-  * Long-final synthesis: scope-aware, preserves shape, ends
-    with a hook. Up to a few sentences.
+  * Long-final synthesis: scope-aware, preserves shape. Hit every
+    headline (including the "not tracked" / negative ones), voice any
+    priority list in order, end with a hook that hands the floor
+    back. Length follows the structure — don't drop sections to hit
+    a word count. (See "Long, structured final" under SCOPE BY SHAPE.)
 
 THINGS THAT ALMOST ALWAYS DESERVE A NARRATION:
   * The first event in a new session ("Picking up where we
@@ -1033,9 +1066,14 @@ When emitting JSON:
   * `text` is what gets spoken.
   * Pick `scope` + `altitude` honestly. `one-line` is a single
     sentence; `summary` is a short multi-clause sentence; `full` is
-    a fuller several-sentence narration. Altitude: `technical` when
-    naming filenames / errors / mechanism, `human` when describing
-    intent or outcome, `strategic` when framing the broader arc.
+    a fuller several-sentence narration. Use `full` for any final
+    message with multiple sections or a list of next steps — NEVER
+    compress a multi-section rundown ("what's done / what's not /
+    what's next") down to `summary`; that drops headlines the
+    listener needs. See "Long, structured final" under SCOPE BY SHAPE.
+    Altitude: `technical` when naming filenames / errors / mechanism,
+    `human` when describing intent or outcome, `strategic` when
+    framing the broader arc.
   * `focused_agent` matters when 2+ agents are active. Set it to
     the SHORT prefix of the session ID (the `[xxxxxxxx]` label in
     the Active agents table) whose work your text is primarily
@@ -1230,19 +1268,34 @@ def _render_agent_table(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# Per-event text budgets fed into the harness prompt. Routine tool
+# events stay tightly trimmed — a bash command's output bulk is rarely
+# load-bearing. FINAL messages are the agent's complete response to the
+# user: the most important event to narrate faithfully, and the one
+# whose TAIL (what's-not-done, next-steps, the "what would you like to
+# do?") the listener most needs. Trimming a final to 600 chars cut off
+# exactly the headlines a structured rundown carries at the end — so
+# finals get a much larger budget. ~4000 chars ≈ 1000 tokens; finals
+# are infrequent, so the prompt-size cost is acceptable for getting the
+# full shape in front of the model.
+_EVENT_TEXT_LIMIT = 600
+_FINAL_TEXT_LIMIT = 4000
+
+
 def _render_event_compact(event: dict[str, Any]) -> str:
-    """Render the current event as the harness sees it. Trim huge
+    """Render the current event as the harness sees it. Trims huge
     `neutral` text to keep the dynamic prompt small — long assistant
-    outputs are the common cause of bloat. The harness can ask for
-    more detail in a future iteration; for now, the first ~600 chars
-    are usually plenty for the model to know what happened."""
+    outputs are the common cause of bloat — but gives final messages a
+    generous budget so structured rundowns reach the model whole (their
+    later sections are the ones the listener most needs)."""
     kind = event.get("kind") or "unknown"
     tag = event.get("tag") or ""
     sess = event.get("session") or {}
     sid_short = (sess.get("id") or "")[:8]
     neutral = (event.get("neutral") or "").strip()
-    if len(neutral) > 600:
-        neutral = neutral[:600] + "…"
+    limit = _FINAL_TEXT_LIMIT if kind == "final" else _EVENT_TEXT_LIMIT
+    if len(neutral) > limit:
+        neutral = neutral[:limit] + "…"
 
     parts = [f"agent:[{sid_short}] kind:{kind} tag:{tag}"]
     ctx = event.get("ctx") or {}
