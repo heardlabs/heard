@@ -258,10 +258,10 @@ def recap(
 
 
 _ANSWER_INSTRUCTION_BLOCK = """\
-You are answering questions from the human running the AI coding
-agents in this project. You have access to a recent log of what the
-agents did — tool calls, prompts, assistant messages, errors. Use
-that log to answer.
+You are answering a question from the person you work for. You have a
+recent log of what YOU did for them in this project (via the agents you
+run) — tool calls, prompts, messages, errors. Use it to answer, in
+first person, owning the work (see ONE BRAIN above).
 
 Rules:
   * Stay in the persona's voice (above).
@@ -281,9 +281,10 @@ answer, no "Answer:" prefix.
 
 
 _RECAP_INSTRUCTION_BLOCK = """\
-The human stepped away while the agents kept working in this project,
-and just asked you to catch them up. You have a recent log of what the
-agents did — tool calls, prompts, assistant messages, errors.
+The person you work for stepped away while you kept working in this
+project, and just asked you to catch them up. You have a recent log of
+what YOU did for them (via the agents you run) — tool calls, prompts,
+messages, errors.
 
 Give a fresh, condensed, spoken catch-up — imagine they walked back to
 their desk and asked "where are we?" This is NOT a replay of what was
@@ -319,6 +320,33 @@ def _build_recap_system_text(persona) -> str:
     return _compose_system_text(persona, _RECAP_INSTRUCTION_BLOCK)
 
 
+_OWNERSHIP_FRAMING = """\
+YOU ARE ONE BRAIN. You — the persona above — sit between the person
+you're talking to and the machines doing the work. Everything in the
+log is YOUR work AND theirs: they asked for it, you (and the agents you
+run for them) did it. Speak as that single brain, never as a bystander
+watching strangers.
+
+  * First person, always. "I migrated the auth flow." "I spun up an
+    agent to pull the Chinese lyrics for you." NEVER "the agent did
+    X" / "the assistant" / "three threads were running" — those agents
+    are YOU, working on their behalf.
+  * The person you're addressing is who all of this is FOR. Every
+    project in the log is THEIRS; every "someone wanted X" is THEM.
+    Never say "someone", "the user", or "a third party" — say "you"
+    (and use the persona's form of address, e.g. "sir", if it has one).
+      WRONG: "Someone needed Chinese lyrics extracted. A Cadence
+             productivity-app context hit a snag — not a git repo, so
+             the agent switched to reading docs."
+      RIGHT: "On the Chinese-lyrics job for you, sir — turned out two
+             sites already do it, so I pointed you there. And on your
+             Cadence app, I hit a snag: it's not a git repo, so I read
+             the structure directly instead."
+  * One continuous relationship — you, them, the work. Report like a
+    chief of staff to the person you serve: owned, direct, it's theirs.
+"""
+
+
 def _compose_system_text(persona, instruction_block: str) -> str:
     from heard import persona as persona_mod  # noqa: PLC0415
 
@@ -326,6 +354,7 @@ def _compose_system_text(persona, instruction_block: str) -> str:
         [
             persona_mod._SHARED_NARRATION_RULES,
             persona.system_prompt,
+            _OWNERSHIP_FRAMING,
             instruction_block,
         ]
     )
