@@ -401,6 +401,20 @@ def main() -> int:
     for name, builder, description in insights:
         try:
             ins = upsert_insight(name, description, builder(), dashboard["id"])
+            # Force a fresh compute so the dashboard doesn't serve the
+            # pre-event "all zeros" cache that PostHog assigns to newly-
+            # created insights. Without this step the dashboard tiles
+            # stay stuck on "0" until a user clicks each tile's eye icon
+            # to manually trigger a recompute.
+            try:
+                _request(
+                    "GET",
+                    f"/api/projects/{PROJECT_ID}/insights/{ins['id']}/?refresh=force_blocking",
+                )
+            except Exception:
+                # Recompute is best-effort — failures here don't block
+                # the insight save itself.
+                pass
             print(f"  ✓ {name} (id={ins.get('id')})")
         except Exception as e:
             print(f"  ✗ {name}: {e}")
