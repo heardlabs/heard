@@ -215,6 +215,15 @@ DEFAULTS: dict[str, Any] = {
     # base instruction block. No effect when harness_enabled is False
     # (v1 path doesn't have a prompt customisation point).
     "mode": "copilot",
+    # Think/speak streams — how the harness brain works by default. The
+    # harness emits a two-stream output: a private `think` field (its
+    # reasoning — logged as ev=harness_think, NEVER voiced) and a `say`
+    # field (the only thing spoken). Keeps reasoning structurally out of
+    # speech so rationale can't leak into TTS. Costs a little extra
+    # output per meaningful event (the think); the flag stays as an
+    # off-switch (`config set harness_think_say false`) if that cost
+    # ever proves not worth it. No effect when harness_enabled is False.
+    "harness_think_say": True,
 }
 
 

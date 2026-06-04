@@ -90,6 +90,11 @@ class HarnessDecision:
     altitude: str = "human"     # "technical" | "human" | "strategic"
     used_fallback: bool = False
     focused_agent_id: str | None = None
+    # Tier-1 think/speak streams: the private reasoning behind this
+    # decision. NEVER voiced — the daemon logs it (so the silent stream
+    # is inspectable) but only `text` reaches TTS. Empty unless the
+    # think/say flag is on and the model returned a `think` field.
+    think: str = ""
 
 
 def is_enabled(cfg: dict[str, Any]) -> bool:
@@ -414,8 +419,11 @@ def narrate(
     # so project-local prefs in .heard.yaml shape narration for that
     # repo only.
     mode = (cfg.get("mode") or "copilot").strip().lower()
+    think_say = bool(cfg.get("harness_think_say", False))
     prefs_text = _resolve_prefs_text(cwd=cwd)
-    system_text = _build_system_text(persona, prefs_stub=prefs_text, mode=mode)
+    system_text = _build_system_text(
+        persona, prefs_stub=prefs_text, mode=mode, think_say=think_say
+    )
     user_msg = _build_user_message(
         event=event,
         agent_states=agent_states,
@@ -453,6 +461,9 @@ def narrate(
     # Plain text is still accepted — it gets the conservative
     # defaults (summary / human / no focus).
     spoken, scope, altitude, focused = _parse_harness_response(text)
+    # Tier-1 think/speak: pull the private reasoning out so the daemon
+    # can log it. Harmless when the flag is off (no `think` field → "").
+    think = _extract_think(text)
     if not spoken:
         # Empty text inside a JSON wrapper → punt to v1, same as a
         # silence marker would.
@@ -464,13 +475,16 @@ def narrate(
         # at the top of `narrate` only sees the JSON wrapper, so without
         # this second check the marker (and any leaked rationale after it)
         # gets spoken out loud. Treat it as a deliberate skip.
-        return HarnessDecision(speak=False, scope="one-line", altitude="human")
+        return HarnessDecision(
+            speak=False, scope="one-line", altitude="human", think=think
+        )
     return HarnessDecision(
         speak=True,
         text=spoken,
         scope=scope,
         altitude=altitude,
         focused_agent_id=focused,
+        think=think,
     )
 
 
@@ -514,7 +528,10 @@ def _parse_harness_response(
         except (json.JSONDecodeError, ValueError):
             data = None
         if isinstance(data, dict):
-            text = (data.get("text") or "").strip()
+            # Prefer `say` (Tier-1 think/speak contract); fall back to
+            # `text` (single-stream contract). Either way only the
+            # spoken field crosses to TTS — `think` never does.
+            text = (data.get("say") or data.get("text") or "").strip()
             scope = data.get("scope") or "summary"
             altitude = data.get("altitude") or "human"
             if scope not in _VALID_SCOPES:
@@ -530,6 +547,27 @@ def _parse_harness_response(
             return text, scope, altitude, focused
     # Plain text — use the conservative defaults.
     return raw, "summary", "human", None
+
+
+def _extract_think(raw: str) -> str:
+    """Pull the private `think` field out of a two-stream JSON response.
+
+    Returns "" when the response isn't JSON, has no `think`, or the
+    field isn't a string. The think is the harness's silent reasoning
+    stream — logged for inspection, NEVER spoken. Separating it into
+    its own field is what keeps rationale structurally out of TTS."""
+    raw = raw.strip()
+    if not (raw.startswith("{") and raw.endswith("}")):
+        return ""
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return ""
+    if isinstance(data, dict):
+        think = data.get("think")
+        if isinstance(think, str):
+            return think.strip()
+    return ""
 
 
 # ----- prompt building ----------------------------------------------------
@@ -1179,11 +1217,46 @@ ack-shaped events that Co-pilot would have voiced.
 """
 
 
+_THINK_SAY_INSTRUCTION_BLOCK = """\
+TWO-STREAM OUTPUT — this OVERRIDES the OUTPUT FORMAT above.
+
+You run as two separate streams. A private THINKING stream where you
+reason freely — what's going on, whether this is even worth a word,
+how to frame it, what to skip. And a SPEAKING stream, which is the
+ONLY thing the listener ever hears. Keep them completely apart.
+
+Return a JSON object with both:
+
+  {"think": "<your private reasoning — NEVER spoken. Your scratchpad.
+             Decide HERE whether to speak, what matters, what to drop.
+             Every 'should I say this / the agent is just deliberating /
+             I'll wait until…' thought lives here and dies here>",
+   "say":   "<the clean spoken line — ONLY finished first-person
+             narration about the work, OR the bare token (silence) if
+             your thinking concluded there's nothing worth saying>",
+   "scope": "one-line" | "summary" | "full",
+   "altitude": "technical" | "human" | "strategic",
+   "focused_agent": "<session-id, or omit>"}
+
+Hard rules:
+  * `think` is never read aloud — it's a different stream, it cannot
+    leak. Put ALL meta-reasoning, hedging, and decision-process there.
+  * `say` is ONLY what a listener should hear: a clean first-person
+    line about the WORK, or exactly "(silence)". Never put reasoning,
+    "I'll pause", "the agent is…", or any talk about your own
+    narration choices into `say`. If the thinking decided to stay
+    quiet, `say` is the bare token "(silence)" and nothing else.
+  * Think first, then say. The thinking shapes the line; the spoken
+    line carries none of the thinking.
+"""
+
+
 def _build_system_text(
     persona: persona_mod.Persona,
     *,
     prefs_stub: str = "",
     mode: str = "copilot",
+    think_say: bool = False,
 ) -> str:
     """Assemble the byte-stable system block. Order matters for
     caching: most stable stuff first (cross-persona rules + persona
@@ -1207,6 +1280,10 @@ def _build_system_text(
     ]
     if mode == "companion":
         parts.append(_HARNESS_COMPANION_ADDENDUM)
+    if think_say:
+        # Appended last among instruction blocks so its output-format
+        # override is the model's final word on shape.
+        parts.append(_THINK_SAY_INSTRUCTION_BLOCK)
     if prefs_stub:
         parts.append("User preferences:\n" + prefs_stub)
     return "\n\n".join(parts)

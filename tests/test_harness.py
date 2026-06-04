@@ -89,6 +89,62 @@ def test_narrate_returns_speak_false_on_silence_marker():
     assert out.speak is False
 
 
+def test_think_say_split_speaks_only_say_and_logs_think():
+    """Tier-1 two-stream contract: the model returns {think, say}; only
+    `say` reaches TTS, `think` rides along on the decision for logging
+    and is NEVER spoken."""
+    reg = AgentStateRegistry()
+    resp = json.dumps({
+        "think": "The agent is just deliberating; nothing to act on, but "
+                 "I'll keep it tight when there is.",
+        "say": "Weighing two ways to fix the session bug.",
+        "scope": "summary",
+    })
+    with patch.object(harness.persona_mod, "call_with_prompt", return_value=resp):
+        out = harness.narrate(
+            _ev(),
+            cfg={"harness_enabled": True, "harness_think_say": True},
+            persona=_persona(),
+            agent_states=reg,
+        )
+    assert out is not None and out.speak is True
+    assert out.text == "Weighing two ways to fix the session bug."
+    assert "deliberating" in out.think
+    # the reasoning never leaks into the spoken field
+    assert "deliberating" not in out.text
+
+
+def test_think_say_silence_in_say_is_suppressed():
+    """When the thinking concludes silence, `say` is the bare token —
+    decision is a skip, and the think is still captured."""
+    reg = AgentStateRegistry()
+    resp = json.dumps({
+        "think": "Routine cd into a dir, not worth a word.",
+        "say": "(silence)",
+    })
+    with patch.object(harness.persona_mod, "call_with_prompt", return_value=resp):
+        out = harness.narrate(
+            _ev(),
+            cfg={"harness_enabled": True, "harness_think_say": True},
+            persona=_persona(),
+            agent_states=reg,
+        )
+    assert out is not None and out.speak is False
+    assert "Routine cd" in out.think
+
+
+def test_think_say_block_present_only_when_flag_on():
+    p = _persona()
+    assert "TWO-STREAM OUTPUT" not in harness._build_system_text(p)
+    assert "TWO-STREAM OUTPUT" in harness._build_system_text(p, think_say=True)
+
+
+def test_extract_think_handles_non_json_and_missing():
+    assert harness._extract_think("plain text") == ""
+    assert harness._extract_think('{"say": "hi"}') == ""
+    assert harness._extract_think('{"think": "  pondering  ", "say": "hi"}') == "pondering"
+
+
 def test_narrate_silence_token_with_leaked_rationale_is_suppressed():
     """Regression: the model emits `(silence)` then explains WHY it's
     staying quiet. The whole-string marker check misses it (the trailing

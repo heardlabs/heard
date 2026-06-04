@@ -2111,6 +2111,12 @@ class Daemon:
             except Exception:
                 decision = None
             if decision is not None:
+                # Tier-1 think/speak: surface the silent reasoning stream
+                # so it's inspectable in the log. It is NEVER spoken —
+                # only decision.text reaches TTS below.
+                if decision.think:
+                    _log("harness_think", kind=kind, tag=tag,
+                         text=decision.think[:240].replace("\n", " "))
                 if not decision.speak:
                     _log("event_drop", kind=kind, tag=tag, reason="harness_skip")
                     return
