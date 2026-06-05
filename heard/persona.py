@@ -296,25 +296,35 @@ def load_meta(name: str, config_dir: Path | None = None) -> dict:
 # pick Pro personas in the menu / settings / `heard tune` flow.
 _PRO_PERSONAS = frozenset({"atlas", "friday"})
 
+# Display order picked by K. Jarvis leads (the default persona + the
+# face of the product), Aria is the calm/free second pick, then the
+# Pro-only pair Friday and Atlas. Anything not in this tuple gets
+# appended alphabetically — keeps a sensible default for future
+# user-dropped personas or experimental ones we haven't ordered yet.
+_PERSONA_ORDER = ("jarvis", "aria", "friday", "atlas")
+
 
 def is_pro_persona(name: str) -> bool:
     return name in _PRO_PERSONAS
 
 
 def list_bundled(plan: str = "pro") -> list[str]:
-    """Return persona names available to the given plan. Pro/trial get
-    the full bundled set; free/expired/unknown get only the personas
-    not gated to Pro (currently {jarvis, aria}). Default plan="pro"
-    preserves the pre-1J behaviour for any caller that doesn't yet
-    pass the user's actual plan."""
-    names: set[str] = set()
+    """Return persona names available to the given plan, in display
+    order (jarvis, aria, friday, atlas). Pro/trial get the full
+    bundled set; free/expired/unknown get only the personas not gated
+    to Pro (currently {jarvis, aria}). Default plan="pro" preserves
+    the pre-1J behaviour for any caller that doesn't yet pass the
+    user's actual plan."""
+    available: set[str] = set()
     for p in BUNDLED_DIR.glob("*.md"):
-        names.add(p.stem)
+        available.add(p.stem)
     for p in BUNDLED_DIR.glob("*.yaml"):
-        names.add(p.stem)
-    if plan in ("pro", "trial"):
-        return sorted(names)
-    return sorted(names - _PRO_PERSONAS)
+        available.add(p.stem)
+    if plan not in ("pro", "trial"):
+        available = available - _PRO_PERSONAS
+    ordered = [n for n in _PERSONA_ORDER if n in available]
+    extras = sorted(available - set(_PERSONA_ORDER))
+    return ordered + extras
 
 
 # --- Haiku path -------------------------------------------------------------

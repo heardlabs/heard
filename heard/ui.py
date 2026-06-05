@@ -183,9 +183,15 @@ class HeardApp(rumps.App):
             _plan = (config.load().get("heard_plan") or "").strip() or "free"
         except Exception:
             _plan = "free"
+        # Menu labels are Capitalized for the user-facing menu (matches
+        # how personas are spoken — "Hi, I'm Jarvis" not "Hi, I'm
+        # jarvis"). The dict key is the capitalized form too; checkmark
+        # comparison lowercases both sides so the lowercase `persona`
+        # config value still matches.
         for name in list_presets(plan=_plan):
-            self.persona_menu[name] = rumps.MenuItem(name)
-            self.persona_menu[name].set_callback(self._mk_persona_cb(name))
+            label = name.capitalize()
+            self.persona_menu[label] = rumps.MenuItem(label)
+            self.persona_menu[label].set_callback(self._mk_persona_cb(name))
 
         # Speed quick toggle — applies on top of the active persona's
         # speed without changing anything else. "Hyper" (1.5×) goes
@@ -214,8 +220,8 @@ class HeardApp(rumps.App):
         # concept (v1 path doesn't have the customization point).
         self.mode_menu = rumps.MenuItem("Mode")
         mode_labels = (
-            ("copilot", "Co-pilot — short hooks while you watch the screen"),
-            ("companion", "Companion — full briefings when you're hands-off (driving, walking, cooking)"),
+            ("copilot", "Co-pilot — compact narration for screen-on work"),
+            ("companion", "Companion — fuller briefings for hands-off moments"),
         )
         for value, label in mode_labels:
             item = rumps.MenuItem(label, callback=self._mk_mode_cb(value))
@@ -396,9 +402,12 @@ class HeardApp(rumps.App):
         else:
             self.status_item.title = self._status_line(cfg, "on")
 
-        active_persona = cfg.get("persona", "raw")
-        for name, item in self.persona_menu.items():
-            item.state = 1 if name == active_persona else 0
+        active_persona = (cfg.get("persona") or "raw").lower()
+        for label, item in self.persona_menu.items():
+            # Menu labels are capitalized (Jarvis / Aria / Friday / Atlas);
+            # config value is lowercase. Compare on lowercase so the
+            # checkmark lands on the right item.
+            item.state = 1 if label.lower() == active_persona else 0
         active_speed = float(cfg.get("speed", 1.0))
         for label, item in self.speed_menu.items():
             # Match the speed value embedded in the label (e.g. "Slow (0.85×)")
@@ -947,6 +956,15 @@ class HeardApp(rumps.App):
     # don't retype it. Mirrored in vercel.json:/pro and in the dashboard.
     _UPGRADE_URL = "https://buy.stripe.com/bJecMYdBFfEW2oe5DG77O00"
 
+    def on_manage_subscription(self, _sender) -> None:
+        """Open the heard.dev account dashboard for a pro user. Pro
+        users hit this from the menu bar's "Manage subscription" row
+        (which replaced the redundant "Pro · active" label). The
+        dashboard handles billing portal redirects + invoice history
+        + cancel."""
+        import webbrowser
+        webbrowser.open("https://heard.dev/dashboard")
+
     def on_upgrade(self, _sender) -> None:
         """Open the Stripe Payment Link with the user's email prefilled.
         Used by the menu-bar Upgrade item when trial is expiring or has
@@ -990,8 +1008,11 @@ class HeardApp(rumps.App):
         email = (cfg.get("heard_email") or "").strip() or "Signed in"
         plan = (cfg.get("heard_plan") or "trial").strip() or "trial"
         self.account_item.title = f"{email} · {self._plan_suffix(plan, cfg)}"
-        # Display-only leaf — no submenu chevron.
-        self.account_item.set_callback(None)
+        # Clickable account row — opens heard.dev/dashboard so the
+        # user can manage their plan / payment / invoices from the
+        # menu bar without needing a separate "Manage subscription"
+        # entry. Previously this row was display-only.
+        self.account_item.set_callback(self.on_manage_subscription)
         self.signout_item.set_callback(self.on_signout)
         self._refresh_upgrade_item(plan, cfg)
 
@@ -1004,9 +1025,25 @@ class HeardApp(rumps.App):
         - trial otherwise: plain "Upgrade to Pro", clickable.
         """
         if plan == "pro":
-            self.upgrade_item.title = "Pro · active"
-            self.upgrade_item.set_callback(None)
+            # Hide the row entirely when pro — the email row above
+            # already says "… · pro" AND is now clickable (opens the
+            # dashboard via `on_manage_subscription`). Setting the
+            # title to empty string + null callback collapses the row
+            # visually; rumps doesn't expose a clean hide. We also
+            # reset to a sensible default in case the user later
+            # downgrades and we need to re-show the upgrade CTA.
+            try:
+                self.upgrade_item.hidden = True
+            except Exception:
+                self.upgrade_item.title = ""
+                self.upgrade_item.set_callback(None)
             return
+        # Make sure the row is visible again for non-pro plans (in case
+        # we hid it on a prior refresh when the user was pro).
+        try:
+            self.upgrade_item.hidden = False
+        except Exception:
+            pass
         if plan == "expired":
             self.upgrade_item.title = "Trial expired — Upgrade to Pro"
             self.upgrade_item.set_callback(self.on_upgrade)

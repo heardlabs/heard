@@ -156,9 +156,11 @@ def test_load_meta_works_for_legacy_yaml(tmp_path: Path, monkeypatch):
 
 
 def test_list_bundled_dedupes_md_and_yaml(tmp_path: Path, monkeypatch):
-    """A half-migrated bundle dir shouldn't list ``jarvis`` twice."""
+    """A half-migrated bundle dir shouldn't list ``jarvis`` twice. Order
+    reflects the K.-chosen display order (jarvis before atlas), not
+    alphabetical."""
     monkeypatch.setattr(persona, "BUNDLED_DIR", tmp_path)
     (tmp_path / "jarvis.md").write_text("---\nname: jarvis\n---\n\nbody")
     (tmp_path / "jarvis.yaml").write_text("name: jarvis")
     (tmp_path / "atlas.md").write_text("---\nname: atlas\n---\n\nbody")
-    assert persona.list_bundled() == ["atlas", "jarvis"]
+    assert persona.list_bundled() == ["jarvis", "atlas"]
