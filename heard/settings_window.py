@@ -2567,7 +2567,7 @@ class _OnboardingController(NSObject):
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Sign in to Heard")
         body = _wizard_body(
-            "Sign in to unlock voice — free for 30 days, no credit "
+            "Sign in to unlock voice — free for 14 days, no credit "
             "card needed. Settings sync across your Macs."
         )
 

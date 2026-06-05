@@ -50,7 +50,7 @@ class ManagedError(RuntimeError):
     """Synth failed on the heard-api path. ``status`` distinguishes
     meaningful modes:
       401 ``token_unknown``      — token not recognized; re-onboard
-      402 ``trial_expired``      — 30-day trial elapsed; upgrade or Kokoro
+      402 ``trial_expired``      — 14-day trial elapsed; upgrade or Kokoro
       429 ``daily_cap_exceeded`` — chars/day cap hit; back tomorrow
       0   ``network_unreachable`` — proxy DNS / TCP failure
       5xx ``proxy_error``        — proxy itself or upstream EL failure
