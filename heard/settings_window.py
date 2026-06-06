@@ -2325,6 +2325,7 @@ class _OnboardingController(NSObject):
             ("welcome", self._screen_welcome, None),
             ("signin", self._screen_signin, self._enter_signin),
             ("agents", self._screen_agents, self._enter_agents),
+            ("modes", self._screen_modes, None),
         ]
         return self
 
@@ -2443,7 +2444,7 @@ class _OnboardingController(NSObject):
             enter_fn()
         self._update_chrome()
         # Phase 1 analytics — drop-off per step. _key is "welcome" |
-        # "signin" | "agents" (the current 3-screen wizard).
+        # "signin" | "agents" | "modes" (the 4-screen wizard).
         try:
             from heard import analytics
             analytics.capture("wizard_viewed", {"step": _key, "step_idx": idx})
@@ -2539,7 +2540,32 @@ class _OnboardingController(NSObject):
             "Coding has always lived inside a window.\n\n"
             "Heard pulls it out — so you can step away from the "
             "screen without losing track of what's happening.\n\n"
-            "Let's get you set up. Three quick steps."
+            "Let's get you set up — a few quick steps."
+        )
+        stack = _vstack([title, body], spacing=14)
+        v.addSubview_(stack)
+        NSLayoutConstraint.activateConstraints_([
+            stack.topAnchor().constraintEqualToAnchor_constant_(v.topAnchor(), 12),
+            stack.leadingAnchor().constraintEqualToAnchor_(v.leadingAnchor()),
+            stack.trailingAnchor().constraintEqualToAnchor_(v.trailingAnchor()),
+            stack.bottomAnchor().constraintLessThanOrEqualToAnchor_(v.bottomAnchor()),
+            body.widthAnchor().constraintLessThanOrEqualToAnchor_(v.widthAnchor()),
+        ])
+        return v
+
+    def _screen_modes(self) -> NSView:
+        v = NSView.alloc().init()
+        v.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        title = _wizard_title("Two ways Heard talks")
+        body = _wizard_body(
+            "Co-pilot — for when you're at the screen. Quick, clipped "
+            "signposts; the detail's already in front of you.\n\n"
+            "Companion — for when you're away: cooking, driving, walking. "
+            "Fuller, plain-spoken catch-ups, since your ears are the only "
+            "screen.\n\n"
+            "Either way, Heard talks in plain language — no code jargon in "
+            "your ear. You'll start in Co-pilot; switch anytime from the "
+            "menu bar under “Mode.”"
         )
         stack = _vstack([title, body], spacing=14)
         v.addSubview_(stack)
