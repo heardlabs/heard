@@ -301,17 +301,17 @@ def should_use_fast_path(
     if is_critical_template_event(event):
         return True
 
-    # Immediate-ack carve-out. A short assistant preamble ("On it —
-    # checking the logs", "Let me grep for that") is the agent saying
-    # what it's ABOUT to do. It needs no cross-agent reasoning, and a
-    # harness round-trip (~1s) turns it into silence-then-talk — which
-    # reads as Heard being slow or broken. Speak short prose verbatim
-    # and instantly, even mid-swarm: on a one-liner, low latency beats
-    # persona-shaping. This lifts the same < _LONG_PROSE_CHARS allowance
-    # the single-agent path already grants (below) up into multi-agent.
-    # Longer mid-stream prose still goes to the harness for context.
-    if kind == "intermediate" and 0 < len((event.get("neutral") or "").strip()) < _LONG_PROSE_CHARS:
-        return True
+    # Assistant PROSE never takes the verbatim fast lane — it always goes
+    # to the harness, so it gets plain-English translation, condensing,
+    # and persona register instead of being read raw (the "feels like v1"
+    # complaint: short preambles were being spoken verbatim, code
+    # identifiers and all). Latency is handled separately by giving
+    # harness-narrated intermediate prose queue priority (see daemon
+    # _handle_event), so it still jumps the backlog. Only TOOL events —
+    # "Running the tests", template-generated and fine verbatim — stay on
+    # the fast lane below.
+    if kind == "intermediate":
+        return False
 
     if multi_agent_active:
         return False
@@ -320,11 +320,6 @@ def should_use_fast_path(
         return False
     if kind in _HARNESS_WAKE_KINDS:
         return False
-
-    if kind == "intermediate":
-        neutral = event.get("neutral") or ""
-        if len(neutral) >= _LONG_PROSE_CHARS:
-            return False
 
     # Repeat-edit override — if this is an edit to a file the daemon
     # has already narrated about recently, route to the harness for
@@ -338,7 +333,7 @@ def should_use_fast_path(
         if abs_path and abs_path in recent_edit_paths:
             return False
 
-    if kind in ("tool_pre", "tool_post", "intermediate"):
+    if kind in ("tool_pre", "tool_post"):
         return True
 
     # Unknown kind (custom hook source, future event types) →

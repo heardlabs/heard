@@ -830,15 +830,14 @@ def test_fast_path_routine_tool_post_is_fast():
     assert harness.should_use_fast_path(_ev(kind="tool_post", tag="tool_post_bash")) is True
 
 
-def test_fast_path_short_intermediate_is_fast():
+def test_intermediate_prose_always_goes_to_harness():
+    """Assistant prose — short OR long — never takes the verbatim fast
+    lane; it goes to the harness for plain-English + persona register.
+    (Reading raw preambles verbatim was the 'feels like v1' complaint.)
+    Latency is covered by giving harness prose queue-priority instead."""
     assert harness.should_use_fast_path(
         _ev(kind="intermediate", neutral="ok done")
-    ) is True
-
-
-def test_fast_path_long_intermediate_goes_to_harness():
-    """Long intermediate prose carries decisions / multi-part
-    reasoning that warrants the harness's judgment."""
+    ) is False
     long_text = "x" * (harness._LONG_PROSE_CHARS + 1)
     assert harness.should_use_fast_path(
         _ev(kind="intermediate", neutral=long_text)
@@ -891,16 +890,16 @@ def test_fast_path_substring_failure_in_tag_also_templates():
     ) is True
 
 
-def test_short_intermediate_ack_fast_paths_even_under_multi_agent():
-    """Immediate-ack carve-out: a short preamble ("On it — checking the
-    logs") should speak verbatim and instantly even mid-swarm, not wait
-    on a harness round-trip. Low latency beats persona-shaping on a
-    one-liner, and silence-then-talk reads as Heard being broken."""
+def test_tool_events_fast_path_single_agent_but_prose_never():
+    """Tool announcements ("Running tests") stay on the verbatim fast
+    lane in single-agent context — template-generated, fine raw, low
+    latency. Assistant prose NEVER fast-paths (single or multi) — it
+    goes to the harness for plain-English over verbatim."""
+    tool = _ev(kind="tool_pre", tag="tool_pre_bash", neutral="running pytest")
+    assert harness.should_use_fast_path(tool, multi_agent_active=False) is True
     ack = _ev(kind="intermediate", neutral="On it — checking the logs now.")
-    assert harness.should_use_fast_path(ack, multi_agent_active=True) is True
-    # Longer mid-stream prose still goes to the harness under multi-agent.
-    long_update = _ev(kind="intermediate", neutral="x" * harness._LONG_PROSE_CHARS)
-    assert harness.should_use_fast_path(long_update, multi_agent_active=True) is False
+    assert harness.should_use_fast_path(ack, multi_agent_active=False) is False
+    assert harness.should_use_fast_path(ack, multi_agent_active=True) is False
 
 
 def test_critical_events_bypass_even_under_multi_agent():

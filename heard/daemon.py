@@ -2337,6 +2337,11 @@ class Daemon:
                     session_id=session_id,
                     voice_override=focused_voice,
                     history_meta=history_meta,
+                    # Mid-stream prose ("I'm starting X") is time-sensitive —
+                    # jump the backlog like the old fast lane did, so routing
+                    # it through the harness for plain-English doesn't bring
+                    # back the 5.5s queue wait. Finals wait their turn.
+                    priority=(kind == "intermediate"),
                 )
                 return
             _log("event_harness_punt", kind=kind, tag=tag)
