@@ -124,15 +124,23 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
             from heard import analytics
             uid = sha256(email.strip().lower().encode()).hexdigest()
             config.set_value("heard_user_id", uid)
+            _plan = (plan or "trial").strip().lower()
             analytics.identify(
                 uid,
                 email=email,
                 properties={
-                    "plan": plan or "trial",
-                    "signed_in_at": int(trial_expires_at or 0),
+                    "plan": _plan,
+                    # Epoch ms the trial ends — correctly labelled now
+                    # (was previously stored under "signed_in_at").
+                    "trial_expires_at": int(trial_expires_at or 0),
                 },
             )
-            analytics.capture("signin_completed", {"method": "web"})
+            analytics.capture("signin_completed", {"method": "web", "plan": _plan})
+            # Fresh trial start = the funnel's entry point. Returning Pro
+            # users signing in on a new machine land here too, so gate on
+            # plan to keep `trial_started` meaning "a trial began".
+            if _plan == "trial":
+                analytics.capture("trial_started", {"method": "web"})
         except Exception:
             pass
     config.set_value("heard_trial_expires_at", int(trial_expires_at or 0))

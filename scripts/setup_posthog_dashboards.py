@@ -419,57 +419,128 @@ def wizard_abandonment_by_step() -> dict:
     }
 
 
+# --- Revenue & lifecycle insights ----------------------------------------
+#
+# Built on the lifecycle events fired from the app: `trial_started`
+# (sign-in with a fresh trial), `signin_completed`, and `plan_changed`
+# (every plan flip, carrying from / to / kind = upgrade|trial_drop|churn).
+# Plan + voice_backend ride on `app_launched` as properties, so the
+# "who signed up but isn't paying, and what voice are they on" question
+# is answerable without any new event.
+
+def trial_to_pro_funnel() -> dict:
+    """The conversion that pays the bills: trial start → upgrade to Pro.
+    14-day window matches the trial length, so anyone who converts during
+    their trial counts. Step 2 is `plan_changed` filtered to kind=upgrade
+    (fires when the app sees the plan flip to `pro`)."""
+    return {
+        "kind": "FunnelsQuery",
+        "series": [
+            _series("trial_started", "Started trial"),
+            _series(
+                "plan_changed", "Upgraded to Pro",
+                properties=[{"key": "kind", "value": "upgrade",
+                             "operator": "exact", "type": "event"}],
+            ),
+        ],
+        "funnelsFilter": {
+            "funnelWindowInterval": 14,
+            "funnelWindowIntervalUnit": "day",
+            "funnelVizType": "steps",
+        },
+        "dateRange": {"date_from": "-90d"},
+    }
+
+
+def plan_transitions() -> dict:
+    """Every plan flip per day, split by kind: upgrade / trial_drop /
+    churn. The single chart that answers "are people converting, and are
+    we losing them?" Upgrades trending up while drops + churn stay low is
+    the healthy shape."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("plan_changed", "Plan changes")],
+        "breakdownFilter": {"breakdown": "kind", "breakdown_type": "event"},
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-90d"},
+    }
+
+
+def non_payers_by_backend() -> dict:
+    """Signed up but NOT paying — split by what voice they actually use.
+    Distinct non-Pro installs (app_launched, plan ≠ pro) broken down by
+    voice_backend:
+      * elevenlabs = brought their own key, routing around the paywall
+      * kokoro     = downloaded the free local voice
+      * managed    = trial user still on cloud (the warm-conversion pool)
+      * null       = no voice configured at all
+    This is the "who could we convert, and why haven't they" list."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series(
+            "app_launched", "Non-Pro installs", math="dau",
+            properties=[{"key": "plan", "value": "pro",
+                         "operator": "is_not", "type": "event"}],
+        )],
+        "breakdownFilter": {"breakdown": "voice_backend", "breakdown_type": "event"},
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsBarValue"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
+def voice_backend_mix() -> dict:
+    """Overall split of which TTS backend installs run on, per day:
+    managed (paid cloud) vs elevenlabs (BYOK) vs kokoro (local) vs null
+    (none). Reads off app_launched's voice_backend property — the
+    whole-population view that non_payers_by_backend filters down."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("app_launched", "Installs", math="dau")],
+        "breakdownFilter": {"breakdown": "voice_backend", "breakdown_type": "event"},
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
+def active_pro_users() -> dict:
+    """Distinct paying users active per day — app_launched filtered to
+    plan=pro, dau. Your live paid-seat count: people actually using a Pro
+    plan, not just billed. Diverging from your Stripe count means paid
+    users who stopped opening the app (a churn early-warning)."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series(
+            "app_launched", "Active Pro users", math="dau",
+            properties=[{"key": "plan", "value": "pro",
+                         "operator": "exact", "type": "event"}],
+        )],
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsLineGraph"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
 # --- Main ----------------------------------------------------------------
 
-def main() -> int:
-    # Verify the key works before we POST anything.
-    project = _request("GET", f"/api/projects/{PROJECT_ID}/")
-    print(f"PostHog project: {project.get('name')} (id={project.get('id')})")
-
-    dashboard = get_or_create_dashboard(
-        "Heard — Phase 1 KPIs",
-        "Acquisition + activation funnels, wizard drop-off, synth "
-        "health. Configured via scripts/setup_posthog_dashboards.py.",
-    )
+def build_dashboard(
+    name: str,
+    description: str,
+    insights: list[tuple[str, Any, str]],
+) -> dict[str, Any]:
+    """Upsert one dashboard + its insights, force a fresh compute on each
+    (so new tiles don't serve the all-zeros pre-event cache), then patch
+    a 2-up grid layout onto every tile (API-created tiles default to
+    layouts={}, which renders as an empty-eye placeholder even with
+    data). Returns the dashboard JSON."""
+    dashboard = get_or_create_dashboard(name, description)
     print(f"Dashboard: {dashboard['name']} (id={dashboard['id']})")
 
-    insights = [
-        ("Acquisition Funnel — Landing → App Install", acquisition_funnel,
-         "Web → installed Heard. The headline acquisition signal."),
-        ("Activation Funnel — First Session", activation_funnel,
-         "App install → first heard narration. The 24-hour activation path."),
-        ("Time-to-First-Value", time_to_first_value,
-         "Distribution of minutes from first launch to first narration."),
-        ("Wizard Drop-off", wizard_dropoff,
-         "Step-by-step onboarding completion. Pairs with abandonment-by-step."),
-        ("Wizard Abandonment by Step", wizard_abandonment_by_step,
-         "Absolute count of wizard_abandoned events broken down by where the user bailed."),
-        ("Daily Active Installs", daily_active_installs,
-         "Distinct users firing app_launched per day. Daemon-boots proxy — overcounts auto-restarts."),
-        ("Daily Engaged Users", daily_engaged_users,
-         "Distinct installs that actually played a narration each day. The real DAU signal."),
-        ("Synth Failures by Backend", synth_health,
-         "Daily synth_failed count grouped by TTS backend."),
-        ("Installs by Version", installs_by_version,
-         "Daily app_launched broken down by app_version — release roll-forward speed."),
-        ("Synth Failures by Version", synth_failures_by_version,
-         "Daily synth_failed broken down by app_version — catches release regressions."),
-        ("Updates Landed", updates_landed,
-         "Daily app_updated events broken down by to_version — how fast users roll forward."),
-        ("Downloads by Source", downloads_by_source,
-         "Daily download_started events from heard.dev/download/<source> — install attribution."),
-        ("Daily Website Visitors", website_daily_visitors,
-         "Distinct visitors per day on heard.dev — web traffic alongside app DAU."),
-        ("Top Pages", website_top_pages,
-         "Pageview counts broken down by URL path — what people actually read on heard.dev."),
-    ]
-
-    for name, builder, description in insights:
+    for iname, builder, desc in insights:
         try:
-            ins = upsert_insight(name, description, builder(), dashboard["id"])
-            # Force a fresh compute so the dashboard doesn't serve the
-            # pre-event "all zeros" cache that PostHog assigns to newly-
-            # created insights.
+            ins = upsert_insight(iname, desc, builder(), dashboard["id"])
             try:
                 _request(
                     "GET",
@@ -477,17 +548,10 @@ def main() -> int:
                 )
             except Exception:
                 pass
-            print(f"  ✓ {name} (id={ins.get('id')})")
+            print(f"  ✓ {iname} (id={ins.get('id')})")
         except Exception as e:
-            print(f"  ✗ {name}: {e}")
+            print(f"  ✗ {iname}: {e}")
 
-    # PostHog's dashboard renderer requires each tile to have an
-    # explicit `layouts` field (grid position + size). API-created
-    # tiles default to layouts={}, which makes the tile render as an
-    # empty preview placeholder with an eye icon — even though the
-    # insight has data. Patch in a 2-column grid layout for every
-    # tile, ordered by the tile's `order` field (the order they were
-    # added to the dashboard).
     try:
         dash = _request("GET", f"/api/projects/{PROJECT_ID}/dashboards/{dashboard['id']}/")
         tiles = sorted(
@@ -519,8 +583,74 @@ def main() -> int:
     except Exception as e:
         print(f"  ✗ Tile layout patch failed: {e}")
 
-    print()
     print(f"Dashboard URL: {POSTHOG_HOST}/project/{PROJECT_ID}/dashboard/{dashboard['id']}")
+    return dashboard
+
+
+def main() -> int:
+    # Verify the key works before we POST anything.
+    project = _request("GET", f"/api/projects/{PROJECT_ID}/")
+    print(f"PostHog project: {project.get('name')} (id={project.get('id')})")
+
+    kpi_insights = [
+        ("Acquisition Funnel — Landing → App Install", acquisition_funnel,
+         "Web → installed Heard. The headline acquisition signal."),
+        ("Activation Funnel — First Session", activation_funnel,
+         "App install → first heard narration. The 24-hour activation path."),
+        ("Time-to-First-Value", time_to_first_value,
+         "Distribution of minutes from first launch to first narration."),
+        ("Wizard Drop-off", wizard_dropoff,
+         "Step-by-step onboarding completion. Pairs with abandonment-by-step."),
+        ("Wizard Abandonment by Step", wizard_abandonment_by_step,
+         "Absolute count of wizard_abandoned events broken down by where the user bailed."),
+        ("Daily Active Installs", daily_active_installs,
+         "Distinct users firing app_launched per day. Daemon-boots proxy — overcounts auto-restarts."),
+        ("Daily Engaged Users", daily_engaged_users,
+         "Distinct installs that actually played a narration each day. The real DAU signal."),
+        ("Synth Failures by Backend", synth_health,
+         "Daily synth_failed count grouped by TTS backend."),
+        ("Installs by Version", installs_by_version,
+         "Daily app_launched broken down by app_version — release roll-forward speed."),
+        ("Synth Failures by Version", synth_failures_by_version,
+         "Daily synth_failed broken down by app_version — catches release regressions."),
+        ("Updates Landed", updates_landed,
+         "Daily app_updated events broken down by to_version — how fast users roll forward."),
+        ("Downloads by Source", downloads_by_source,
+         "Daily download_started events from heard.dev/download/<source> — install attribution."),
+        ("Daily Website Visitors", website_daily_visitors,
+         "Distinct visitors per day on heard.dev — web traffic alongside app DAU."),
+        ("Top Pages", website_top_pages,
+         "Pageview counts broken down by URL path — what people actually read on heard.dev."),
+    ]
+
+    lifecycle_insights = [
+        ("Trial → Pro Conversion", trial_to_pro_funnel,
+         "Trial start → upgrade to Pro, 14-day window. The headline conversion funnel."),
+        ("Plan Transitions", plan_transitions,
+         "Daily plan_changed split by kind: upgrade / trial_drop / churn."),
+        ("Active Pro Users", active_pro_users,
+         "Distinct plan=pro installs active per day — live paid-seat count."),
+        ("Signed-up, Not Paying — by Voice Backend", non_payers_by_backend,
+         "Non-Pro installs split by voice_backend: BYOK / Kokoro / trial-cloud / none."),
+        ("Voice Backend Mix", voice_backend_mix,
+         "Whole-population split of TTS backend per day (managed / elevenlabs / kokoro / null)."),
+    ]
+
+    build_dashboard(
+        "Heard — Phase 1 KPIs",
+        "Acquisition + activation funnels, wizard drop-off, synth "
+        "health. Configured via scripts/setup_posthog_dashboards.py.",
+        kpi_insights,
+    )
+    print()
+    build_dashboard(
+        "Heard — Revenue & Lifecycle",
+        "Trial → Pro conversion, plan transitions (upgrade / trial-drop / "
+        "churn), active paid-seat count, and the signed-up-but-not-paying "
+        "cohort split by voice backend. Configured via "
+        "scripts/setup_posthog_dashboards.py.",
+        lifecycle_insights,
+    )
     return 0
 
 

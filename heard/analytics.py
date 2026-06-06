@@ -69,6 +69,15 @@ _TIER_1_EVENTS = frozenset({
     "harness_fallback",
     "app_crashed",
     "defect_reported",
+    # Lifecycle / revenue signals. Anonymous (hashed user id), very low
+    # volume, and the core "is the business working" funnel — trial start,
+    # sign-in, and every plan transition (upgrade / trial-drop / churn).
+    # Kept in Tier 1 so they fire even for users who opt out of the
+    # richer Tier 2 product analytics; without them we'd be blind to
+    # conversions for exactly the privacy-conscious cohort.
+    "signin_completed",
+    "trial_started",
+    "plan_changed",
     # The once-per-day "user actually heard Heard today" signal.
     # Fires at most once per local day per install — see
     # `Daemon._speak` in heard/daemon.py for the gating.
@@ -171,14 +180,26 @@ def _base_properties() -> dict[str, Any]:
     }
 
 
-def capture(event: str, properties: dict[str, Any] | None = None) -> None:
+def capture(
+    event: str,
+    properties: dict[str, Any] | None = None,
+    *,
+    set_person: dict[str, Any] | None = None,
+) -> None:
     """Fire a PostHog event. Gated by Tier 1 / Tier 2 rules. Non-blocking
-    (POST runs on a daemon thread)."""
+    (POST runs on a daemon thread).
+
+    ``set_person`` attaches PostHog's ``$set`` so the event also updates
+    the person's profile properties (e.g. their current ``plan`` after an
+    upgrade). Without this, person props only get set at sign-in and go
+    stale the moment someone upgrades or churns."""
     if not _consent_for(event):
         return
     props = _base_properties()
     if properties:
         props.update(properties)
+    if set_person:
+        props["$set"] = set_person
     payload = {
         "api_key": POSTHOG_KEY,
         "event": event,
