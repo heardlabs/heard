@@ -56,6 +56,31 @@ DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # per-event lines accumulate into hundreds of MB.
 _LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
+# Safety cap for the v1 prose fallback. When the harness punts AND the
+# v1 persona rewrite ALSO fails (same Haiku blip), rewrite() returns the
+# raw neutral text — and on a long final that means reading a 1000+
+# char wall verbatim (the "it read everything" bug). Condensed output
+# (harness OR a working Haiku rewrite) never reaches this length, so
+# anything past the cap is a verbatim failure-fallback: truncate it.
+_FALLBACK_PROSE_CAP = 600
+_FALLBACK_PROSE_TARGET = 440
+
+
+def _cap_runaway_prose(text: str) -> str:
+    """Truncate a runaway verbatim prose fallback to a spoken-length
+    chunk, cutting at a sentence end (preferred) or word boundary, with
+    an audible trailing marker. No-op below the cap so normal condensed
+    narration is untouched."""
+    if len(text) <= _FALLBACK_PROSE_CAP:
+        return text
+    head = text[:_FALLBACK_PROSE_TARGET]
+    cut = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
+    if cut >= _FALLBACK_PROSE_TARGET - 220:
+        return head[:cut + 1] + " There's more — I'll spare you the rest."
+    sp = head.rfind(" ")
+    head = head[:sp] if sp > 0 else head
+    return head.rstrip(" ,;:—-") + "… I'll spare you the rest."
+
 
 def _log(event: str, **fields: object) -> None:
     """One structured line per event, parseable by eye and by grep.
@@ -2392,6 +2417,14 @@ class Daemon:
         if not final:
             _log("event_drop", kind=kind, tag=tag, reason="persona_empty", persona=persona.name)
             return
+
+        # Safety cap: if the rewrite fell back to raw neutral (Haiku blip
+        # / raw persona) on a long final, don't read the wall verbatim.
+        if kind in ("intermediate", "final"):
+            capped = _cap_runaway_prose(final)
+            if capped != final:
+                _log("v1_prose_capped", kind=kind, was=len(final), now=len(capped))
+                final = capped
 
         # `final_budget` truncation removed: the tightened Haiku prompt
         # (PR #17 — "summarise the source, never read it verbatim")

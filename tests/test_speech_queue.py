@@ -155,6 +155,21 @@ def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
     assert len(spoken) == 1 + cap, f"expected {1 + cap} played, got {len(spoken)}: {spoken}"
 
 
+def test_cap_runaway_prose_truncates_walls_keeps_short():
+    """The v1 fallback safety cap: a long verbatim wall (harness punted +
+    rewrite fell back to raw) gets truncated with an audible marker;
+    normal condensed narration is untouched."""
+    from heard.daemon import _FALLBACK_PROSE_CAP, _cap_runaway_prose
+    short = "Done. Tests pass, deployed to staging."
+    assert _cap_runaway_prose(short) == short
+    wall = "First sentence here. " * 80  # ~1680 chars
+    out = _cap_runaway_prose(wall)
+    assert len(out) < _FALLBACK_PROSE_CAP
+    assert "spare you the rest" in out
+    # cuts at a sentence boundary, not mid-word
+    assert not out.replace("There's more — I'll spare you the rest.", "").strip().endswith("Firs")
+
+
 def test_trial_ended_blurb_matches_actual_fallback(tmp_path, monkeypatch):
     """The trial-ended message must reflect what voice ACTUALLY remains —
     never claim 'switched to local voices' when it really went silent

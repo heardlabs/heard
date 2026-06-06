@@ -442,19 +442,28 @@ def narrate(
         working_memory=working_memory,
     )
 
-    try:
-        raw = persona_mod.call_with_prompt(
-            system_text,
-            user_msg,
-            max_tokens=HARNESS_MAX_TOKENS,
-            log_path_label="harness",
-        )
-    except Exception:
-        # The LLM path must never crash the daemon. Punt to v1.
-        return None
+    # One retry on a transient failure (a momentary proxy/network blip
+    # returns None with no haiku_cache line). Without the retry, a single
+    # blip punts the harness to v1 — and on a long FINAL the v1 fallback
+    # reads the whole thing VERBATIM (the "it read everything" bug).
+    # Cheap insurance: the failure path is rare, so a second attempt
+    # costs nothing in the common case and rescues most blips.
+    raw = None
+    for _attempt in range(2):
+        try:
+            raw = persona_mod.call_with_prompt(
+                system_text,
+                user_msg,
+                max_tokens=HARNESS_MAX_TOKENS,
+                log_path_label="harness",
+            )
+        except Exception:
+            raw = None
+        if raw is not None:
+            break
 
     if raw is None:
-        # Every-path failure (no BYOK key, managed unavailable, etc.).
+        # Both attempts failed (no BYOK key, managed truly down, etc.).
         # Daemon falls through to v1 — that's the safety net.
         return None
 
