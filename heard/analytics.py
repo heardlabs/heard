@@ -144,6 +144,17 @@ def _environment() -> str:
     return "prod" if "/Heard.app/" in os.path.abspath(__file__) else "dev"
 
 
+def _is_ci() -> bool:
+    """True when running inside CI (GitHub Actions sets CI=true). Every
+    release build launches the app under test on a fresh ephemeral runner,
+    which otherwise mints a new anonymous install per build and floods the
+    numbers with synthetic app_launched / app_first_launched events. We drop
+    those at the source — CI activity belongs in the Actions logs, not in
+    product analytics. Local source runs (no CI var) still emit, tagged
+    $environment=dev so they stay filterable."""
+    return bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
+
+
 def _post(payload: dict, endpoint: str) -> None:
     """One-shot HTTPS POST. Never raises."""
     try:
@@ -193,6 +204,8 @@ def capture(
     the person's profile properties (e.g. their current ``plan`` after an
     upgrade). Without this, person props only get set at sign-in and go
     stale the moment someone upgrades or churns."""
+    if _is_ci():
+        return
     if not _consent_for(event):
         return
     props = _base_properties()
@@ -218,6 +231,8 @@ def identify(user_id: str, email: str = "", properties: dict[str, Any] | None = 
     $anon_distinct_id back-fills pre-signin events into the user's
     profile (so we can measure "did they go landing → signup → first
     narration" as one funnel)."""
+    if _is_ci():
+        return
     if not user_id:
         return
     user_props = _base_properties()

@@ -33,6 +33,32 @@ import certifi
 POSTHOG_HOST = "https://us.posthog.com"
 PROJECT_ID = 308934
 
+# sha256 of the maintainer's account emails — opaque, non-reversible. Used
+# to exclude the maintainer (you) AND, via $environment, all dev/CI traffic
+# (every GitHub Actions release build launches the app under test → a fresh
+# ephemeral install_id tagged $environment=dev). Without this, CI noise
+# swamps the real prod numbers (e.g. ~90 dev "kokoro installs" = build runs).
+INTERNAL_EMAIL_HASHES = [
+    "a445a39336aa479c76f2dfa458c874dccaa8bdfa8848ac65f32496f02721d114",
+    "c83910997a7d3c8dfdd40f66baa04593dece39d0808c8f07184a89ca554f21fe",
+]
+# Inline property filters for app-event insights (NOT pageview ones —
+# $pageview from the website carries no $environment, so forcing prod there
+# would zero them out). Keeps real prod humans; drops CI + the maintainer.
+INTERNAL_EXCLUSION = [
+    {"key": "$environment", "value": "prod", "operator": "exact", "type": "event"},
+    {"key": "email_hash", "value": INTERNAL_EMAIL_HASHES, "operator": "is_not", "type": "person"},
+]
+
+
+def _exclude_internal(query: dict) -> dict:
+    """Append the dev/CI + maintainer exclusion to an app-event query's
+    global property filter. Call only on insights whose events all carry
+    $environment (app_launched, plan_changed, etc.) — never on $pageview."""
+    query = dict(query)
+    query["properties"] = (query.get("properties") or []) + INTERNAL_EXCLUSION
+    return query
+
 
 # --- API helpers ---------------------------------------------------------
 
@@ -109,6 +135,12 @@ def upsert_insight(
     auto-wrap here so callers can write the simpler inner shape."""
     if query.get("kind") != "InsightVizNode":
         query = {"kind": "InsightVizNode", "source": query}
+    # Honor the project-level test-account filter on every insight, so
+    # maintainer / dev installs (configured in configure_test_account_filters)
+    # are excluded uniformly without editing each builder.
+    src = query.get("source")
+    if isinstance(src, dict):
+        src.setdefault("filterTestAccounts", True)
     existing = _request(
         "GET",
         f"/api/projects/{PROJECT_ID}/insights/?search={urllib_quote(name)}",
@@ -587,10 +619,59 @@ def build_dashboard(
     return dashboard
 
 
+def configure_test_account_filters() -> None:
+    """Set the project-wide "internal & test users" filter so maintainer
+    and dev activity stop polluting the numbers.
+
+    Matches on the opaque `email_hash` person property the app sets on
+    sign-in (sha256 of the lowercased email — NOT reversible, no raw PII
+    in the repo or in PostHog) plus the `$environment` tag. Because sign-in
+    `alias`es a session's pre-signin anonymous events onto the person,
+    enabling this also retroactively pulls historical self-testing out of
+    the reports, not just future events.
+
+    `test_account_filters_default_checked=True` makes the filter active by
+    default everywhere; each insight already carries filterTestAccounts via
+    upsert_insight so saved tiles honor it too."""
+    filters = [
+        {"key": "email_hash", "value": INTERNAL_EMAIL_HASHES,
+         "operator": "is_not", "type": "person"},
+        {"key": "$environment", "value": ["dev"],
+         "operator": "is_not", "type": "event"},
+    ]
+    # Best-effort: setting the project-level filter needs a key scoped for
+    # project settings, which the dashboard/insight key usually isn't (403).
+    # The lifecycle insights carry the same exclusion inline (see
+    # INTERNAL_EXCLUSION + _exclude_internal), so this PATCH is a bonus that
+    # also flips the UI's "filter test accounts" toggle + cleans pageview
+    # bot traffic. If it 403s, the dashboards are still correct — just tell
+    # the user to set it once in the UI.
+    try:
+        _request(
+            "PATCH",
+            f"/api/projects/{PROJECT_ID}/",
+            {
+                "test_account_filters": filters,
+                "test_account_filters_default_checked": True,
+            },
+        )
+        print(f"  ✓ Project test-account filter set ({len(filters)} rules)")
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            print("  ⚠ Project filter not set (key lacks project-settings scope). "
+                  "Insights still filter inline. To also clean pageview bots + the "
+                  "UI toggle, add in PostHog → Settings → 'Filter internal & test users': "
+                  "$environment is_not dev, and email_hash is_not the maintainer hashes.")
+        else:
+            raise
+
+
 def main() -> int:
     # Verify the key works before we POST anything.
     project = _request("GET", f"/api/projects/{PROJECT_ID}/")
     print(f"PostHog project: {project.get('name')} (id={project.get('id')})")
+
+    configure_test_account_filters()
 
     kpi_insights = [
         ("Acquisition Funnel — Landing → App Install", acquisition_funnel,
@@ -623,17 +704,19 @@ def main() -> int:
          "Pageview counts broken down by URL path — what people actually read on heard.dev."),
     ]
 
+    # All lifecycle insights are app-event based (no $pageview), so every one
+    # gets the dev/CI + maintainer exclusion inline via _exclude_internal.
     lifecycle_insights = [
-        ("Trial → Pro Conversion", trial_to_pro_funnel,
-         "Trial start → upgrade to Pro, 14-day window. The headline conversion funnel."),
-        ("Plan Transitions", plan_transitions,
-         "Daily plan_changed split by kind: upgrade / trial_drop / churn."),
-        ("Active Pro Users", active_pro_users,
-         "Distinct plan=pro installs active per day — live paid-seat count."),
-        ("Signed-up, Not Paying — by Voice Backend", non_payers_by_backend,
-         "Non-Pro installs split by voice_backend: BYOK / Kokoro / trial-cloud / none."),
-        ("Voice Backend Mix", voice_backend_mix,
-         "Whole-population split of TTS backend per day (managed / elevenlabs / kokoro / null)."),
+        ("Trial → Pro Conversion", lambda: _exclude_internal(trial_to_pro_funnel()),
+         "Trial start → upgrade to Pro, 14-day window. The headline conversion funnel. Excludes dev/CI + maintainer."),
+        ("Plan Transitions", lambda: _exclude_internal(plan_transitions()),
+         "Daily plan_changed split by kind: upgrade / trial_drop / churn. Excludes dev/CI + maintainer."),
+        ("Active Pro Users", lambda: _exclude_internal(active_pro_users()),
+         "Distinct plan=pro installs active per day — live paid-seat count. Excludes dev/CI + maintainer."),
+        ("Signed-up, Not Paying — by Voice Backend", lambda: _exclude_internal(non_payers_by_backend()),
+         "Non-Pro installs split by voice_backend: BYOK / Kokoro / trial-cloud / none. Excludes dev/CI + maintainer."),
+        ("Voice Backend Mix", lambda: _exclude_internal(voice_backend_mix()),
+         "Whole-population split of TTS backend per day (managed / elevenlabs / kokoro / null). Excludes dev/CI."),
     ]
 
     build_dashboard(
