@@ -856,8 +856,69 @@ class Daemon:
         try:
             notify.notify(
                 "Heard trial ended",
-                "Switched to local voices. Upgrade for cloud voices: buy.stripe.com/bJecMYdBFfEW2oe5DG77O00",
+                self._trial_ended_blurb(),
                 kind="trial_expired",
+            )
+        except Exception:
+            pass
+
+    _UPGRADE_URL = "buy.stripe.com/bJecMYdBFfEW2oe5DG77O00"
+
+    def _trial_ended_blurb(self) -> str:
+        """Accurate, actionable trial-ended message. Branches on what
+        voice (if any) is ACTUALLY available now — so we never claim
+        "switched to local voices" when narration actually went silent.
+        Silence with no explanation reads as a product bug; this names
+        the cause and gives every path back to sound (free + paid).
+        No day-count: existing accounts had 30-day trials, new ones 14."""
+        if (self.cfg.get("elevenlabs_api_key") or "").strip():
+            return ("Your Heard trial ended. You're on your own ElevenLabs "
+                    "key, so narration keeps playing — nothing else to do.")
+        try:
+            from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415
+
+            if KokoroTTS(config.MODELS_DIR).is_downloaded():
+                return ("Your Heard trial ended — switched to your free local "
+                        "voice, so narration keeps going. Want the cloud voice "
+                        f"back? Upgrade to Pro: {self._UPGRADE_URL}")
+        except Exception:
+            pass
+        # No voice left → narration is now SILENT. Say WHY (not a bug)
+        # and give all three ways back to sound.
+        return ("Your Heard trial ended — that's why narration went quiet "
+                "(not a bug). To get the voice back: download a free local "
+                "voice (Options → Download voice), add your own ElevenLabs "
+                f"key, or upgrade to Pro for cloud voices: {self._UPGRADE_URL}")
+
+    def _emit_plan_change(self, old_plan: str, new_plan: str) -> None:
+        """Fire a `plan_changed` analytics event on a real transition.
+
+        One place for every plan flip so the funnel is consistent no
+        matter which path triggered it: server status poll (trial → pro
+        upgrade), local trial expiry, or a server 402 (Pro cancellation).
+        Normalizes + guards old != new so re-running with the same plan
+        is a no-op (no double-fire across reloads). Also `$set`s the
+        person's plan so PostHog profiles don't go stale after upgrade."""
+        old = (old_plan or "").strip().lower()
+        new = (new_plan or "").strip().lower()
+        if not new or old == new:
+            return
+        # Classify the transition so insights can split upgrade vs drop
+        # without re-deriving from (from, to) every time.
+        if new == "pro":
+            kind = "upgrade"
+        elif old == "trial" and new == "expired":
+            kind = "trial_drop"
+        elif old == "pro" and new == "expired":
+            kind = "churn"
+        else:
+            kind = "other"
+        try:
+            from heard import analytics
+            analytics.capture(
+                "plan_changed",
+                {"from": old or "unknown", "to": new, "kind": kind},
+                set_person={"plan": new},
             )
         except Exception:
             pass
@@ -955,6 +1016,11 @@ class Daemon:
         # have set the system clock forward, or the trial may have
         # ended between launch and reload (long-running daemon).
         self._maybe_expire_trial()
+        # Catch every plan transition the reload surfaced — server-poll
+        # upgrade (trial → pro) and local trial expiry both land here.
+        # Compared against the pre-reload plan; _emit_plan_change no-ops
+        # when nothing actually changed.
+        self._emit_plan_change(old_plan, self.cfg.get("heard_plan", ""))
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         # Re-pick TTS when ANY of the inputs the selector cares about
         # change: BYOK key, Heard token, or plan (trial → expired
@@ -1162,11 +1228,15 @@ class Daemon:
                 # through whatever backend the selector picks (BYOK,
                 # downloaded-Kokoro, or none), notify the user once.
                 if e.status == 402:
+                    _prev_plan = self.cfg.get("heard_plan", "")
                     self.cfg["heard_plan"] = "expired"
                     try:
                         config.set_value("heard_plan", "expired")
                     except Exception:
                         pass
+                    # Server-pushed expiry/cancellation mid-session — this
+                    # path doesn't go through _reload_config, so emit here.
+                    self._emit_plan_change(_prev_plan, "expired")
                     self.tts = self._make_tts()
                     _log("plan_expired_by_server", backend=type(self.tts).__name__)
                     # Stale-cache fix — the menu's "X / Y today" line

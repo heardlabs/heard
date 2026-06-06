@@ -155,6 +155,29 @@ def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
     assert len(spoken) == 1 + cap, f"expected {1 + cap} played, got {len(spoken)}: {spoken}"
 
 
+def test_trial_ended_blurb_matches_actual_fallback(tmp_path, monkeypatch):
+    """The trial-ended message must reflect what voice ACTUALLY remains —
+    never claim 'switched to local voices' when it really went silent
+    (that reads as a bug). Three branches: own key / Kokoro / silent."""
+    import heard.tts.kokoro as k
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    # 1. BYOK key present → narration keeps playing, no upgrade pressure.
+    daemon.cfg = {"elevenlabs_api_key": "sk_x"}
+    assert "own ElevenLabs key" in daemon._trial_ended_blurb()
+
+    # 2. No key, Kokoro downloaded → free local voice, offer cloud back.
+    daemon.cfg = {}
+    monkeypatch.setattr(k.KokoroTTS, "is_downloaded", lambda self: True)
+    assert "free local voice" in daemon._trial_ended_blurb()
+
+    # 3. No key, no Kokoro → SILENT: explain it's not a bug + all 3 paths.
+    monkeypatch.setattr(k.KokoroTTS, "is_downloaded", lambda self: False)
+    b = daemon._trial_ended_blurb()
+    assert "not a bug" in b
+    assert "Download voice" in b and "own ElevenLabs key" in b and "upgrade to Pro" in b
+
+
 def test_mute_session_adds_flushes_and_unmute_clears(tmp_path, monkeypatch):
     """Per-session mute: the socket cmd adds the id to the muted set and
     flushes that session's queued items so it goes quiet immediately;
