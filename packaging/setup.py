@@ -69,6 +69,9 @@ DATA_FILES = [
             # user hears the persona introduce himself before sign-in.
             # Regenerated via scripts/synth_welcome.py when copy changes.
             os.path.join(ROOT, "heard/assets/welcome-jarvis.mp3"),
+            # Onboarding wizard "Mode" screenshot (card three of the
+            # modes step) — bundled as-is so it reads as the real menu.
+            os.path.join(ROOT, "heard/assets/onboarding_mode_menu.png"),
         ],
     ),
 ]

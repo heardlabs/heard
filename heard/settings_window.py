@@ -78,6 +78,7 @@ from heard.settings_widgets import (
     _WARN,
     _button,
     _card,
+    _CardView,
     _checkbox,
     _DividerView,
     _equal_widths,
@@ -2056,21 +2057,91 @@ def _ensure_edit_menu() -> None:
 # below — that's where the post-grant relaunch logic lives now.
 # ===========================================================================
 
-def _progress_dot(active: bool) -> NSView:
-    d = NSView.alloc().init()
+# Progress indicator: the CURRENT step is a wide pink→orange gradient
+# pill, every other step a small solid-gray dot. The dot↔pill morph is
+# width-animated so the marker glides between steps. Colors are explicit
+# (not semantic labelColor) so the active marker stays visible regardless
+# of the system light/dark appearance — labelColor went white-on-offwhite
+# in dark mode and the active dot vanished.
+_DOT_H = 6.0
+_DOT_W_INACTIVE = 6.0
+_DOT_W_ACTIVE = 18.0
+_DOT_INACTIVE_RGBA = (0.0, 0.0, 0.0, 0.20)
+_DOT_GRAD_LEFT = (0.957, 0.612, 0.706, 1.0)    # pale pink
+_DOT_GRAD_RIGHT = (0.980, 0.722, 0.541, 1.0)   # pale orange
+
+
+class _ProgressDot(NSView):
+    """Step marker. Inactive → small solid-gray dot. Active → wide
+    pink→orange gradient pill (drawn in drawRect_ via NSGradient so there's
+    no QuartzCore dependency). Width is driven by a constraint the
+    controller animates; `setNeedsDisplayOnBoundsChange` keeps the gradient
+    repainting smoothly as the pill grows/shrinks."""
+
+    _active = False
+
+    def initWithFrame_(self, frame):
+        self = objc.super(_ProgressDot, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self.setWantsLayer_(True)
+        self.layer().setNeedsDisplayOnBoundsChange_(True)
+        return self
+
+    def isFlipped(self):
+        return True
+
+    def setActive_(self, a):
+        self._active = bool(a)
+        self.setNeedsDisplay_(True)
+
+    def drawRect_(self, _r):
+        from AppKit import NSBezierPath, NSGradient
+        b = self.bounds()
+        radius = b.size.height / 2.0
+        path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            b, radius, radius)
+        if self._active:
+            grad = NSGradient.alloc().initWithStartingColor_endingColor_(
+                _nscolor(_DOT_GRAD_LEFT), _nscolor(_DOT_GRAD_RIGHT))
+            grad.drawInBezierPath_angle_(path, 0.0)
+        else:
+            _nscolor(_DOT_INACTIVE_RGBA).set()
+            path.fill()
+
+
+def _progress_dot(active: bool):
+    """Returns (view, width_constraint). Caller keeps the width
+    constraint so it can morph the dot ↔ pill on step change."""
+    from Foundation import NSMakeRect as _R
+    w = _DOT_W_ACTIVE if active else _DOT_W_INACTIVE
+    d = _ProgressDot.alloc().initWithFrame_(_R(0, 0, w, _DOT_H))
     d.setTranslatesAutoresizingMaskIntoConstraints_(False)
-    d.setWantsLayer_(True)
-    d.layer().setCornerRadius_(3.0)
-    color = _text_color() if active else NSColor.colorWithSRGBRed_green_blue_alpha_(0, 0, 0, 0.18)
-    if _THEME == "dark":
-        color = (NSColor.whiteColor() if active
-                 else NSColor.colorWithSRGBRed_green_blue_alpha_(1, 1, 1, 0.22))
-    d.layer().setBackgroundColor_(color.CGColor())
+    d.setActive_(active)
+    wc = d.widthAnchor().constraintEqualToConstant_(w)
     NSLayoutConstraint.activateConstraints_([
-        d.widthAnchor().constraintEqualToConstant_(6.0),
-        d.heightAnchor().constraintEqualToConstant_(6.0),
+        wc,
+        d.heightAnchor().constraintEqualToConstant_(_DOT_H),
     ])
-    return d
+    return d, wc
+
+
+def _style_progress_dot(d, wc, active: bool, *, animate: bool = False) -> None:
+    """Update a step marker to active/inactive. When `animate`, the width
+    glides via the constraint's animator (~0.28s ease) so the pill slides
+    between steps."""
+    d.setActive_(active)
+    target = _DOT_W_ACTIVE if active else _DOT_W_INACTIVE
+    if animate:
+        from AppKit import NSAnimationContext
+
+        def _blk(ctx):
+            ctx.setDuration_(0.28)
+            wc.animator().setConstant_(target)
+
+        NSAnimationContext.runAnimationGroup_(_blk)
+    else:
+        wc.setConstant_(target)
 
 
 def _wizard_title(text: str) -> NSTextField:
@@ -2106,6 +2177,128 @@ def _pin_widths(parent: NSView, children: list) -> None:
     NSLayoutConstraint.activateConstraints_([
         c.widthAnchor().constraintEqualToAnchor_(parent.widthAnchor()) for c in children
     ])
+
+
+# Brand gradient endpoints — peach LEFT → lavender RIGHT, lifted verbatim
+# from the heard.dev logo (same stops _GhostSegment uses for the Tuning
+# pill). Used for the account avatar so the signed-in card reads on-brand.
+_BRAND_PEACH = (0.961, 0.647, 0.537, 1.0)
+_BRAND_LAVENDER = (0.722, 0.643, 0.831, 1.0)
+
+
+class _GradientAvatar(NSView):
+    """Round avatar filled with the brand peach→lavender gradient and a
+    single white initial. Gives the signed-in card a modern, premium feel
+    instead of a bare check mark. Gradient is drawn in drawRect_ (NSGradient
+    + NSBezierPath) so no QuartzCore / CAGradientLayer dependency. The
+    initial is a real centered label (constraint-centered) so it sits
+    optically dead-centre rather than fighting line-box descent math."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(_GradientAvatar, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        from AppKit import NSColor, NSFont, NSFontWeightSemibold
+        h = frame.size.height or 44.0
+        lbl = _label("", size=h * 0.42)
+        lbl.setFont_(NSFont.systemFontOfSize_weight_(h * 0.42, NSFontWeightSemibold))
+        lbl.setTextColor_(NSColor.whiteColor())
+        lbl.setAlignment_(2)  # center
+        self.addSubview_(lbl)
+        # Center the glyph; a hair of upward nudge optically centres a
+        # cap-height letter (its line box has descent space below).
+        NSLayoutConstraint.activateConstraints_([
+            lbl.centerXAnchor().constraintEqualToAnchor_(self.centerXAnchor()),
+            lbl.centerYAnchor().constraintEqualToAnchor_constant_(self.centerYAnchor(), -1.0),
+        ])
+        self._lbl = lbl
+        return self
+
+    def isFlipped(self):
+        return True
+
+    def setLetter_(self, s):
+        self._lbl.setStringValue_((str(s or "").strip()[:1] or "").upper())
+
+    def drawRect_(self, _rect):
+        from AppKit import NSBezierPath, NSGradient
+        path = NSBezierPath.bezierPathWithOvalInRect_(self.bounds())
+        grad = NSGradient.alloc().initWithStartingColor_endingColor_(
+            _nscolor(_BRAND_PEACH), _nscolor(_BRAND_LAVENDER))
+        grad.drawInBezierPath_angle_(path, 45.0)
+
+
+def _avatar(diameter: float = 44.0) -> _GradientAvatar:
+    from Foundation import NSMakeRect as _R
+    av = _GradientAvatar.alloc().initWithFrame_(_R(0, 0, diameter, diameter))
+    av.setTranslatesAutoresizingMaskIntoConstraints_(False)
+    av.setWantsLayer_(True)
+    NSLayoutConstraint.activateConstraints_([
+        av.widthAnchor().constraintEqualToConstant_(diameter),
+        av.heightAnchor().constraintEqualToConstant_(diameter),
+    ])
+    return av
+
+
+class _PillView(NSView):
+    """Small rounded badge — a soft tinted capsule with bold text. Used
+    for the plan tag (PRO / TRIAL / EXPIRED) on the signed-in card.
+    GitHub-label aesthetic: low-alpha fill, saturated text."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(_PillView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        self.setWantsLayer_(True)
+        self.layer().setCornerRadius_(7.0)
+        self._lbl = _label("", size=10, bold=True)
+        self.addSubview_(self._lbl)
+        NSLayoutConstraint.activateConstraints_([
+            self._lbl.leadingAnchor().constraintEqualToAnchor_constant_(self.leadingAnchor(), 7.0),
+            self._lbl.trailingAnchor().constraintEqualToAnchor_constant_(self.trailingAnchor(), -7.0),
+            self._lbl.topAnchor().constraintEqualToAnchor_constant_(self.topAnchor(), 2.5),
+            self._lbl.bottomAnchor().constraintEqualToAnchor_constant_(self.bottomAnchor(), -2.5),
+        ])
+        return self
+
+    def setTag_fill_fg_(self, text, fill, fg):
+        self._lbl.setStringValue_(str(text))
+        self._lbl.setTextColor_(_nscolor(fg))
+        self.layer().setBackgroundColor_(_nscolor(fill).CGColor())
+
+
+def _plan_badge(cfg: dict):
+    """Return (tag, fill_rgba, fg_rgba, subtitle) for the signed-in plan
+    pill + descriptor. Mirrors `_plan_caption`'s branching but splits the
+    short tag from the descriptive line."""
+    _GREEN = (0.16, 0.62, 0.36, 1.0)
+    _GREEN_BG = (0.16, 0.62, 0.36, 0.14)
+    _PINK_BG = (_PINK_ACCENT[0], _PINK_ACCENT[1], _PINK_ACCENT[2], 0.14)
+    _WARN_BG = (_WARN[0], _WARN[1], _WARN[2], 0.14)
+    plan = (cfg.get("heard_plan") or "trial").strip().lower()
+    if plan == "pro":
+        return "PRO", _GREEN_BG, _GREEN, "Managed voices unlocked"
+    if plan in ("expired", "trial_expired"):
+        return "EXPIRED", _WARN_BG, _WARN, "Upgrade for managed voices"
+    exp_ms = 0
+    try:
+        exp_ms = int(cfg.get("heard_trial_expires_at") or 0)
+    except (TypeError, ValueError):
+        exp_ms = 0
+    if exp_ms > 0:
+        import time
+        days = int((exp_ms / 1000.0 - time.time()) // 86400)
+        if days > 1:
+            sub = f"{days} days of managed voices left"
+        elif days == 1:
+            sub = "1 day of managed voices left"
+        elif days == 0:
+            sub = "Managed voices, expiring today"
+        else:
+            return "EXPIRED", _WARN_BG, _WARN, "Upgrade for managed voices"
+        return "TRIAL", _PINK_BG, _PINK_ACCENT, sub
+    return "TRIAL", _PINK_BG, _PINK_ACCENT, "Managed voices unlocked"
 
 
 # Google "G" mark (4-colour), 16×16. Matches the button on heard.dev.
@@ -2300,6 +2493,7 @@ class _OnboardingController(NSObject):
         self._content_host: NSView | None = None
         self._screen_idx = 0
         self._dots: list = []
+        self._dot_widths: list = []
         self._refs: dict = {}        # current-screen control refs
         self._refresh_timer = None
         self._ax_observer = None
@@ -2375,9 +2569,11 @@ class _OnboardingController(NSObject):
         dots_stack.setOrientation_(NSUserInterfaceLayoutOrientationHorizontal)
         dots_stack.setSpacing_(7.0)
         dots_stack.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        self._dot_widths = []
         for i in range(len(self._screens)):
-            d = _progress_dot(i == 0)
+            d, wc = _progress_dot(i == 0)
             self._dots.append(d)
+            self._dot_widths.append(wc)
             dots_stack.addArrangedSubview_(d)
 
         sp1 = NSView.alloc().init()
@@ -2470,12 +2666,7 @@ class _OnboardingController(NSObject):
             self._next_btn.setEnabled_(True)
         self._skip_btn.setHidden_(True)
         for i, d in enumerate(self._dots):
-            active = (i == idx)
-            color = _text_color() if active else NSColor.colorWithSRGBRed_green_blue_alpha_(0, 0, 0, 0.18)
-            if _THEME == "dark":
-                color = (NSColor.whiteColor() if active
-                         else NSColor.colorWithSRGBRed_green_blue_alpha_(1, 1, 1, 0.22))
-            d.layer().setBackgroundColor_(color.CGColor())
+            _style_progress_dot(d, self._dot_widths[i], i == idx, animate=True)
 
     def onNext_(self, _s) -> None:
         if self._screen_idx >= len(self._screens) - 1:
@@ -2553,28 +2744,128 @@ class _OnboardingController(NSObject):
         ])
         return v
 
+    def _mode_card(self, icon: str, name: str, line: str,
+                   rec_for: str, recommended: bool = False) -> NSView:
+        """One mode as an icon card: emoji + bold name + one short line +
+        a 'Recommended for:' usage hint. `recommended=True` adds a green
+        tick beside the name marking the daily-use default."""
+        from AppKit import NSColor
+        card = _CardView.alloc().initWithFrame_(NSMakeRect(0, 0, 0, 0))
+        card.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        ic = _label(icon, size=24)
+        nm = _label(name, size=15, bold=True)
+        if recommended:
+            # Green filled circle with a knocked-out checkmark — the
+            # standard "recommended" badge. SF Symbol, tinted green.
+            from AppKit import NSImage, NSImageSymbolConfiguration
+            badge = NSImageView.alloc().init()
+            badge.setTranslatesAutoresizingMaskIntoConstraints_(False)
+            sym = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                "checkmark.circle.fill", "Recommended")
+            badge.setImage_(sym)
+            badge.setSymbolConfiguration_(
+                NSImageSymbolConfiguration.configurationWithPointSize_weight_(15, 6))
+            badge.setContentTintColor_(NSColor.systemGreenColor())
+            NSLayoutConstraint.activateConstraints_([
+                badge.widthAnchor().constraintEqualToConstant_(16),
+                badge.heightAnchor().constraintEqualToConstant_(16),
+            ])
+            name_row = _hstack([nm, badge], spacing=6)
+        else:
+            name_row = nm
+        ds = _label(line, size=12)
+        # Medium weight — heavier than body text so the tagline stands out,
+        # but a step below the semibold card name above it.
+        from AppKit import NSFont, NSFontWeightMedium
+        ds.setFont_(NSFont.systemFontOfSize_weight_(12, NSFontWeightMedium))
+        _low_priority_text(ds, wrap=True)
+        rec = _label("Recommended for: " + rec_for, size=11, dim=True)
+        _low_priority_text(rec, wrap=True)
+        text = _vstack([name_row, ds, rec], spacing=3)
+        row = _hstack([ic, text], spacing=13)
+        card.addSubview_(row)
+        NSLayoutConstraint.activateConstraints_([
+            row.topAnchor().constraintEqualToAnchor_constant_(card.topAnchor(), 12),
+            row.bottomAnchor().constraintEqualToAnchor_constant_(card.bottomAnchor(), -12),
+            row.leadingAnchor().constraintEqualToAnchor_constant_(card.leadingAnchor(), 15),
+            row.trailingAnchor().constraintEqualToAnchor_constant_(card.trailingAnchor(), -15),
+        ])
+        return card
+
+    def _menu_screenshot_card(self) -> NSView:
+        """Third card — the actual menu-bar screenshot (bundled asset),
+        rounded, used as-is so it reads as the real menu. Centered inside a
+        full-width container so we can size it smaller without fighting the
+        stack's alignment."""
+        from pathlib import Path as _Path
+
+        from AppKit import NSImageScaleProportionallyUpOrDown
+        iv = NSImageView.alloc().init()
+        iv.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        path = str(_Path(__file__).parent / "assets" / "onboarding_mode_menu.png")
+        img = NSImage.alloc().initWithContentsOfFile_(path)
+        iv.setImage_(img)
+        iv.setImageScaling_(NSImageScaleProportionallyUpOrDown)
+        iv.setWantsLayer_(True)
+        iv.layer().setCornerRadius_(10.0)
+        iv.layer().setMasksToBounds_(True)
+        # CRITICAL: drop hugging + compression resistance to near-zero on
+        # both axes so our explicit width/height constraints win over the
+        # image's huge intrinsic (pixel) size — otherwise it renders full
+        # size and overflows the window.
+        for orient in (0, 1):
+            iv.setContentHuggingPriority_forOrientation_(1, orient)
+            iv.setContentCompressionResistancePriority_forOrientation_(1, orient)
+        ratio = 0.32
+        if img is not None and img.size().width:
+            ratio = img.size().height / img.size().width
+
+        container = NSView.alloc().init()
+        container.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        container.addSubview_(iv)
+        NSLayoutConstraint.activateConstraints_([
+            iv.topAnchor().constraintEqualToAnchor_(container.topAnchor()),
+            iv.bottomAnchor().constraintEqualToAnchor_(container.bottomAnchor()),
+            iv.leadingAnchor().constraintEqualToAnchor_(container.leadingAnchor()),
+            iv.widthAnchor().constraintEqualToAnchor_multiplier_(
+                container.widthAnchor(), 0.78),
+            iv.heightAnchor().constraintEqualToAnchor_multiplier_(
+                iv.widthAnchor(), ratio),
+        ])
+        return container
+
     def _screen_modes(self) -> NSView:
         v = NSView.alloc().init()
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
         title = _wizard_title("Two ways Heard talks")
-        body = _wizard_body(
-            "Co-pilot — for when you're at the screen. Quick, clipped "
-            "signposts; the detail's already in front of you.\n\n"
-            "Companion — for when you're away: cooking, driving, walking. "
-            "Fuller, plain-spoken catch-ups, since your ears are the only "
-            "screen.\n\n"
-            "Either way, Heard talks in plain language — no code jargon in "
-            "your ear. You'll start in Co-pilot; switch anytime from the "
-            "menu bar under “Mode.”"
-        )
-        stack = _vstack([title, body], spacing=14)
+        intro = _label(
+            "Heard has two modes you can use — one for when you're at the "
+            "screen, one for when you're away from it.",
+            size=12, dim=True)
+        _low_priority_text(intro, wrap=True)
+        # Subtitles are the EXACT menu-bar taglines so they match what the
+        # user sees when they open Mode.
+        copilot = self._mode_card(
+            "🖥️", "Co-pilot", "compact narration for screen-on work",
+            "when you're at the screen, day to day", recommended=True)
+        companion = self._mode_card(
+            "🎧", "Companion", "fuller briefings for hands-off moments",
+            "when you're away — driving, workouts, multitasking")
+        mock = self._menu_screenshot_card()
+        caption = _label("Switch anytime in the menu bar.", size=12, dim=True)
+        _low_priority_text(caption, wrap=True)
+        stack = _vstack(
+            [title, intro, copilot, companion, caption, mock], spacing=10)
         v.addSubview_(stack)
         NSLayoutConstraint.activateConstraints_([
             stack.topAnchor().constraintEqualToAnchor_constant_(v.topAnchor(), 12),
             stack.leadingAnchor().constraintEqualToAnchor_(v.leadingAnchor()),
             stack.trailingAnchor().constraintEqualToAnchor_(v.trailingAnchor()),
             stack.bottomAnchor().constraintLessThanOrEqualToAnchor_(v.bottomAnchor()),
-            body.widthAnchor().constraintLessThanOrEqualToAnchor_(v.widthAnchor()),
+            copilot.widthAnchor().constraintEqualToAnchor_(stack.widthAnchor()),
+            companion.widthAnchor().constraintEqualToAnchor_(stack.widthAnchor()),
+            # Container is full-width; the image centers inside it at 78%.
+            mock.widthAnchor().constraintEqualToAnchor_(stack.widthAnchor()),
         ])
         return v
 
@@ -2633,17 +2924,37 @@ class _OnboardingController(NSObject):
         )
 
         # --- Signed-in card (shown instead of the button once we have
-        #     a bearer). -----------------------------------------------
-        signedin_title = _label("✓ Signed in", size=14, bold=True)
+        #     a bearer). A proper account card: brand-gradient avatar +
+        #     email + colored plan pill, all on a white rounded card.
+        avatar = _avatar(44.0)
+        signedin_title = _label("Signed in", size=15, bold=True)
+        _low_priority_text(signedin_title, wrap=False)
+        plan_pill = _PillView.alloc().initWithFrame_(NSMakeRect(0, 0, 0, 0))
+        plan_pill.setContentHuggingPriority_forOrientation_(751.0, 0)
+        plan_pill.setContentCompressionResistancePriority_forOrientation_(751.0, 0)
+        name_row = _hstack([signedin_title, plan_pill], spacing=8)
         plan_lbl = _label("", size=12, dim=True)
+        _low_priority_text(plan_lbl, wrap=True)
+        id_col = _vstack([name_row, plan_lbl], spacing=3)
+        acct_row = _hstack([avatar, id_col], spacing=13)
+        acct_card = _CardView.alloc().initWithFrame_(NSMakeRect(0, 0, 0, 0))
+        acct_card.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        acct_card.addSubview_(acct_row)
+        NSLayoutConstraint.activateConstraints_([
+            acct_row.topAnchor().constraintEqualToAnchor_constant_(acct_card.topAnchor(), 14),
+            acct_row.bottomAnchor().constraintEqualToAnchor_constant_(acct_card.bottomAnchor(), -14),
+            acct_row.leadingAnchor().constraintEqualToAnchor_constant_(acct_card.leadingAnchor(), 16),
+            acct_row.trailingAnchor().constraintLessThanOrEqualToAnchor_constant_(acct_card.trailingAnchor(), -16),
+        ])
         switch_link = _link_button(
             "Use a different account", target=self,
             action="onWizSwitchAccount:", dim=True,
         )
         signedin_stack = _vstack(
-            [signedin_title, plan_lbl, _spacer(4), switch_link], spacing=6
+            [acct_card, _spacer(2), switch_link], spacing=8
         )
         signedin_stack.setHidden_(True)
+        acct_card.widthAnchor().constraintEqualToAnchor_(signedin_stack.widthAnchor()).setActive_(True)
 
         outer = _vstack([title, body, _spacer(8), signedin_stack, form_stack], spacing=8)
         v.addSubview_(outer)
@@ -2663,6 +2974,7 @@ class _OnboardingController(NSObject):
             "ic_disclosure": ic_disclosure,
             "form_stack": form_stack, "signedin_stack": signedin_stack,
             "signedin_title": signedin_title, "plan_lbl": plan_lbl,
+            "avatar": avatar, "plan_pill": plan_pill,
         }
         return v
 
@@ -2711,10 +3023,17 @@ class _OnboardingController(NSObject):
             email = (cfg.get("heard_email") or "").strip() or "your account"
             st = r.get("signedin_title")
             if st is not None:
-                st.setStringValue_(f"✓ Signed in as {email}")
+                st.setStringValue_(email)
+            av = r.get("avatar")
+            if av is not None:
+                av.setLetter_(email)
+            tag, fill, fg, sub = _plan_badge(cfg)
+            pill = r.get("plan_pill")
+            if pill is not None:
+                pill.setTag_fill_fg_(tag, fill, fg)
             pl = r.get("plan_lbl")
             if pl is not None:
-                pl.setStringValue_(self._plan_caption(cfg))
+                pl.setStringValue_(sub)
             # Bug fix 2026-06-03: the early-return here used to skip
             # `_update_chrome`, which is what flips `_next_btn` from
             # disabled to enabled. Result: even after sign-in succeeds,
@@ -2764,7 +3083,12 @@ class _OnboardingController(NSObject):
         cc_row = _setting_row("Claude Code", "Narrate Claude Code's tool calls and replies.", cc)
         cx = _checkbox("", target=self, action="onWizCodex:")
         cx_row = _setting_row("Codex", "Narrate the Codex CLI.", cx)
-        card = _card([cc_row, cx_row])
+        # Cursor — not wired up yet. Dimmed title + "Coming soon" tag in
+        # place of a toggle so it reads as planned, not broken.
+        cur_title = _label("Cursor", size=13, bold=True, dim=True)
+        cur_soon = _label("Coming soon", size=11, dim=True)
+        cur_row = _setting_row(cur_title, "Narrate the Cursor agent.", cur_soon)
+        card = _card([cc_row, cx_row, cur_row])
         stack = _vstack([title, body, _spacer(4), card], spacing=12)
         v.addSubview_(stack)
         NSLayoutConstraint.activateConstraints_([
