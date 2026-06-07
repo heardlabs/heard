@@ -291,15 +291,27 @@ def wizard_dropoff() -> dict:
 
 
 def synth_health() -> dict:
-    """Daily synth_failed count broken down by TTS backend. If
-    `backend = managed` spikes, the managed proxy is having a bad day
-    and user-facing UX is broken."""
+    """Daily synth_failed count broken down by TTS backend. If `managed`
+    spikes, the managed proxy is having a bad day and UX is broken.
+
+    NOTE: synth_failed carries `backend` as the Python CLASS name
+    (ManagedTTS / ElevenLabsTTS / KokoroTTS / NullTTS), unlike app_launched
+    which uses the friendly `voice_backend` (managed / elevenlabs / ...).
+    Map the class names to the friendly vocabulary here so this chart's
+    labels match the rest of the dashboard."""
     return {
         "kind": "TrendsQuery",
         "series": [_series("synth_failed", "Synth failures")],
         "breakdownFilter": {
-            "breakdown": "backend",
-            "breakdown_type": "event",
+            "breakdown": (
+                "multiIf("
+                "properties.backend = 'ManagedTTS', 'managed', "
+                "properties.backend = 'ElevenLabsTTS', 'elevenlabs (BYOK)', "
+                "properties.backend = 'KokoroTTS', 'kokoro', "
+                "properties.backend = 'NullTTS', 'null', "
+                "properties.backend)"
+            ),
+            "breakdown_type": "hogql",
         },
         "interval": "day",
         "trendsFilter": {"display": "ActionsBar"},
@@ -372,13 +384,15 @@ def website_top_pages() -> dict:
 
 
 def installs_by_version() -> dict:
-    """Daily count of `app_launched` broken down by `app_version`.
-    Lets you see how fast users roll forward to a new release — a
-    spike on the newest version means the auto-update mechanism is
-    working; a long tail of old versions means users are stuck."""
+    """Distinct installs (dau) per `app_version` per day — how fast users
+    roll forward to a new release. dau, NOT total, so it matches Daily
+    Active Installs: an install relaunching the same version 10× counts
+    once, not 10×. (Sum across versions on one day can still exceed Daily
+    Active Installs if a single install ran two versions that day — normal
+    during a release sprint.)"""
     return {
         "kind": "TrendsQuery",
-        "series": [_series("app_launched", "App launched")],
+        "series": [_series("app_launched", "Distinct installs", math="dau")],
         "breakdownFilter": {
             "breakdown": "app_version",
             "breakdown_type": "event",
@@ -409,13 +423,14 @@ def synth_failures_by_version() -> dict:
 
 
 def updates_landed() -> dict:
-    """Daily count of `app_updated` events broken down by the
-    `to_version` property — how many installs have rolled forward to
-    each release, and how fast. A version that has a low `app_updated`
-    count days after release is one users aren't picking up."""
+    """Distinct installs (dau) that rolled forward to each `to_version`
+    per day — how fast users pick up a release. dau, not total, so it
+    counts installs not update-events, consistent with the other
+    install/user charts. A version with a low count days after release
+    is one users aren't picking up."""
     return {
         "kind": "TrendsQuery",
-        "series": [_series("app_updated", "App updated")],
+        "series": [_series("app_updated", "Distinct installs updated", math="dau")],
         "breakdownFilter": {
             "breakdown": "to_version",
             "breakdown_type": "event",
@@ -738,17 +753,17 @@ def main() -> int:
         ("Wizard Abandonment by Step", lambda: _exclude_internal(wizard_abandonment_by_step()),
          "Count of wizard_abandoned broken down by where the user bailed. Excludes dev/CI."),
         ("Daily Active Installs", lambda: _exclude_internal(daily_active_installs()),
-         "Distinct real users firing app_launched per day. Daemon-boots proxy. Excludes dev/CI."),
+         "Distinct installs that launched each day (dau — one per install/day, dedupes restarts). Excludes dev/CI."),
         ("Daily Engaged Users", lambda: _exclude_internal(daily_engaged_users()),
          "Distinct installs that actually played a narration each day. The real DAU signal. Excludes dev/CI."),
         ("Synth Failures by Backend", lambda: _exclude_internal(synth_health()),
          "Daily synth_failed count grouped by TTS backend. Excludes dev/CI + maintainer."),
         ("Installs by Version", lambda: _exclude_internal(installs_by_version()),
-         "Daily app_launched broken down by app_version — release roll-forward speed. Excludes dev/CI + maintainer."),
+         "Distinct installs (dau) per app_version per day — roll-forward speed. Excludes dev/CI."),
         ("Synth Failures by Version", lambda: _exclude_internal(synth_failures_by_version()),
-         "Daily synth_failed broken down by app_version — catches release regressions. Excludes dev/CI + maintainer."),
+         "Daily synth_failed count by app_version — catches release regressions. Excludes dev/CI."),
         ("Updates Landed", lambda: _exclude_internal(updates_landed()),
-         "Daily app_updated by to_version — how fast users roll forward. Excludes dev/CI."),
+         "Distinct installs (dau) that rolled forward to each to_version. Excludes dev/CI."),
         ("Harness v2 → v1 Fallbacks", lambda: _exclude_internal(harness_fallbacks()),
          "Daily count of v2 harness punts/errors that fell back to v1. The A/B kill signal. Excludes dev/CI."),
         ("Downloads by Source", downloads_by_source,
