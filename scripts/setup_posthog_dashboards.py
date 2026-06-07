@@ -703,29 +703,35 @@ def main() -> int:
 
     configure_test_account_filters()
 
+    # App-event KPIs get the dev/CI + maintainer exclusion inline (every
+    # event carries $environment). Left WITHOUT it: the acquisition funnel
+    # (starts on $pageview, which has no $environment — but CI never fires a
+    # pageview so it drops out of step 1 naturally), download_started (a
+    # server-side website event, no $environment), and the two $pageview
+    # website charts. Those need the project-level UI filter for bot traffic.
     kpi_insights = [
         ("Acquisition Funnel — Landing → App Install", acquisition_funnel,
          "Web → installed Heard. The headline acquisition signal."),
-        ("Activation Funnel — First Session", activation_funnel,
-         "App install → first heard narration. The 24-hour activation path."),
-        ("Time-to-First-Value", time_to_first_value,
-         "Distribution of minutes from first launch to first narration."),
-        ("Wizard Drop-off", wizard_dropoff,
-         "Step-by-step onboarding completion. Pairs with abandonment-by-step."),
-        ("Wizard Abandonment by Step", wizard_abandonment_by_step,
-         "Absolute count of wizard_abandoned events broken down by where the user bailed."),
-        ("Daily Active Installs", daily_active_installs,
-         "Distinct users firing app_launched per day. Daemon-boots proxy — overcounts auto-restarts."),
-        ("Daily Engaged Users", daily_engaged_users,
-         "Distinct installs that actually played a narration each day. The real DAU signal."),
-        ("Synth Failures by Backend", synth_health,
-         "Daily synth_failed count grouped by TTS backend."),
-        ("Installs by Version", installs_by_version,
-         "Daily app_launched broken down by app_version — release roll-forward speed."),
-        ("Synth Failures by Version", synth_failures_by_version,
-         "Daily synth_failed broken down by app_version — catches release regressions."),
-        ("Updates Landed", updates_landed,
-         "Daily app_updated events broken down by to_version — how fast users roll forward."),
+        ("Activation Funnel — First Session", lambda: _exclude_internal(activation_funnel()),
+         "App install → first heard narration. The 24-hour activation path. Excludes dev/CI + maintainer."),
+        ("Time-to-First-Value", lambda: _exclude_internal(time_to_first_value()),
+         "Distribution of minutes from first launch to first narration. Excludes dev/CI + maintainer."),
+        ("Wizard Drop-off", lambda: _exclude_internal(wizard_dropoff()),
+         "Step-by-step onboarding completion. Pairs with abandonment-by-step. Excludes dev/CI."),
+        ("Wizard Abandonment by Step", lambda: _exclude_internal(wizard_abandonment_by_step()),
+         "Count of wizard_abandoned broken down by where the user bailed. Excludes dev/CI."),
+        ("Daily Active Installs", lambda: _exclude_internal(daily_active_installs()),
+         "Distinct real users firing app_launched per day. Daemon-boots proxy. Excludes dev/CI."),
+        ("Daily Engaged Users", lambda: _exclude_internal(daily_engaged_users()),
+         "Distinct installs that actually played a narration each day. The real DAU signal. Excludes dev/CI."),
+        ("Synth Failures by Backend", lambda: _exclude_internal(synth_health()),
+         "Daily synth_failed count grouped by TTS backend. Excludes dev/CI + maintainer."),
+        ("Installs by Version", lambda: _exclude_internal(installs_by_version()),
+         "Daily app_launched broken down by app_version — release roll-forward speed. Excludes dev/CI + maintainer."),
+        ("Synth Failures by Version", lambda: _exclude_internal(synth_failures_by_version()),
+         "Daily synth_failed broken down by app_version — catches release regressions. Excludes dev/CI + maintainer."),
+        ("Updates Landed", lambda: _exclude_internal(updates_landed()),
+         "Daily app_updated by to_version — how fast users roll forward. Excludes dev/CI."),
         ("Downloads by Source", downloads_by_source,
          "Daily download_started events from heard.dev/download/<source> — install attribution."),
         ("Daily Website Visitors", website_daily_visitors,
