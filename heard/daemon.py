@@ -267,6 +267,13 @@ class Daemon:
         # bursts during a normal turn would silently lose the first
         # one or two beats.
         self._queue_max = 5
+        # Last project (repo) name we actually spoke about, tracked at the
+        # speech-drain layer so a brief "Now on <project>" tag can lead the
+        # narration whenever the spoken project changes — so the user knows
+        # which of several parallel agent sessions Heard is talking about.
+        # None = nothing spoken yet. Lives at the OUTPUT layer (not the
+        # brain) because only the drain order reflects what's actually heard.
+        self._last_spoken_project: str | None = None
         # Track the last few edited file paths so the fast-path
         # classifier can recognise repeat edits to the same file
         # and route the 2nd+ to the harness (which has cross-event
@@ -1789,6 +1796,44 @@ class Daemon:
                 self._speech_worker.start()
             self._queue_cv.notify()
 
+    def _project_label(self, hmeta: dict | None) -> str:
+        """Resolve a speakable project name for an utterance from its
+        history meta. Prefers the session's repo_name (cwd basename, set in
+        session.py); falls back to the cwd basename. Returns "" for
+        utterances with no project (greetings, errors, system messages) and
+        for the home directory — so those never trigger a project tag."""
+        hmeta = hmeta or {}
+        name = (hmeta.get("repo_name") or "").strip()
+        if not name:
+            cwd = (hmeta.get("cwd") or "").strip()
+            if cwd:
+                name = os.path.basename(cwd.rstrip("/"))
+        if not name or name in ("~", "/"):
+            return ""
+        # Don't announce the home dir as a "project".
+        if name == os.path.basename(os.path.expanduser("~")):
+            return ""
+        return name
+
+    def _with_project_tag(self, text: str, hmeta: dict | None) -> str:
+        """Lead the narration with a brief "Now on <project>" when the
+        spoken project changes from the last one we voiced — so across
+        parallel agent sessions the user always knows which project Heard
+        is talking about. No tag while we stay on the same project; the
+        first utterance of each project gets one. Updates the tracker only
+        when a real project resolved (greetings/errors don't reset it)."""
+        if not bool(self.cfg.get("announce_project_switch", True)):
+            return text
+        proj = self._project_label(hmeta)
+        if not proj:
+            return text
+        if proj != self._last_spoken_project:
+            self._last_spoken_project = proj
+            _log("project_switch_tag", project=proj)
+            return f"Now on {proj}. {text}"
+        self._last_spoken_project = proj
+        return text
+
     def _drain_queue(self) -> None:
         """Single-consumer worker. Pops one utterance at a time and
         speaks it through completion, so the next event in the queue
@@ -1800,6 +1845,9 @@ class Daemon:
                 text, cfg, persona, session_id, voice_override, hmeta = self._queue.pop(0)
                 cancel = threading.Event()
                 self._current_cancel = cancel
+            # Prepend a brief project tag on a project switch (computed here,
+            # at actual play order, not at enqueue — the queue reorders).
+            text = self._with_project_tag(text, hmeta)
             self._speak(text, cancel, cfg=cfg, persona=persona, voice=voice_override)
             with self._queue_cv:
                 if self._current_cancel is cancel:
