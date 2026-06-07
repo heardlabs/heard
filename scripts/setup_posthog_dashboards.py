@@ -544,7 +544,10 @@ def non_payers_by_backend() -> dict:
         )],
         "breakdownFilter": dict(BACKEND_BREAKDOWN),
         "interval": "day",
-        "trendsFilter": {"display": "ActionsBarValue"},
+        # Daily line per backend so you can watch the non-payer mix move
+        # over time (managed/trial-cloud vs BYOK vs Kokoro vs none), not
+        # just a single all-time snapshot.
+        "trendsFilter": {"display": "ActionsLineGraph"},
         "dateRange": {"date_from": "-30d"},
     }
 
