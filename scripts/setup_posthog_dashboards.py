@@ -302,7 +302,7 @@ def synth_health() -> dict:
             "breakdown_type": "event",
         },
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -322,7 +322,7 @@ def daily_engaged_users() -> dict:
         "kind": "TrendsQuery",
         "series": [_series("narration_played_today", "Daily engaged users", math="dau")],
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -335,7 +335,7 @@ def daily_active_installs() -> dict:
         "kind": "TrendsQuery",
         "series": [_series("app_launched", "Daily active installs", math="dau")],
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -349,7 +349,7 @@ def website_daily_visitors() -> dict:
         "kind": "TrendsQuery",
         "series": [_series("$pageview", "Daily website visitors", math="dau")],
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -384,7 +384,7 @@ def installs_by_version() -> dict:
             "breakdown_type": "event",
         },
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -403,7 +403,7 @@ def synth_failures_by_version() -> dict:
             "breakdown_type": "event",
         },
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -421,7 +421,7 @@ def updates_landed() -> dict:
             "breakdown_type": "event",
         },
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -440,7 +440,7 @@ def downloads_by_source() -> dict:
             "breakdown_type": "event",
         },
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -521,7 +521,7 @@ def plan_transitions() -> dict:
             "key": "properties.source = 'stripe' OR properties.kind = 'trial_drop'",
         }],
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-90d"},
     }
 
@@ -547,7 +547,7 @@ def non_payers_by_backend() -> dict:
         # Daily line per backend so you can watch the non-payer mix move
         # over time (managed/trial-cloud vs BYOK vs Kokoro vs none), not
         # just a single all-time snapshot.
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -562,7 +562,7 @@ def voice_backend_mix() -> dict:
         "series": [_series("app_launched", "Installs", math="dau")],
         "breakdownFilter": dict(BACKEND_BREAKDOWN),
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
@@ -580,7 +580,7 @@ def active_pro_users() -> dict:
                          "operator": "exact", "type": "event"}],
         )],
         "interval": "day",
-        "trendsFilter": {"display": "ActionsLineGraph"},
+        "trendsFilter": {"display": "ActionsBar"},
         "dateRange": {"date_from": "-30d"},
     }
 
