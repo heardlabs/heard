@@ -96,10 +96,6 @@ class WorkingMemoryState:
     compressed_at: float = 0.0  # monotonic time of last successful compression
     events_at_compression: int = 0  # event_count at last compression — used to detect "new since last"
 
-    def is_stale(self, *, now: float | None = None) -> bool:
-        now = time.monotonic() if now is None else now
-        return self.compressed_at == 0.0 or (now - self.compressed_at) > COMPRESS_TICK_S
-
 
 @dataclass
 class _EventBufferEntry:

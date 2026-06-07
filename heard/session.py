@@ -87,13 +87,6 @@ class SessionStore:
             if sess is not None:
                 sess["failure_count"] = (sess.get("failure_count") or 0) + 1
 
-    def note_success(self, session_id: str) -> None:
-        """Decay failure count on any successful tool event."""
-        with self._lock:
-            sess = self._sessions.get(session_id)
-            if sess is not None and sess.get("failure_count"):
-                sess["failure_count"] = max(0, sess["failure_count"] - 1)
-
     def note_topic(self, session_id: str, topic: str) -> None:
         with self._lock:
             sess = self._sessions.get(session_id)

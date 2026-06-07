@@ -17,15 +17,6 @@ def test_touch_idempotent_does_not_reset_failures():
     assert store.get("abc")["failure_count"] == 2
 
 
-def test_note_success_decays_failures():
-    store = SessionStore()
-    store.touch("abc", cwd="/r")
-    store.note_failure("abc")
-    store.note_failure("abc")
-    store.note_success("abc")
-    assert store.get("abc")["failure_count"] == 1
-
-
 def test_note_topic_sets_last_topic():
     store = SessionStore()
     store.touch("abc", cwd="/r")

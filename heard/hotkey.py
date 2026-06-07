@@ -52,7 +52,6 @@ Examples: ``<shift>+<alt>+.``, ``<cmd>+<shift>+,``, ``<ctrl>+/``.
 from __future__ import annotations
 
 import sys
-import threading
 from collections.abc import Callable
 
 DEFAULT_PAUSE_BINDING = "<shift>+<alt>+."
@@ -282,10 +281,3 @@ def _log_failure(e: Exception) -> None:
         )
     else:
         print(f"hotkey listener failed: {e}", file=sys.stderr, flush=True)
-
-
-def _noop_thread() -> threading.Thread:
-    """Placeholder used in tests or when hotkey_enabled is False."""
-    t = threading.Thread(target=lambda: None, daemon=True)
-    t.start()
-    return t

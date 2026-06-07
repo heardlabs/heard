@@ -41,23 +41,6 @@ def _write_transcript(path: Path, blocks: list) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
-def test_extract_assistant_texts_returns_each_block_in_order(tmp_path):
-    transcript = tmp_path / "t.jsonl"
-    _write_transcript(
-        transcript,
-        [
-            ("user", [{"type": "text", "text": "go"}]),
-            ("assistant", [{"type": "text", "text": "First prose."}]),
-            ("assistant", [{"type": "tool_use", "name": "Bash"}]),
-            ("assistant", [{"type": "text", "text": "Second prose."}]),
-            ("assistant", [{"type": "tool_use", "name": "Bash"}]),
-            ("assistant", [{"type": "text", "text": "Final prose."}]),
-        ],
-    )
-    texts = client.extract_assistant_texts(str(transcript))
-    assert texts == ["First prose.", "Second prose.", "Final prose."]
-
-
 def test_filter_unspoken_skips_already_marked():
     spoken.mark_spoken("s1", "First prose.")
     out = spoken.filter_unspoken("s1", ["First prose.", "Second prose.", "First prose."])

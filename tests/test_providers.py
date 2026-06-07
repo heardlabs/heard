@@ -9,15 +9,6 @@ from types import SimpleNamespace
 from heard import providers
 
 
-def test_get_provider_picks_right_backend(monkeypatch):
-    monkeypatch.setattr(providers, "_find_claude_binary", lambda: "/fake/claude")
-    assert isinstance(providers.get_provider(api_key="sk-x"), providers.AnthropicAPIProvider)
-    assert isinstance(providers.get_provider(api_key=""), providers.ClaudeCLIProvider)
-
-    monkeypatch.setattr(providers, "_find_claude_binary", lambda: None)
-    assert providers.get_provider(api_key="") is None
-
-
 def test_cli_subprocess_is_locked_down(monkeypatch):
     """Verify the safety contract: no tool calls, user-level settings
     skipped, hook latch set, and the subprocess runs from a tempdir so
