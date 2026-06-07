@@ -942,7 +942,14 @@ class Daemon:
             from heard import analytics
             analytics.capture(
                 "plan_changed",
-                {"from": old or "unknown", "to": new, "kind": kind},
+                # source="client" — this fires when the daemon *notices* a
+                # plan flip on its next poll/reload, so it lags real time and
+                # can't see a paid upgrade until the app reopens. The Stripe
+                # webhook emits the authoritative source="stripe" copy. The
+                # dashboards count upgrades/churn from stripe and trial-drops
+                # (a lapsed free trial never touches Stripe) from the client.
+                {"from": old or "unknown", "to": new, "kind": kind,
+                 "source": "client"},
                 set_person={"plan": new},
             )
         except Exception:

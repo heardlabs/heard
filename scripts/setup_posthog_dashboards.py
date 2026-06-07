@@ -60,6 +60,17 @@ def _exclude_internal(query: dict) -> dict:
     return query
 
 
+# Display-only relabel for the voice_backend breakdown. `managed` (Heard's
+# paid cloud) and `elevenlabs` (the user's OWN ElevenLabs key — BYOK, zero
+# revenue to us) are commercially opposite, so spell BYOK out in the chart.
+# HogQL breakdown maps the value at query time — no app change, no rewrite
+# of historical events.
+BACKEND_BREAKDOWN = {
+    "breakdown": "if(properties.voice_backend = 'elevenlabs', 'elevenlabs (BYOK)', properties.voice_backend)",
+    "breakdown_type": "hogql",
+}
+
+
 # --- API helpers ---------------------------------------------------------
 
 def _api_key() -> str:
@@ -471,8 +482,14 @@ def trial_to_pro_funnel() -> dict:
             _series("trial_started", "Started trial"),
             _series(
                 "plan_changed", "Upgraded to Pro",
-                properties=[{"key": "kind", "value": "upgrade",
-                             "operator": "exact", "type": "event"}],
+                # source=stripe is the authoritative payment event (the
+                # webhook), not the app's laggy client copy.
+                properties=[
+                    {"key": "kind", "value": "upgrade",
+                     "operator": "exact", "type": "event"},
+                    {"key": "source", "value": "stripe",
+                     "operator": "exact", "type": "event"},
+                ],
             ),
         ],
         "funnelsFilter": {
@@ -488,11 +505,21 @@ def plan_transitions() -> dict:
     """Every plan flip per day, split by kind: upgrade / trial_drop /
     churn. The single chart that answers "are people converting, and are
     we losing them?" Upgrades trending up while drops + churn stay low is
-    the healthy shape."""
+    the healthy shape.
+
+    De-duplicated across the two event sources: upgrades + churn are
+    counted from the Stripe webhook (source=stripe, authoritative for
+    money), trial_drops from the app (a lapsed free trial never hits
+    Stripe). Without this filter every paid transition would double-count
+    (app emits a laggy client copy of the same flip)."""
     return {
         "kind": "TrendsQuery",
         "series": [_series("plan_changed", "Plan changes")],
         "breakdownFilter": {"breakdown": "kind", "breakdown_type": "event"},
+        "properties": [{
+            "type": "hogql",
+            "key": "properties.source = 'stripe' OR properties.kind = 'trial_drop'",
+        }],
         "interval": "day",
         "trendsFilter": {"display": "ActionsLineGraph"},
         "dateRange": {"date_from": "-90d"},
@@ -515,7 +542,7 @@ def non_payers_by_backend() -> dict:
             properties=[{"key": "plan", "value": "pro",
                          "operator": "is_not", "type": "event"}],
         )],
-        "breakdownFilter": {"breakdown": "voice_backend", "breakdown_type": "event"},
+        "breakdownFilter": dict(BACKEND_BREAKDOWN),
         "interval": "day",
         "trendsFilter": {"display": "ActionsBarValue"},
         "dateRange": {"date_from": "-30d"},
@@ -530,7 +557,7 @@ def voice_backend_mix() -> dict:
     return {
         "kind": "TrendsQuery",
         "series": [_series("app_launched", "Installs", math="dau")],
-        "breakdownFilter": {"breakdown": "voice_backend", "breakdown_type": "event"},
+        "breakdownFilter": dict(BACKEND_BREAKDOWN),
         "interval": "day",
         "trendsFilter": {"display": "ActionsLineGraph"},
         "dateRange": {"date_from": "-30d"},
