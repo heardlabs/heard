@@ -2258,6 +2258,7 @@ class Daemon:
         # This is the make-or-break A/B for the v2 architecture; see
         # plan file Phase 3 step 6 for the kill criteria.
         if harness.is_enabled(cfg):
+            harness_error = False
             try:
                 decision = harness.narrate(
                     req,
@@ -2269,6 +2270,7 @@ class Daemon:
                 )
             except Exception:
                 decision = None
+                harness_error = True
             if decision is not None:
                 # Tier-1 think/speak: surface the silent reasoning stream
                 # so it's inspectable in the log. It is NEVER spoken —
@@ -2352,6 +2354,20 @@ class Daemon:
                 )
                 return
             _log("event_harness_punt", kind=kind, tag=tag)
+            # Track v2→v1 fallback. The harness (v2) returned None — either
+            # a clean punt (safety net) or it threw — so this event drops
+            # to the v1 path. reason distinguishes the two; the rate of
+            # this vs narration_spoken via=harness is the v2 health signal.
+            try:
+                from heard import analytics
+                analytics.capture("harness_fallback", {
+                    "kind": kind,
+                    "tag": tag,
+                    "persona": persona.name,
+                    "reason": "error" if harness_error else "punt",
+                })
+            except Exception:
+                pass
         # --- end harness path; fall through to v1 below ---
 
         if kind == "tool_pre":

@@ -462,6 +462,23 @@ def wizard_abandonment_by_step() -> dict:
     }
 
 
+def harness_fallbacks() -> dict:
+    """v2 harness → v1 fallbacks per day, split by reason: `punt` (the
+    harness cleanly returned None — the safety net) vs `error` (it threw).
+    Read against narration_spoken via=harness: a rising fallback share
+    means v2 is punting/erroring instead of narrating — the A/B kill
+    signal for the harness architecture. A spike in `error` specifically
+    is a v2 regression to chase."""
+    return {
+        "kind": "TrendsQuery",
+        "series": [_series("harness_fallback", "v2→v1 fallbacks")],
+        "breakdownFilter": {"breakdown": "reason", "breakdown_type": "event"},
+        "interval": "day",
+        "trendsFilter": {"display": "ActionsBar"},
+        "dateRange": {"date_from": "-30d"},
+    }
+
+
 # --- Revenue & lifecycle insights ----------------------------------------
 #
 # Built on the lifecycle events fired from the app: `trial_started`
@@ -732,6 +749,8 @@ def main() -> int:
          "Daily synth_failed broken down by app_version — catches release regressions. Excludes dev/CI + maintainer."),
         ("Updates Landed", lambda: _exclude_internal(updates_landed()),
          "Daily app_updated by to_version — how fast users roll forward. Excludes dev/CI."),
+        ("Harness v2 → v1 Fallbacks", lambda: _exclude_internal(harness_fallbacks()),
+         "Daily count of v2 harness punts/errors that fell back to v1. The A/B kill signal. Excludes dev/CI."),
         ("Downloads by Source", downloads_by_source,
          "Daily download_started events from heard.dev/download/<source> — install attribution."),
         ("Daily Website Visitors", website_daily_visitors,
