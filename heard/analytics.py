@@ -173,6 +173,49 @@ def _post(payload: dict, endpoint: str) -> None:
         pass
 
 
+_platform_cache: dict[str, Any] | None = None
+
+
+def _platform_props() -> dict[str, Any]:
+    """Light, non-invasive device enrichment attached to every event:
+    macOS version, CPU arch, and locale. Useful for the support matrix
+    (which macOS versions to keep supporting), clustering crashes / synth
+    failures by OS, and an i18n signal once non-English users show up.
+
+    Deliberately NOT here: precise location, hardware fingerprints, or
+    anything that tracks the person — that's off-brand for Heard. Coarse
+    country comes from PostHog's IP geoip server-side, not from us.
+
+    Computed once and cached — none of it changes within a daemon run."""
+    global _platform_cache
+    if _platform_cache is not None:
+        return _platform_cache
+    props: dict[str, Any] = {}
+    try:
+        import platform
+        mac_ver = platform.mac_ver()[0]
+        if mac_ver:
+            props["os_version"] = f"macOS {mac_ver}"
+        arch = platform.machine()
+        if arch:
+            props["arch"] = arch
+    except Exception:
+        pass
+    try:
+        import locale as _locale
+        lang = (_locale.getlocale()[0] or "").strip()
+        if not lang:
+            # getlocale() is often (None, None) until setlocale is called;
+            # fall back to the environment-derived default.
+            lang = (_locale.getdefaultlocale()[0] or "").strip()  # noqa: PLW1505
+        if lang:
+            props["locale"] = lang
+    except Exception:
+        pass
+    _platform_cache = props
+    return props
+
+
 def _base_properties() -> dict[str, Any]:
     """Properties attached to every event. Bumped here once when we add
     cross-cutting fields (e.g. mac_version) so we don't have to thread
@@ -188,6 +231,7 @@ def _base_properties() -> dict[str, Any]:
         "persona": (cfg.get("persona") or "jarvis"),
         "verbosity": (cfg.get("verbosity") or "normal"),
         "plan": (cfg.get("heard_plan") or "free"),
+        **_platform_props(),
     }
 
 
