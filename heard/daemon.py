@@ -361,6 +361,28 @@ class Daemon:
                     config.set_value("last_boot_version", _app_version)
             except Exception:
                 pass
+            # Backfill the PostHog person's email_hash on every boot for any
+            # signed-in install. identify() only fired during the web sign-in
+            # handoff (url_scheme); installs that got their token another way
+            # (install-code claim, comp/maintainer) have heard_email in config
+            # but never stamped email_hash — so the maintainer / test-account
+            # filter can't exclude them and they pollute "real user" numbers.
+            # $identify is idempotent; re-asserting it keeps person props
+            # (plan, email_hash) in lockstep with the account.
+            _email = (self.cfg.get("heard_email") or "").strip()
+            if _email:
+                from hashlib import sha256
+                _uid = (self.cfg.get("heard_user_id") or "").strip() \
+                    or sha256(_email.lower().encode()).hexdigest()
+                if not (self.cfg.get("heard_user_id") or "").strip():
+                    try:
+                        config.set_value("heard_user_id", _uid)
+                    except Exception:
+                        pass
+                analytics.identify(
+                    _uid, email=_email,
+                    properties={"plan": (self.cfg.get("heard_plan") or "free")},
+                )
         except Exception:
             pass
         # Architecture step 6c — warm the harness prompt cache so the
