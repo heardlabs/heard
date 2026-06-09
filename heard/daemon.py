@@ -2384,15 +2384,12 @@ class Daemon:
                 )
                 return
 
-        # --- Layer 5 — Harness NARRATE prototype (Phase 3 step 6). ---
-        # Driven by cfg["harness_enabled"]; off by default → zero impact
-        # on the v1 path. When on, the harness gets first shot at every
-        # incoming event. Three outcomes:
-        #   - None              → fall through to v1 (safety net)
+        # --- Layer 5 — Harness (the mandatory narration brain). ---
+        # The harness gets first shot at every prose/final event (tools
+        # fast-pathed above). Three outcomes:
+        #   - None              → no-LLM floor below (v1 sunset, 2026-06)
         #   - speak=False       → harness chose silence; suppress
         #   - speak=True        → enqueue harness.text directly
-        # This is the make-or-break A/B for the v2 architecture; see
-        # plan file Phase 3 step 6 for the kill criteria.
         if harness.is_enabled(cfg):
             harness_error = False
             try:
