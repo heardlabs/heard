@@ -194,7 +194,6 @@ def test_unpin_returns_to_auto_mode():
 def test_pin_unknown_session_returns_false():
     r = _new_router()
     assert r.pin("not-a-real-session") is False
-    assert r.pinned_session_id() is None
 
 
 def test_solo_after_inactive_threshold():

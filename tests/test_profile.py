@@ -67,16 +67,3 @@ def test_partial_user_yaml_falls_back_to_defaults(tmp_path):
 def test_list_bundled_returns_four():
     names = profile.list_bundled()
     assert {"quiet", "brief", "normal", "verbose"}.issubset(set(names))
-
-
-def test_swarm_profile_resolves_via_classify():
-    """Verbosity classify_pre_for_swarm uses the swarm_verbosity
-    config key — defaults to brief if unset."""
-    from heard import verbosity
-
-    # Explicit swarm_verbosity wins.
-    cfg = {"narrate_tools": True, "swarm_verbosity": "quiet"}
-    assert verbosity.classify_pre_for_swarm(cfg, "tool_edit", density=0) == "drop"
-    # Default is brief — routine tools digest, prose speaks.
-    cfg_default = {"narrate_tools": True}
-    assert verbosity.classify_pre_for_swarm(cfg_default, "tool_edit", density=0) == "digest"

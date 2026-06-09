@@ -591,30 +591,6 @@ def extract_assistant_texts_from(
     return out, end
 
 
-def extract_assistant_texts(transcript_path: str) -> list[str]:
-    """Full-file read (offset 0). Kept for back-compat; new callers
-    should prefer the offset-aware version above."""
-    out: list[str] = []
-    try:
-        with open(transcript_path, encoding="utf-8") as f:
-            for line in f:
-                try:
-                    msg = json.loads(line)
-                except Exception:
-                    continue
-                if msg.get("type") != "assistant":
-                    continue
-                for c in msg.get("message", {}).get("content", []):
-                    if c.get("type") != "text":
-                        continue
-                    t = (c.get("text") or "").strip()
-                    if t:
-                        out.append(t)
-    except Exception:
-        pass
-    return out
-
-
 def _session_from_data(data: dict) -> dict:
     return {
         "id": data.get("session_id") or "default",

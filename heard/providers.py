@@ -25,7 +25,6 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
-from typing import Protocol
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
@@ -38,15 +37,6 @@ _CLAUDE_PATH_FALLBACKS = (
     os.path.expanduser("~/.volta/bin/claude"),
     os.path.expanduser("~/.local/bin/claude"),
 )
-
-
-class NarrationProvider(Protocol):
-    name: str
-
-    def rewrite(
-        self, system: str, user: str, max_tokens: int, timeout: float
-    ) -> str | None:
-        ...
 
 
 class AnthropicAPIProvider:
@@ -207,11 +197,3 @@ def _find_claude_binary() -> str | None:
         if os.path.isfile(cand) and os.access(cand, os.X_OK):
             return cand
     return None
-
-
-def get_provider(api_key: str = "") -> NarrationProvider | None:
-    """API if a key is set, else CLI if `claude` is on disk, else None."""
-    if (api_key or "").strip():
-        return AnthropicAPIProvider(api_key=api_key.strip())
-    binary = _find_claude_binary()
-    return ClaudeCLIProvider(binary=binary) if binary else None

@@ -304,10 +304,6 @@ _PRO_PERSONAS = frozenset({"atlas", "friday"})
 _PERSONA_ORDER = ("jarvis", "aria", "friday", "atlas")
 
 
-def is_pro_persona(name: str) -> bool:
-    return name in _PRO_PERSONAS
-
-
 def list_bundled(plan: str = "pro") -> list[str]:
     """Return persona names available to the given plan, in display
     order (jarvis, aria, friday, atlas). Pro/trial get the full
