@@ -1,9 +1,18 @@
-"""Update-availability poller.
+"""Update poller + in-app install pipeline.
 
-Polls GitHub Releases on a schedule and reports newer stable versions.
-Phase C of the auto-update plan: notification-only — we don't replace
-the running app. The polling infrastructure here becomes the engine
-for Sparkle (or equivalent) when the app is signed/notarized.
+Polls GitHub Releases on a schedule (`start_periodic_check`) and reports
+newer stable versions, AND ships the full one-click in-app updater:
+`download_zip` → `unzip_app` → `stage_and_swap` (a detached helper that
+waits for our PID to exit, swaps the bundle in /Applications, and
+relaunches). The menu-bar item "↑ Update to vX.Y.Z →" drives it from
+`ui.on_update_clicked`; the browser-download flow is only a fallback for
+old releases whose payload carried no zip asset URL.
+
+The update is one-CLICK, not zero-click — the user opens the menu and
+hits Update; we never swap the running app without that action. There is
+no silent/automatic install (deliberately — see the
+notarization/Gatekeeper caveat). If that changes, wire the periodic
+check to invoke the same download→swap pipeline.
 
 Design notes:
 
