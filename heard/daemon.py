@@ -2187,6 +2187,41 @@ class Daemon:
         recent.append((sig, now))
         return is_dup
 
+    # A final shorter than this is already spoken-friendly — read it as-is
+    # on the floor. Longer means it's the agent's raw closing text (the
+    # "verbatim wall"); the no-LLM floor can't summarize it, so it swaps in
+    # a short canned line instead of reading the wall.
+    _FLOOR_FINAL_VERBATIM_MAX = 240
+
+    def _floor_text(self, kind: str, neutral: str, persona) -> str:
+        """No-LLM fallback for an event the harness punted on and no LLM
+        could summarize. The honest floor by event kind:
+
+        - ``final``  → short finals read as-is; long ones (the verbatim
+          wall) are replaced with a canned "go look" line. A final can't
+          be summarized without an LLM, so we never read the raw wall.
+        - ``intermediate`` → dropped. A mid-stream prose blip the brain
+          couldn't shape isn't worth a canned line; the next event narrates.
+        - everything else (tool-ish: repeat edits, long-running tags that
+          reached the harness) → the neutral TEMPLATE, which is already a
+          clean one-liner ("Editing auth.py"), never verbatim.
+        """
+        addr = getattr(persona, "address", "") or ""
+
+        def _with_addr(text: str) -> str:
+            t = text.rstrip(".")
+            if addr and not t.lower().endswith(addr.lower()):
+                return f"{t}, {addr}."
+            return f"{t}."
+
+        if kind == "final":
+            if neutral and len(neutral) <= self._FLOOR_FINAL_VERBATIM_MAX:
+                return _with_addr(neutral)
+            return _with_addr("That's done — the details are in your terminal")
+        if kind == "intermediate":
+            return ""
+        return neutral
+
     def _handle_event(self, req: dict) -> None:
         kind = req.get("kind") or ""
         neutral = (req.get("neutral") or "").strip()
@@ -2481,10 +2516,10 @@ class Daemon:
                 )
                 return
             _log("event_harness_punt", kind=kind, tag=tag)
-            # Track v2→v1 fallback. The harness (v2) returned None — either
-            # a clean punt (safety net) or it threw — so this event drops
-            # to the v1 path. reason distinguishes the two; the rate of
-            # this vs narration_spoken via=harness is the v2 health signal.
+            # Track v2→floor fallback. The harness (v2) returned None —
+            # either a clean punt (safety net) or it threw. reason
+            # distinguishes the two; the rate of this vs narration_spoken
+            # via=harness is the v2 health signal.
             try:
                 from heard import analytics
                 analytics.capture("harness_fallback", {
@@ -2495,7 +2530,32 @@ class Daemon:
                 })
             except Exception:
                 pass
-        # --- end harness path; fall through to v1 below ---
+            # --- v2 floor — graceful no-LLM fallback. NEVER read a final
+            # verbatim; a punted final gets a short canned line, a punted
+            # mid-stream blip is dropped, tool-ish events keep their clean
+            # template. This replaces the old v1 rewrite fallback, whose
+            # template→neutral chain read the raw wall when Haiku was down.
+            floor = self._floor_text(kind, neutral, persona)
+            if not floor:
+                _log("event_drop", kind=kind, tag=tag, reason="floor_drop")
+                return
+            info = self.router._sessions.get(session_id)  # noqa: SLF001
+            history_meta = {
+                "kind": kind, "tag": tag, "neutral": neutral,
+                "profile": cfg.get("verbosity", "normal"),
+                "repo_name": getattr(info, "repo_name", "") or "",
+                "cwd": cwd or "", "via": "floor",
+            }
+            _log("event_speak", kind=kind, tag=tag, persona=persona.name,
+                 chars=len(floor), via="floor")
+            self._start_speech(
+                floor, cfg=cfg, persona=persona, session_id=session_id,
+                history_meta=history_meta, priority=(kind == "intermediate"),
+            )
+            return
+        # --- end harness path. Below: v1 path, reached only when the
+        # harness is disabled (config). Slated for deletion once the
+        # brain is mandatory. ---
 
         if kind == "tool_pre":
             density = self.sessions.tool_density(session_id)
