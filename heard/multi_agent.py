@@ -324,9 +324,17 @@ _TAG_TO_VERB = {
 }
 
 
-def _format_session_summary(info: SessionInfo, events: list[dict[str, Any]]) -> str | None:
+def _format_session_summary(
+    info: SessionInfo, events: list[dict[str, Any]], include_label: bool = True
+) -> str | None:
     """Per-session line for the digest. "Api: 5 edits, ran the tests."
-    Returns None if no events count toward the summary."""
+    Returns None if no events count toward the summary.
+
+    ``include_label`` prefixes the repo label ("Api: …") — needed in
+    swarm to disambiguate which agent the summary is about, but pure
+    noise in a solo session where there's only one agent. Solo callers
+    pass False so the listener hears "3 reads, a search." not
+    "Heard: 3 reads, a search." every burst."""
     by_verb: dict[str, int] = {}
     for e in events:
         verb = _TAG_TO_VERB.get(e.get("tag", ""), "operation")
@@ -339,12 +347,16 @@ def _format_session_summary(info: SessionInfo, events: list[dict[str, Any]]) -> 
             parts.append(f"a {verb}")
         else:
             parts.append(f"{count} {verb}s")
+    body = ", ".join(parts)
+    if not include_label:
+        return f"{body[:1].upper()}{body[1:]}."
     label = _label_for(info).capitalize()
-    return f"{label}: {', '.join(parts)}."
+    return f"{label}: {body}."
 
 
 def format_project_summary(
-    label: str, events: list[dict[str, Any]], member_count: int = 1
+    label: str, events: list[dict[str, Any]], member_count: int = 1,
+    include_label: bool = True,
 ) -> str | None:
     """Aggregated tag-count summary for a project's drain — pools events
     from every session in the project so multiple agents working in
@@ -372,7 +384,10 @@ def format_project_summary(
     tail = ""
     if member_count >= 2:
         tail = f" across {_count_word(member_count)} agents"
-    return f"{label.capitalize()}: {', '.join(parts)}{tail}."
+    body = ", ".join(parts)
+    if not include_label:
+        return f"{body[:1].upper()}{body[1:]}{tail}."
+    return f"{label.capitalize()}: {body}{tail}."
 
 
 def _count_word(n: int) -> str:
@@ -801,13 +816,18 @@ class MultiAgentRouter:
                     info.pending_digest.clear()
             return out
 
-    def drain_session_summary(self, session_id: str) -> str | None:
+    def drain_session_summary(
+        self, session_id: str, include_label: bool = True
+    ) -> str | None:
         """Drain ONE session's pending digest and format it as a
         spoken summary. Used by the daemon when intermediate prose
         arrives — we play the tool summary first ("3 edits, ran the
         tests"), then the prose ("OK, all green"), so the user gets
         a coherent narrative instead of a wall of "editing X.py.
-        editing Y.py..." preceding the prose."""
+        editing Y.py..." preceding the prose.
+
+        ``include_label`` is forwarded to ``_format_session_summary`` —
+        solo callers pass False to drop the redundant repo prefix."""
         with self._lock:
             info = self._sessions.get(session_id)
             if info is None or not info.pending_digest:
@@ -816,7 +836,7 @@ class MultiAgentRouter:
             info.pending_digest.clear()
         # _format_session_summary is module-level, takes both args.
         # Call it OUTSIDE the lock — pure function, no shared state.
-        return _format_session_summary(info, events)
+        return _format_session_summary(info, events, include_label=include_label)
 
     # --- resume-from-pause helpers ---------------------------------------
     #

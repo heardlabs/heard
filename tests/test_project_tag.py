@@ -39,6 +39,11 @@ def _make_daemon(tmp_path, monkeypatch, cfg_overrides=None):
     from heard.daemon import Daemon
     d = Daemon()
     d.cfg = _load()
+    # The project tag only fires with 2+ active agents (solo has no
+    # ambiguity to resolve). Default the test daemon to a multi-agent
+    # fleet so the switching tests exercise the tag; the solo test
+    # overrides this back to a single agent.
+    d.router.list_active = lambda: ["a", "b"]
     return d
 
 
@@ -56,6 +61,20 @@ def test_first_mention_and_switch_get_tagged(tmp_path, monkeypatch):
     # Back to heard → tagged again (it changed).
     assert d._with_project_tag("Committing.", {"repo_name": "heard"}) == \
         "Now on heard. Committing."
+
+
+def test_solo_never_tags_the_project(tmp_path, monkeypatch):
+    """Single active agent → no "Now on <project>" ever; there's only one
+    project, so naming it every time is the repo-name-noise complaint.
+    The tracker still updates so a later switch into multi-agent tags."""
+    d = _make_daemon(tmp_path, monkeypatch)
+    d.router.list_active = lambda: ["only"]  # solo
+    assert d._with_project_tag("Running tests.", {"repo_name": "heard"}) == \
+        "Running tests."
+    assert d._last_spoken_project == "heard"  # tracker still advanced
+    # Even switching projects stays untagged while solo.
+    assert d._with_project_tag("Deploying.", {"repo_name": "cadence"}) == \
+        "Deploying."
 
 
 def test_no_project_does_not_tag_or_reset(tmp_path, monkeypatch):

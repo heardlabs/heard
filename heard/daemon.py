@@ -285,6 +285,15 @@ class Daemon:
         self._recent_edit_paths: collections.deque[str] = collections.deque(
             maxlen=8,
         )
+        # Per-session recently-spoken tool lines, for consecutive-duplicate
+        # suppression. A burst of reads all render the same template
+        # ("Reading a file.") and a run of greps render "Searching the
+        # codebase." — narrating each one is the robotic-repetition
+        # complaint. We speak the first, then drop identical repeats within
+        # a short window. Keyed by session_id → deque[(text, monotonic)].
+        self._recent_tool_lines: dict[str, collections.deque] = (
+            collections.defaultdict(lambda: collections.deque(maxlen=12))
+        )
         # Per-session mute. Holds the session_ids the user has silenced
         # via /quiet — events from these are observed (state/memory stay
         # complete) but never narrated, until /unquiet. In-memory: a
@@ -684,7 +693,12 @@ class Daemon:
                     # it (fresh start) via the same socket cmd.
                     continue
                 flushes = self.router.collect_project_flushes(auto_voices=auto_voices)
+                # Solo when the whole fleet is one agent on one project —
+                # then the summary skips the repo label ("Read through the
+                # auth flow, tests passed" not "Heard: …").
+                solo_fleet = len(self.router.list_active()) <= 1
                 for pf in flushes:
+                    is_solo = solo_fleet and len(pf.member_session_ids) <= 1
                     # Prefer the LLM-narrative summary ("On the API
                     # project, edited the auth flow across three files;
                     # tests passed"). Falls back to the deterministic
@@ -695,10 +709,13 @@ class Daemon:
                         pf.label,
                         pf.events,
                         member_count=len(pf.member_session_ids),
+                        solo=is_solo,
                     )
                     if not summary:
                         summary = multi_agent_mod.format_project_summary(
-                            pf.label, pf.events, member_count=len(pf.member_session_ids)
+                            pf.label, pf.events,
+                            member_count=len(pf.member_session_ids),
+                            include_label=not is_solo,
                         )
                     if not summary:
                         continue
@@ -1827,6 +1844,15 @@ class Daemon:
         proj = self._project_label(hmeta)
         if not proj:
             return text
+        # Solo (single active agent) → never announce the project. There's
+        # only one; "Now on heard." every time the tracker resets is the
+        # "constantly saying the name of the repo" complaint. The tag earns
+        # its keep only when 2+ agents run in parallel and the listener
+        # genuinely needs to know which one is talking. Still update the
+        # tracker so a later switch into multi-agent is detected correctly.
+        if len(self.router.list_active()) < 2:
+            self._last_spoken_project = proj
+            return text
         if proj != self._last_spoken_project:
             self._last_spoken_project = proj
             _log("project_switch_tag", project=proj)
@@ -2140,6 +2166,27 @@ class Daemon:
 
     # --- event handling -----------------------------------------------------
 
+    # Window within which an identical tool template line is treated as a
+    # repeat and suppressed. Long enough to swallow a tight read/search
+    # burst; short enough that a genuinely new beat 30s later still speaks.
+    _TOOL_DUP_WINDOW_S = 25.0
+
+    def _is_duplicate_tool_line(self, session_id: str, text: str) -> bool:
+        """True if ``text`` was already spoken for this session within
+        ``_TOOL_DUP_WINDOW_S``. Records ``text`` either way so the next
+        repeat is caught. Case/space-insensitive match so trivial
+        formatting differences still de-dupe."""
+        sig = " ".join(text.lower().split())
+        now = time.monotonic()
+        recent = self._recent_tool_lines[session_id]
+        # Drop expired entries from the front-ish (cheap linear scan; the
+        # deque is capped at 12).
+        is_dup = any(
+            s == sig and (now - ts) <= self._TOOL_DUP_WINDOW_S for s, ts in recent
+        )
+        recent.append((sig, now))
+        return is_dup
+
     def _handle_event(self, req: dict) -> None:
         kind = req.get("kind") or ""
         neutral = (req.get("neutral") or "").strip()
@@ -2277,6 +2324,16 @@ class Daemon:
                         return
                 if not neutral:
                     _log("event_drop", kind=kind, tag=tag, reason="fastpath_empty_neutral")
+                    return
+                # Consecutive-duplicate suppression. A run of reads /
+                # searches renders the same template line over and over
+                # ("Reading a file." × 6); speak the first, drop the
+                # echoes within a short window. Tool kinds only — prose
+                # and finals are never deduped this way.
+                if kind in ("tool_pre", "tool_post") and self._is_duplicate_tool_line(
+                    session_id, neutral
+                ):
+                    _log("event_drop", kind=kind, tag=tag, reason="fastpath_dup_tool_line")
                     return
                 info = self.router._sessions.get(session_id)  # noqa: SLF001
                 history_meta = {
@@ -2476,7 +2533,13 @@ class Daemon:
             # prose plays — gives the user a coherent "Made 3 edits,
             # ran tests. OK, all green." narrative instead of stale
             # tool announcements queueing up behind the prose.
-            summary = self.router.drain_session_summary(session_id)
+            # Only prefix the repo label when 2+ agents are active —
+            # in a solo session "Heard: 3 reads" is just noise; the
+            # listener knows which project they're in.
+            multi_active = len(self.router.list_active()) > 1
+            summary = self.router.drain_session_summary(
+                session_id, include_label=multi_active
+            )
             if summary:
                 _log("digest_inline", session=session_id, chars=len(summary))
                 neutral = f"{summary} {neutral}"

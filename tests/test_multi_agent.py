@@ -124,6 +124,23 @@ def test_format_project_summary_marks_multi_agent_aggregation():
     assert "across two agents" in pooled
 
 
+def test_project_summary_drops_repo_label_in_solo():
+    """Solo (include_label=False) summaries narrate the work WITHOUT the
+    repo-name prefix — "constantly saying the name of the repo" was the
+    dogfooding complaint. Multi-agent keeps the label to disambiguate."""
+    events = [
+        {"tag": "tool_bash_read", "ts": 1.0},
+        {"tag": "tool_bash_read", "ts": 2.0},
+        {"tag": "tool_bash_grep_cmd", "ts": 3.0},
+    ]
+    labeled = multi_agent.format_project_summary("api", events, include_label=True)
+    assert labeled.startswith("Api:")
+    solo = multi_agent.format_project_summary("api", events, include_label=False)
+    assert "api" not in solo.lower()
+    assert ":" not in solo  # no "Label:" prefix
+    assert solo.endswith(".")
+
+
 def test_project_flush_idle_drain_aggregates_same_project():
     """Two CC sessions in the same project (same cwd basename) drain
     as one combined summary stream — that's the "project-level

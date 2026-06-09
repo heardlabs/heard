@@ -962,6 +962,28 @@ Rules for this summary:
   no leading "I", no scare quotes.
 """
 
+# Solo variant — one agent, one project, the developer knows exactly
+# which repo they're in. Naming the project every burst is the
+# "constantly saying the name of the repo" complaint, so this drops the
+# label entirely and just narrates the work.
+_PROJECT_SUMMARY_RULES_SOLO = """\
+You're summarising a burst of work one AI coding agent just did, for a
+developer who has stepped away from the keyboard. The output will be
+spoken aloud in the persona's voice as one short status update.
+
+Rules for this summary:
+- Do NOT name the project or repo — there's only one and the developer
+  knows where they are. Just narrate the work.
+- One short sentence, spoken length. ("Read through the auth flow and
+  ran the tests — all green.")
+- Aggregate similar events ("a few edits to the parser", not a list).
+- Name 1-3 files only when it sharpens the picture; otherwise omit.
+- Pass through verbatim test / build / search outcomes if present
+  ("tests passed", "build failed", "no matches").
+- Past tense — the work has happened. No markdown, no bullet lists,
+  no leading "I", no scare quotes.
+"""
+
 
 def _format_events_for_summary(
     label: str, events: list[dict[str, Any]], member_count: int
@@ -969,8 +991,10 @@ def _format_events_for_summary(
     """Bullet-list shape Haiku can scan; prefer the event's neutral
     narration when present (already-natural prose from templates.py),
     fall back to the raw tag so an event with no text still counts."""
-    lines = [
-        f"Project: {label}",
+    lines = []
+    if label:
+        lines.append(f"Project: {label}")
+    lines += [
         f"Agents involved: {member_count}",
         f"Event count: {len(events)}",
         "Events in order:",
@@ -991,6 +1015,7 @@ def summarize_project(
     events: list[dict[str, Any]],
     member_count: int = 1,
     *,
+    solo: bool = False,
     max_tokens: int = HAIKU_MAX_TOKENS * 2,
     timeout: float = HAIKU_TIMEOUT_S,
 ) -> str | None:
@@ -999,16 +1024,20 @@ def summarize_project(
     managed Heard cloud → ``claude -p``), with a digest-shaped prompt
     designed for "one project's chunk of work, rolled up." Returns
     ``None`` when no LLM path is available so the daemon can fall back
-    to the tag-count formatter."""
+    to the tag-count formatter.
+
+    ``solo`` selects the no-project-name rules — used when there's a
+    single agent on a single project, so the summary narrates the work
+    without prefixing the repo label every time."""
     if not events or not _haiku_enabled():
         return None
-    user_msg = _format_events_for_summary(label, events, member_count)
+    user_msg = _format_events_for_summary("" if solo else label, events, member_count)
     full_system = (
         _SHARED_NARRATION_RULES
         + "\n\n"
         + persona.system_prompt
         + "\n\n"
-        + _PROJECT_SUMMARY_RULES
+        + (_PROJECT_SUMMARY_RULES_SOLO if solo else _PROJECT_SUMMARY_RULES)
     )
 
     from heard import providers as _providers
