@@ -47,15 +47,21 @@ def _ev(
 # --- gating --------------------------------------------------------------
 
 
-def test_is_enabled_defaults_false():
-    assert harness.is_enabled({}) is False
-    assert harness.is_enabled({"harness_enabled": False}) is False
+def test_is_enabled_always_true():
+    # The brain is mandatory now — the harness_enabled flag is inert.
+    # Prose/finals always route through the harness; the daemon's no-LLM
+    # floor catches a punt. There is no v1 path to disable into.
+    assert harness.is_enabled({}) is True
+    assert harness.is_enabled({"harness_enabled": False}) is True
     assert harness.is_enabled({"harness_enabled": True}) is True
 
 
-def test_narrate_returns_none_when_disabled():
+def test_narrate_returns_none_when_llm_unreachable():
+    # narrate punts (returns None → daemon floor) when no LLM provider is
+    # reachable — not because of a disable flag (there isn't one anymore).
     reg = AgentStateRegistry()
-    out = harness.narrate(_ev(), cfg={}, persona=_persona(), agent_states=reg)
+    with patch.object(harness.persona_mod, "call_with_prompt", side_effect=Exception("no provider")):
+        out = harness.narrate(_ev(), cfg={}, persona=_persona(), agent_states=reg)
     assert out is None
 
 
@@ -618,16 +624,6 @@ def test_narrate_reads_mode_from_cfg():
         harness.narrate(event, cfg=cfg, persona=_persona(), agent_states=reg)
 
     assert "COMPANION MODE" in captured["system"]
-
-
-def test_warm_cache_noop_when_disabled():
-    """If harness_enabled is False, warm_cache must NOT make an LLM
-    call. Users on v1 path pay nothing for warming."""
-    from unittest.mock import patch
-    cfg = {"harness_enabled": False, "mode": "copilot"}
-    with patch.object(harness.persona_mod, "call_with_prompt") as m:
-        harness.warm_cache(cfg=cfg, persona=_persona())
-    assert m.call_count == 0
 
 
 def test_warm_cache_calls_llm_when_enabled():

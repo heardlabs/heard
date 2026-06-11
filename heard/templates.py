@@ -159,6 +159,54 @@ def _first_token(command: str) -> str:
     return parts[i] if i < len(parts) else ""
 
 
+# First words that are NOT imperative verbs — leave these descriptions
+# alone rather than mangle them ("Quick check…" must not become
+# "Quicking…"). Small, high-frequency stoplist; anything else is treated
+# as a leading verb.
+_NOT_A_LEADING_VERB = frozenset({
+    "a", "an", "the", "quick", "sanity", "full", "final", "one", "two",
+    "all", "both", "no", "first", "second", "double", "re",
+})
+
+
+def _to_gerund(word: str) -> str:
+    """Best-effort present participle of a single imperative verb,
+    preserving the original capitalisation. English gerund morphology is
+    irregular; this covers the common cases (silent-e drop, CVC doubling)
+    and falls back to bare +ing otherwise."""
+    low = word.lower()
+    if low.endswith("ing"):
+        return word
+    if low.endswith("ie"):  # die → dying, tie → tying
+        return word[:-2] + "ying"
+    if low.endswith("e") and not low.endswith(("ee", "oe", "ye")):
+        return word[:-1] + "ing"  # locate → locating, probe → probing
+    # Short CVC verbs double the final consonant: run → running, set →
+    # setting. Restricted to short words so multi-syllable verbs (open,
+    # visit) don't wrongly double.
+    if 2 <= len(low) <= 4:
+        c1, c2 = low[-1], low[-2]
+        if c1 not in "aeiouwxy" and c2 in "aeiou" and (len(low) < 3 or low[-3] not in "aeiou"):
+            return word + c1 + "ing"
+    return word + "ing"  # extract → extracting, verify → verifying
+
+
+def _present_continuous(text: str) -> str:
+    """Turn an imperative intent line ("Locate the sample video") into
+    present continuous ("Locating the sample video"). Only the leading
+    verb is transformed; the rest is untouched. Non-verb openers (per
+    `_NOT_A_LEADING_VERB`) and non-alphabetic first tokens are left as-is."""
+    if not text:
+        return text
+    parts = text.split(" ", 1)
+    first = parts[0]
+    core = first.replace("-", "")
+    if not core.isalpha() or first.lower() in _NOT_A_LEADING_VERB:
+        return text
+    gerund = _to_gerund(first)
+    return gerund + (" " + parts[1] if len(parts) > 1 else "")
+
+
 def _bash_tag_and_text(command: str | None, description: str | None) -> tuple[str, str]:
     cmd = (command or "").strip()
     low = cmd.lower()
@@ -180,9 +228,12 @@ def _bash_tag_and_text(command: str | None, description: str | None) -> tuple[st
 
     # Description (when CC populates it) wins over verb detection —
     # the agent's hand-written intent line is almost always more
-    # specific than what we'd derive from the command verb alone.
+    # specific than what we'd derive from the command verb alone. CC
+    # writes these in the imperative ("Locate sample video", "Probe
+    # specs"); narration wants present continuous ("Locating sample
+    # video", "Probing specs") since the work is in flight.
     if description:
-        return "tool_bash_generic", description.rstrip(".") + "."
+        return "tool_bash_generic", _present_continuous(description.rstrip(".")) + "."
 
     # No description: extract intent from the command's first verb so
     # the user hears "Searching the codebase." instead of the dreaded

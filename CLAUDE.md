@@ -24,12 +24,64 @@ CC tool call
   ↓ stdin: {"hook_event_name": "PreToolUse", ...}
 heard.client.send_event() → Unix socket
   ↓
-Heard.app (daemon thread)
+Heard.app (daemon thread) — _handle_event routes by kind:
+  ├─ tool_pre / tool_post  → fast-path templates (no LLM)   → speech queue
+  ├─ prose / finals        → harness (the brain, Layer 5)   → speech queue
+  └─ harness punts (None)  → no-LLM floor (canned/template) → speech queue
   ↓
-verbosity gate → multi_agent router → persona rewrite → speech queue → afplay
-  ↓
-history.append (after successful play)
+afplay → history.append (after successful play)
 ```
+
+**v1 is sunset (2026-06).** The brain is mandatory — there is no longer a
+`verbosity → multi_agent → persona.rewrite` fallback chain in the live path.
+See "v1 sunset" below for what was removed and what corpse code remains.
+
+## v1 sunset (2026-06)
+
+"v1" was the original narration pipeline: a per-event chain of
+`verbosity.classify → multi_agent.route → persona.rewrite` (a Haiku
+rewrite of the template "neutral" text), with a raw-template floor under
+it. The harness brain (Layer 5) started as an opt-in A/B *over* v1. As of
+this milestone the brain is **mandatory** and v1 is **removed from the
+live path**. There are now exactly three lanes (see the process diagram):
+
+1. **Brain** (`harness.narrate`) — prose + finals.
+2. **Fast-path templates** — tool actions ("Editing auth.py"); never the
+   brain (latency/cost). Cheap, no LLM.
+3. **No-LLM floor** (`Daemon._floor_text`) — when the brain punts (LLM
+   unreachable: managed daily cap, outage, no provider). Tools keep their
+   clean template; a **final** gets a short canned line ("That's done —
+   the details are in your terminal") rather than its raw text read
+   **verbatim** (the old "it read everything" bug); mid-stream prose is
+   dropped. A final genuinely can't be summarised without an LLM, so the
+   honest floor is "go look," not the wall.
+
+**What was deleted:** the ~164-line v1 branch in `Daemon._handle_event`
+(verbosity re-gate, `multi_agent.classify` routing, the `persona.rewrite`
+call, label-prefix application, `via=v1` analytics) and
+`_cap_runaway_prose` (the v1 verbatim-wall truncation cap).
+
+**Corpse code still in the tree (do NOT call, do NOT extend):**
+
+- `persona.rewrite()` + `_byok_/_managed_/_cli_haiku_rewrite` +
+  `_build_user_message` — the v1 Haiku-rewrite layer. Orphaned; kept only
+  because removing it means reworking ~10 persona tests. A future cleanup
+  pass should delete it. Still exercised by `tests/test_persona.py` and
+  `tests/test_prompt_intent.py` in isolation, which is the *only* reason
+  those call sites exist.
+
+**Still shared, NOT v1 (keep):** `templates.py` (the brain eats its
+"neutral" output as input; the fast-path speaks it), `verbosity.py` (the
+fast-path's tool gates), `multi_agent.py` (voices, digest, burst summaries,
+project routing — used by the fast-path and the digest tick). These look
+like v1 but are load-bearing for the live path.
+
+**Why keep a floor at all if the brain is mandatory?** The brain is an LLM
+call over the network — it has real failure modes (daily cap, outage, no
+provider). The floor (and the local-Kokoro TTS option) is what keeps Heard
+from going silent, which for an ambient tool reads as "broken." The fix was
+never "delete the safety net" — it was "make the net rare and make it sound
+fine when it fires."
 
 ## Module map
 
@@ -41,7 +93,7 @@ having no doc — future sessions trust this table.
 
 | File | Responsibility |
 |---|---|
-| `heard/daemon.py` | Long-running daemon. Owns the speech queue, hotkey listener, audio monitor, multi-agent router instance, history append, periodic digest timer. Also reads `config.silenced` on every event so "Pause Heard" (indefinite mute) survives quit + respawn. **Utterance tracking:** `_last_utterance_id` (UUID minted per speak request, stamped onto history record + retained so feedback can attach), `_last_utterance_finished_at` (monotonic seconds, lets `_record_implicit_feedback` decide if a pause/mic event falls within the correlation window), `_implicit_signals_recorded` (dedup set keyed by `(utterance_id, source)`, cleared on new utterance). **Implicit signal capture (Phase 2 step 3):** `_record_implicit_feedback(source, kind, defect_category)` wired into three points — after `proc.wait()` in `_speak` fires `afplay_nonzero` defects when afplay exits non-zero without us killing it, `_on_mic_active` fires `mic_collide` defect when speaking, `_do_mute` fires `pause_<source>` preference signal for user-initiated mutes. `IMPLICIT_WINDOW_S=5.0` gates preference correlation. Socket commands dispatched in `_handle()`: `ping`, `status`, `pin`, `unpin`, `reload`, `request_accessibility`, `stop`, `mute`, `unmute`, `resume_intent`, `feedback` (Phase 2 — writes preference via `history.append_feedback`), `report_defect` (Phase 2 — writes via `defects.append` with auto-attached tech_context: backend, voice, speed, persona, mic state, last_error), `ask` (Layer 4 Q&A — `project_memory.answer`, optional `speak`), `recap` (Layer 4 pull — `project_memory.recap`, question-less "catch me up" that re-summarizes recent project activity and speaks it; default `speak=True`), `mute_session` / `unmute_session` (per-session silence — adds/removes a `session_id` in the in-memory `_muted_sessions` set; muted sessions are still observed for state/memory but never narrated; mute also flushes that session's queued items. Driven by `/quiet` + `/unquiet` user slash commands), `event`. |
+| `heard/daemon.py` | Long-running daemon. Owns the speech queue, hotkey listener, audio monitor, multi-agent router instance, history append, periodic digest timer. **Narration routing (`_handle_event`):** tool events → fast-path templates; prose/finals → `harness.narrate`; harness punt → **`_floor_text` (the no-LLM v2 floor — see "v1 sunset")**. **`_is_duplicate_tool_line`** suppresses consecutive identical tool lines ("Reading a file." ×6 → ×1, `_TOOL_DUP_WINDOW_S=25`). Solo sessions (`router.list_active() < 2`) drop the repo-label prefix from digest summaries and skip the "Now on \<project\>" tag (`_with_project_tag`) — both are multi-agent-only disambiguation. Also reads `config.silenced` on every event so "Pause Heard" (indefinite mute) survives quit + respawn. **Utterance tracking:** `_last_utterance_id` (UUID minted per speak request, stamped onto history record + retained so feedback can attach), `_last_utterance_finished_at` (monotonic seconds, lets `_record_implicit_feedback` decide if a pause/mic event falls within the correlation window), `_implicit_signals_recorded` (dedup set keyed by `(utterance_id, source)`, cleared on new utterance). **Implicit signal capture (Phase 2 step 3):** `_record_implicit_feedback(source, kind, defect_category)` wired into three points — after `proc.wait()` in `_speak` fires `afplay_nonzero` defects when afplay exits non-zero without us killing it, `_on_mic_active` fires `mic_collide` defect when speaking, `_do_mute` fires `pause_<source>` preference signal for user-initiated mutes. `IMPLICIT_WINDOW_S=5.0` gates preference correlation. Socket commands dispatched in `_handle()`: `ping`, `status`, `pin`, `unpin`, `reload`, `request_accessibility`, `stop`, `mute`, `unmute`, `resume_intent`, `feedback` (Phase 2 — writes preference via `history.append_feedback`), `report_defect` (Phase 2 — writes via `defects.append` with auto-attached tech_context: backend, voice, speed, persona, mic state, last_error), `ask` (Layer 4 Q&A — `project_memory.answer`, optional `speak`), `recap` (Layer 4 pull — `project_memory.recap`, question-less "catch me up" that re-summarizes recent project activity and speaks it; default `speak=True`), `mute_session` / `unmute_session` (per-session silence — adds/removes a `session_id` in the in-memory `_muted_sessions` set; muted sessions are still observed for state/memory but never narrated; mute also flushes that session's queued items. Driven by `/quiet` + `/unquiet` user slash commands), `event`. |
 | `heard/client.py` | Hook-side helpers: spawn the daemon if needed, send events / status / pin commands over the Unix socket. Six `handle_cc_*` / `handle_codex_*` event handlers (CC ↔ Codex pairs are near-duplicates — collapse candidate; the post-tool pair is byte-identical). |
 | `heard/hook.py` | Entry-point invoked by the agent's hook command. Routes to `client.handle_cc_*` / `client.handle_codex_*`. |
 | `heard/wrapper.py` | `heard run <cmd> [args...]` — universal terminal wrapper. Spawns an agent, tees its stdout, and synthesizes events for agents without a native hook surface. |
@@ -50,10 +102,10 @@ having no doc — future sessions trust this table.
 | `heard/session.py` | In-memory per-session state (id + cwd + timestamps) held by the daemon. Keyed by transcript path. Smaller / older bookkeeping; the multi-agent router relies on it. Sibling to `agent_state.py` (richer scoreboard). |
 | `heard/agent_state.py` | **Layer 2 — Agent State (the "scoreboard").** Per-agent record with facts (current_tool, last_tool, last_tool_duration, files_touched, error_count, recent_output_tokens, last_user_input_at) + cheap heuristic hints (`response_shape_hint`: short-execution/long-deliberation/mixed; `salience_hint`: active-decision/routine/blocked). **Boundary rule: never an LLM, never a decision** — if it can be computed by a Python function from raw event data, it's Layer 2; otherwise it's Layer 5. `AgentStateRegistry` is the daemon-owned instance; `observe(event)` updates state from one event payload; `summary()` returns the active-agent snapshot the daemon publishes in its status reply. Read by `heard status` and by the harness on every meaningful event. |
 | `heard/working_memory.py` | **Layer 3 — Working Memory (Phase 3 step 7).** Short rolling prose summary of "what's going on right now" across the active agents. Two paths: (a) hot-path `observe(event)` appends to a small ring buffer (cap `EVENT_BUFFER_KEEP=40`); (b) background compressor thread (started by daemon) runs every ~5s and calls `maybe_compress()` — gates on `COMPRESS_TICK_S=30` elapsed OR `COMPRESS_NEW_EVENT_THRESHOLD=12` new events since last compression. Compression dispatches via `persona.call_with_prompt(log_path_label="wm_compress")` with the previous prose + recent events + Agent State summary as input; new prose atomic-swaps the snapshot under `_state_lock` so `snapshot()` always returns a consistent string in O(1). **Stale-tolerant by design:** failed compression / "(idle)" / empty response do NOT bash the previous good summary — the harness keeps reading whatever was there. Daemon starts the compressor in `__init__` and stops it on `shutdown()`. |
-| `heard/harness.py` | **Layer 5 — Harness Agent (NARRATE-only prototype, Phase 3 step 6).** The make-or-break A/B for the v2 architecture. Gated by `cfg["harness_enabled"]` (off by default — zero impact on v1 path). When on, `narrate(event, cfg, persona, agent_states, working_memory)` builds a cached system block (persona + cross-persona rules + `_HARNESS_INSTRUCTION_BLOCK` + prefs stub) + dynamic user message (rolling-summary stub + active-agent snapshot ranked by salience + current event), dispatches via `persona.call_with_prompt` (uses prompt caching + observability), and returns a `HarnessDecision`. Three outcomes: `None` → daemon falls back to v1 (safety net); `speak=False` → harness chose silence, daemon suppresses; `speak=True` → daemon enqueues `decision.text` directly, bypassing v1. Working Memory is `""` for now — Phase 3 step 7 will fill in. `MAX_AGENTS_IN_PROMPT=8` caps the dynamic prefix. Prompt assembly is pure (`_build_system_text`, `_build_user_message`, `_rank_agents_by_salience`, `_render_event_compact`) so it's unit-testable without the LLM. |
+| `heard/harness.py` | **Layer 5 — Harness Agent. The mandatory narration brain** (v1 sunset, 2026-06). `is_enabled()` now always returns True — the old `cfg["harness_enabled"]` A/B flag is inert. `narrate(event, cfg, persona, agent_states, working_memory)` builds a cached system block (persona + cross-persona rules + `_HARNESS_INSTRUCTION_BLOCK` + prefs stub) + dynamic user message (rolling-summary + active-agent snapshot ranked by salience + current event), dispatches via `persona.call_with_prompt` (prompt caching + observability, **one retry on a transient blip**), and returns a `HarnessDecision`. Three outcomes: `None` → **daemon's no-LLM floor** (NOT v1 — that's gone); `speak=False` → harness chose silence; `speak=True` → daemon enqueues `decision.text`. `should_use_fast_path()` decides which events skip the brain (tool_pre/tool_post → templates; prose/finals/repeat-edits/cross-agent → brain). `MAX_AGENTS_IN_PROMPT=8` caps the dynamic prefix. Prompt assembly is pure (`_build_system_text`, `_build_user_message`, `_rank_agents_by_salience`, `_render_event_compact`) so it's unit-testable without the LLM. |
 | `heard/profile.py` + `heard/profiles/*.yaml` | Verbosity profiles (quiet / brief / normal / verbose). Five dimensions per profile: `pre_tool`, `post_success`, `prose`, `final_budget`, `burst_threshold`. User dir overrides bundled. |
 | `heard/verbosity.py` | Three-way classifier: `classify_pre` → `speak/drop/digest`. Failures + questions always pierce. Long-running tags (`tool_bash_test` etc.) pierce even at quiet/digest. |
-| `heard/persona.py` | Persona load + Haiku rewrite dispatcher. `_SHARED_NARRATION_RULES` is the cross-persona framing every Haiku call gets. `_build_user_message` adds tense rules per event_kind. Three rewrite paths live here today: `_byok_haiku_rewrite` (BYOK Anthropic), `_managed_haiku_rewrite` (Heard cloud), `_cli_haiku_rewrite` (`claude -p` fallback). Model: `claude-haiku-4-5-20251001`. Dispatcher should eventually move into `heard/providers.py`. **Prompt caching:** BYOK + managed paths wrap the system block in `cache_control: ephemeral` (no-op below the 2048-token Haiku threshold; activates when the harness pushes past it). `_log_haiku_cache_usage(msg, path)` logs `haiku_cache event=... input=N cache_read=N cache_write=N` so the step-6 A/B has real cache observability. **`call_with_prompt(system_text, user_msg, *, max_tokens, timeout_s, log_path_label)`** is the public helper Layer 5 uses to dispatch its own (system, user) prompt pair without going through the event-rewrite shape. BYOK Anthropic → managed proxy ladder only (no OpenAI / CLI fallback inside) since the harness prototype wants a deterministic call path. |
+| `heard/persona.py` | Persona load + LLM dispatch. `_SHARED_NARRATION_RULES` is the cross-persona framing. **`call_with_prompt(...)` is the live entry point** — the harness brain (Layer 5) and `summarize_project` (burst digests) both dispatch through it. **`rewrite(...)` and its `_byok_/_managed_/_cli_haiku_rewrite` helpers are ORPHANED (v1 sunset, 2026-06)** — the per-event Haiku-rewrite path the daemon's deleted v1 branch used to call. Kept as dead code for now (removing them means reworking ~10 persona tests); they are NOT in any live narration path. Don't add new callers. Model: `claude-haiku-4-5-20251001`. **Prompt caching:** the managed/BYOK paths wrap the system block in `cache_control: ephemeral`; `_log_haiku_cache_usage` logs `haiku_cache event=... input=N cache_read=N cache_write=N`. **Prompt caching:** BYOK + managed paths wrap the system block in `cache_control: ephemeral` (no-op below the 2048-token Haiku threshold; activates when the harness pushes past it). `_log_haiku_cache_usage(msg, path)` logs `haiku_cache event=... input=N cache_read=N cache_write=N` so the step-6 A/B has real cache observability. **`call_with_prompt(system_text, user_msg, *, max_tokens, timeout_s, log_path_label)`** is the public helper Layer 5 uses to dispatch its own (system, user) prompt pair without going through the event-rewrite shape. BYOK Anthropic → managed proxy ladder only (no OpenAI / CLI fallback inside) since the harness prototype wants a deterministic call path. |
 | `heard/providers.py` | Provider abstraction for the narration LLM. Partially-finished extraction — the three rewrite paths in `persona.py` are still inline. |
 | `heard/personas/*.md` | Bundled personas (aria, friday, jarvis, atlas). YAML frontmatter (voice/speed/verbosity/narrate_tools/address) + Markdown body (Haiku system prompt). |
 | `heard/templates.py` | Per-tool narration templates. `_bash_tag_and_text` extracts intent from shell verbs (grep → search, ls → list, etc.). `_first_token` handles `cd && grep` compound commands. |

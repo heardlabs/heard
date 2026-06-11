@@ -56,32 +56,6 @@ DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # per-event lines accumulate into hundreds of MB.
 _LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
-# Safety cap for the v1 prose fallback. When the harness punts AND the
-# v1 persona rewrite ALSO fails (same Haiku blip), rewrite() returns the
-# raw neutral text — and on a long final that means reading a 1000+
-# char wall verbatim (the "it read everything" bug). Condensed output
-# (harness OR a working Haiku rewrite) never reaches this length, so
-# anything past the cap is a verbatim failure-fallback: truncate it.
-_FALLBACK_PROSE_CAP = 600
-_FALLBACK_PROSE_TARGET = 440
-
-
-def _cap_runaway_prose(text: str) -> str:
-    """Truncate a runaway verbatim prose fallback to a spoken-length
-    chunk, cutting at a sentence end (preferred) or word boundary, with
-    an audible trailing marker. No-op below the cap so normal condensed
-    narration is untouched."""
-    if len(text) <= _FALLBACK_PROSE_CAP:
-        return text
-    head = text[:_FALLBACK_PROSE_TARGET]
-    cut = max(head.rfind(". "), head.rfind("! "), head.rfind("? "))
-    if cut >= _FALLBACK_PROSE_TARGET - 220:
-        return head[:cut + 1] + " There's more — I'll spare you the rest."
-    sp = head.rfind(" ")
-    head = head[:sp] if sp > 0 else head
-    return head.rstrip(" ,;:—-") + "… I'll spare you the rest."
-
-
 def _log(event: str, **fields: object) -> None:
     """One structured line per event, parseable by eye and by grep.
 
@@ -284,6 +258,15 @@ class Daemon:
         import collections
         self._recent_edit_paths: collections.deque[str] = collections.deque(
             maxlen=8,
+        )
+        # Per-session recently-spoken tool lines, for consecutive-duplicate
+        # suppression. A burst of reads all render the same template
+        # ("Reading a file.") and a run of greps render "Searching the
+        # codebase." — narrating each one is the robotic-repetition
+        # complaint. We speak the first, then drop identical repeats within
+        # a short window. Keyed by session_id → deque[(text, monotonic)].
+        self._recent_tool_lines: dict[str, collections.deque] = (
+            collections.defaultdict(lambda: collections.deque(maxlen=12))
         )
         # Per-session mute. Holds the session_ids the user has silenced
         # via /quiet — events from these are observed (state/memory stay
@@ -684,7 +667,12 @@ class Daemon:
                     # it (fresh start) via the same socket cmd.
                     continue
                 flushes = self.router.collect_project_flushes(auto_voices=auto_voices)
+                # Solo when the whole fleet is one agent on one project —
+                # then the summary skips the repo label ("Read through the
+                # auth flow, tests passed" not "Heard: …").
+                solo_fleet = len(self.router.list_active()) <= 1
                 for pf in flushes:
+                    is_solo = solo_fleet and len(pf.member_session_ids) <= 1
                     # Prefer the LLM-narrative summary ("On the API
                     # project, edited the auth flow across three files;
                     # tests passed"). Falls back to the deterministic
@@ -695,10 +683,13 @@ class Daemon:
                         pf.label,
                         pf.events,
                         member_count=len(pf.member_session_ids),
+                        solo=is_solo,
                     )
                     if not summary:
                         summary = multi_agent_mod.format_project_summary(
-                            pf.label, pf.events, member_count=len(pf.member_session_ids)
+                            pf.label, pf.events,
+                            member_count=len(pf.member_session_ids),
+                            include_label=not is_solo,
                         )
                     if not summary:
                         continue
@@ -1827,6 +1818,15 @@ class Daemon:
         proj = self._project_label(hmeta)
         if not proj:
             return text
+        # Solo (single active agent) → never announce the project. There's
+        # only one; "Now on heard." every time the tracker resets is the
+        # "constantly saying the name of the repo" complaint. The tag earns
+        # its keep only when 2+ agents run in parallel and the listener
+        # genuinely needs to know which one is talking. Still update the
+        # tracker so a later switch into multi-agent is detected correctly.
+        if len(self.router.list_active()) < 2:
+            self._last_spoken_project = proj
+            return text
         if proj != self._last_spoken_project:
             self._last_spoken_project = proj
             _log("project_switch_tag", project=proj)
@@ -2140,6 +2140,62 @@ class Daemon:
 
     # --- event handling -----------------------------------------------------
 
+    # Window within which an identical tool template line is treated as a
+    # repeat and suppressed. Long enough to swallow a tight read/search
+    # burst; short enough that a genuinely new beat 30s later still speaks.
+    _TOOL_DUP_WINDOW_S = 25.0
+
+    def _is_duplicate_tool_line(self, session_id: str, text: str) -> bool:
+        """True if ``text`` was already spoken for this session within
+        ``_TOOL_DUP_WINDOW_S``. Records ``text`` either way so the next
+        repeat is caught. Case/space-insensitive match so trivial
+        formatting differences still de-dupe."""
+        sig = " ".join(text.lower().split())
+        now = time.monotonic()
+        recent = self._recent_tool_lines[session_id]
+        # Drop expired entries from the front-ish (cheap linear scan; the
+        # deque is capped at 12).
+        is_dup = any(
+            s == sig and (now - ts) <= self._TOOL_DUP_WINDOW_S for s, ts in recent
+        )
+        recent.append((sig, now))
+        return is_dup
+
+    # A final shorter than this is already spoken-friendly — read it as-is
+    # on the floor. Longer means it's the agent's raw closing text (the
+    # "verbatim wall"); the no-LLM floor can't summarize it, so it swaps in
+    # a short canned line instead of reading the wall.
+    _FLOOR_FINAL_VERBATIM_MAX = 240
+
+    def _floor_text(self, kind: str, neutral: str, persona) -> str:
+        """No-LLM fallback for an event the harness punted on and no LLM
+        could summarize. The honest floor by event kind:
+
+        - ``final``  → short finals read as-is; long ones (the verbatim
+          wall) are replaced with a canned "go look" line. A final can't
+          be summarized without an LLM, so we never read the raw wall.
+        - ``intermediate`` → dropped. A mid-stream prose blip the brain
+          couldn't shape isn't worth a canned line; the next event narrates.
+        - everything else (tool-ish: repeat edits, long-running tags that
+          reached the harness) → the neutral TEMPLATE, which is already a
+          clean one-liner ("Editing auth.py"), never verbatim.
+        """
+        addr = getattr(persona, "address", "") or ""
+
+        def _with_addr(text: str) -> str:
+            t = text.rstrip(".")
+            if addr and not t.lower().endswith(addr.lower()):
+                return f"{t}, {addr}."
+            return f"{t}."
+
+        if kind == "final":
+            if neutral and len(neutral) <= self._FLOOR_FINAL_VERBATIM_MAX:
+                return _with_addr(neutral)
+            return _with_addr("That's done — the details are in your terminal")
+        if kind == "intermediate":
+            return ""
+        return neutral
+
     def _handle_event(self, req: dict) -> None:
         kind = req.get("kind") or ""
         neutral = (req.get("neutral") or "").strip()
@@ -2197,7 +2253,7 @@ class Daemon:
 
         cfg = config.load(cwd=cwd)
         persona = self._persona_for(cfg)
-        session = self.sessions.touch(session_id, cwd=cwd)
+        self.sessions.touch(session_id, cwd=cwd)  # marks the session active
         # Note this event so the router knows the session is active.
         # ``abs_path`` in ctx (set by templates for Edit / Write /
         # NotebookEdit) is the load-bearing signal for project
@@ -2278,6 +2334,16 @@ class Daemon:
                 if not neutral:
                     _log("event_drop", kind=kind, tag=tag, reason="fastpath_empty_neutral")
                     return
+                # Consecutive-duplicate suppression. A run of reads /
+                # searches renders the same template line over and over
+                # ("Reading a file." × 6); speak the first, drop the
+                # echoes within a short window. Tool kinds only — prose
+                # and finals are never deduped this way.
+                if kind in ("tool_pre", "tool_post") and self._is_duplicate_tool_line(
+                    session_id, neutral
+                ):
+                    _log("event_drop", kind=kind, tag=tag, reason="fastpath_dup_tool_line")
+                    return
                 info = self.router._sessions.get(session_id)  # noqa: SLF001
                 history_meta = {
                     "kind": kind,
@@ -2318,15 +2384,12 @@ class Daemon:
                 )
                 return
 
-        # --- Layer 5 — Harness NARRATE prototype (Phase 3 step 6). ---
-        # Driven by cfg["harness_enabled"]; off by default → zero impact
-        # on the v1 path. When on, the harness gets first shot at every
-        # incoming event. Three outcomes:
-        #   - None              → fall through to v1 (safety net)
+        # --- Layer 5 — Harness (the mandatory narration brain). ---
+        # The harness gets first shot at every prose/final event (tools
+        # fast-pathed above). Three outcomes:
+        #   - None              → no-LLM floor below (v1 sunset, 2026-06)
         #   - speak=False       → harness chose silence; suppress
         #   - speak=True        → enqueue harness.text directly
-        # This is the make-or-break A/B for the v2 architecture; see
-        # plan file Phase 3 step 6 for the kill criteria.
         if harness.is_enabled(cfg):
             harness_error = False
             try:
@@ -2424,10 +2487,10 @@ class Daemon:
                 )
                 return
             _log("event_harness_punt", kind=kind, tag=tag)
-            # Track v2→v1 fallback. The harness (v2) returned None — either
-            # a clean punt (safety net) or it threw — so this event drops
-            # to the v1 path. reason distinguishes the two; the rate of
-            # this vs narration_spoken via=harness is the v2 health signal.
+            # Track v2→floor fallback. The harness (v2) returned None —
+            # either a clean punt (safety net) or it threw. reason
+            # distinguishes the two; the rate of this vs narration_spoken
+            # via=harness is the v2 health signal.
             try:
                 from heard import analytics
                 analytics.capture("harness_fallback", {
@@ -2438,161 +2501,29 @@ class Daemon:
                 })
             except Exception:
                 pass
-        # --- end harness path; fall through to v1 below ---
-
-        if kind == "tool_pre":
-            density = self.sessions.tool_density(session_id)
-            self.sessions.record_tool_event(session_id)
-            v_decision = verbosity.classify_pre(cfg, tag, density)
-            if v_decision == "drop":
-                _log("event_drop", kind=kind, tag=tag, reason="verbosity_pre", density=density)
+            # --- v2 floor — graceful no-LLM fallback. NEVER read a final
+            # verbatim; a punted final gets a short canned line, a punted
+            # mid-stream blip is dropped, tool-ish events keep their clean
+            # template. This replaces the old v1 rewrite fallback, whose
+            # template→neutral chain read the raw wall when Haiku was down.
+            floor = self._floor_text(kind, neutral, persona)
+            if not floor:
+                _log("event_drop", kind=kind, tag=tag, reason="floor_drop")
                 return
-            if v_decision == "digest":
-                # Profile says digest (Brief always, Normal under
-                # burst). Stash for the next prose-arrival to drain.
-                self.router.add_to_digest(session_id, kind, tag, neutral, ctx)
-                _log("event_deferred", kind=kind, tag=tag, reason="verbosity_digest", density=density)
-                return
-        elif kind == "tool_post":
-            if tag in ("tool_post_failure", "tool_post_command_failed"):
-                self.sessions.note_failure(session_id)
-                session = self.sessions.get(session_id)
-            if verbosity.classify_post(cfg, tag) != "speak":
-                _log("event_drop", kind=kind, tag=tag, reason="verbosity_post")
-                return
-        elif kind in ("intermediate", "final"):
-            if verbosity.classify_prose(cfg) != "speak":
-                _log("event_drop", kind=kind, tag=tag, reason="profile_prose_silent")
-                return
-            # No `final_budget` truncation anymore — _SHARED_NARRATION_RULES
-            # tells Haiku to compress aggressively, so silently dropping
-            # the trailing half of a multi-topic answer just to fit a
-            # 600-char cap (the bug Christian hit, where my own multi-
-            # part replies got cut mid-thought) is the wrong tradeoff.
-            # The raw-persona path (no Haiku) is now also un-budgeted —
-            # if someone forks a raw persona and feeds it a wall of text,
-            # they get the wall.
-            # Drain pending tool digest for this session BEFORE the
-            # prose plays — gives the user a coherent "Made 3 edits,
-            # ran tests. OK, all green." narrative instead of stale
-            # tool announcements queueing up behind the prose.
-            summary = self.router.drain_session_summary(session_id)
-            if summary:
-                _log("digest_inline", session=session_id, chars=len(summary))
-                neutral = f"{summary} {neutral}"
-
-        if not neutral:
-            _log("event_drop", kind=kind, tag=tag, reason="empty_neutral")
+            info = self.router._sessions.get(session_id)  # noqa: SLF001
+            history_meta = {
+                "kind": kind, "tag": tag, "neutral": neutral,
+                "profile": cfg.get("verbosity", "normal"),
+                "repo_name": getattr(info, "repo_name", "") or "",
+                "cwd": cwd or "", "via": "floor",
+            }
+            _log("event_speak", kind=kind, tag=tag, persona=persona.name,
+                 chars=len(floor), via="floor")
+            self._start_speech(
+                floor, cfg=cfg, persona=persona, session_id=session_id,
+                history_meta=history_meta, priority=(kind == "intermediate"),
+            )
             return
-
-        # Multi-agent routing. In SOLO mode (single session) this is a
-        # no-op pass-through. In SWARM (2+ active) we drop routine
-        # events from non-focus sessions and prefix critical pierces
-        # with "Agent <name>:". In PINNED, only the pinned session
-        # gets unconditional play; others still pierce on critical.
-        decision = self.router.classify(
-            kind=kind,
-            tag=tag,
-            session_id=session_id,
-            agent_voices=cfg.get("agent_voices") or {},
-            auto_voices=bool(cfg.get("multi_agent_auto_voices", False)),
-        )
-        if decision.action == "drop":
-            _log("event_drop", kind=kind, tag=tag, session=session_id, reason="multi_agent_drop")
-            return
-        if decision.action == "defer_to_digest":
-            self.router.add_to_digest(session_id, kind, tag, neutral, ctx)
-            _log("event_deferred", kind=kind, tag=tag, session=session_id)
-            return
-
-        final = persona.rewrite(
-            event_kind=kind,
-            neutral=neutral,
-            tag=tag,
-            ctx=ctx,
-            session=session,
-        )
-        if not final:
-            _log("event_drop", kind=kind, tag=tag, reason="persona_empty", persona=persona.name)
-            return
-
-        # Safety cap: if the rewrite fell back to raw neutral (Haiku blip
-        # / raw persona) on a long final, don't read the wall verbatim.
-        if kind in ("intermediate", "final"):
-            capped = _cap_runaway_prose(final)
-            if capped != final:
-                _log("v1_prose_capped", kind=kind, was=len(final), now=len(capped))
-                final = capped
-
-        # `final_budget` truncation removed: the tightened Haiku prompt
-        # (PR #17 — "summarise the source, never read it verbatim")
-        # caps spoken length at the prompt layer instead, and chopping
-        # multi-topic answers at a sentence boundary dropped the second
-        # half entirely with no audible "…and more". Long finals stay
-        # long; if Haiku misbehaves and produces a wall, the user hears
-        # the wall — better than silent truncation.
-
-        # Apply the router's label prefix (e.g. "Agent api: ") AFTER
-        # persona rewrite + truncation so it survives both. Empty in
-        # solo / focus paths.
-        if decision.label_prefix:
-            final = decision.label_prefix + final
-
-        # Voice override (per-agent voice mapping) wins over both
-        # cfg["voice"] and persona.voice — the user explicitly mapped
-        # this repo to that voice in agent_voices.
-        if decision.voice_override:
-            cfg = dict(cfg)
-            cfg["voice"] = decision.voice_override
-
-        self.sessions.note_topic(session_id, tag)
-
-        _log("event_speak", kind=kind, tag=tag, persona=persona.name, chars=len(final))
-        # Tier 2 sampled — only fires if `product_analytics: true` AND the
-        # 1:10 dice roll hits. char_count bucketed for cardinality safety.
-        try:
-            from heard import analytics
-            if analytics.sampled():
-                if len(final) < 100:
-                    char_bucket = "0-99"
-                elif len(final) < 200:
-                    char_bucket = "100-199"
-                elif len(final) < 400:
-                    char_bucket = "200-399"
-                else:
-                    char_bucket = "400+"
-                analytics.capture("narration_spoken", {
-                    "kind": kind,
-                    "tag": tag,
-                    "persona": persona.name,
-                    "backend": type(self.tts).__name__,
-                    "char_count_bucket": char_bucket,
-                    "via": "v1",
-                })
-        except Exception:
-            pass
-        if DEBUG:
-            _log("event_speak_detail", text=final)
-        # Bundle the context the spoken-history log needs after the
-        # utterance plays. Captured here while we still have the
-        # neutral text + tag + cwd; the queue carries it through.
-        info = self.router._sessions.get(session_id)  # noqa: SLF001
-        history_meta = {
-            "kind": kind,
-            "tag": tag,
-            "neutral": neutral,
-            "profile": cfg.get("verbosity", "normal"),
-            "repo_name": getattr(info, "repo_name", "") or "",
-            "cwd": cwd or "",
-        }
-        self._start_speech(
-            final,
-            cfg=cfg,
-            persona=persona,
-            session_id=session_id,
-            voice_override=decision.voice_override,
-            history_meta=history_meta,
-        )
 
     def _persona_for(self, cfg: dict) -> persona_mod.Persona:
         name = cfg.get("persona", "raw")

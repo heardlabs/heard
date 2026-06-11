@@ -98,9 +98,16 @@ class HarnessDecision:
 
 
 def is_enabled(cfg: dict[str, Any]) -> bool:
-    """True when the harness path is active for this user. Default
-    False — flipping the flag in config opts in."""
-    return bool(cfg.get("harness_enabled", False))
+    """The brain is mandatory — always on. Prose/finals route through the
+    harness; when it punts (LLM unreachable), the daemon's no-LLM floor
+    catches it (clean template for tools, a canned line for finals). The
+    old `harness_enabled` flag is now inert: there is no v1 path to fall
+    back to, so disabling the brain would just mean the floor for
+    everything. Kept as a function (not deleted) so every call site —
+    warm_cache, narrate, the daemon gate — stays a one-liner.
+
+    The `cfg` arg is retained for signature stability (callers pass it)."""
+    return True
 
 
 def warm_cache(

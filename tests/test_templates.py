@@ -13,8 +13,10 @@ def test_bash_git_commit_summary():
 
 
 def test_bash_generic_uses_description():
+    # Description is used (over verb detection) and spoken in present
+    # continuous: "Do the thing" → "Doing the thing".
     line = templates.pre_tool_line("Bash", {"command": "./scripts/do-thing", "description": "Do the thing"})
-    assert line == "Do the thing."
+    assert line == "Doing the thing."
 
 
 def test_edit_uses_basename_without_extension():
@@ -207,3 +209,20 @@ def test_compound_command_pipe():
 def test_compound_command_semicolon():
     line = templates.pre_tool_line("Bash", {"command": "cd build; make clean"})
     assert line == "Building."
+
+
+def test_bash_description_present_continuous():
+    """CC writes Bash descriptions in the imperative ("Locate sample
+    video"); narration speaks them in present continuous since the work
+    is in flight ("Locating sample video")."""
+    line = templates.pre_tool_line(
+        "Bash", {"command": "find ~ -name x", "description": "Locate sample video on Desktop"}
+    )
+    assert line == "Locating sample video on Desktop."
+    # silent-e drop, CVC doubling, hyphenated compound
+    assert templates._present_continuous("Probe specs") == "Probing specs"
+    assert templates._present_continuous("Set the env var") == "Setting the env var"
+    assert templates._present_continuous("Cost-estimate the push") == "Cost-estimating the push"
+    # already a gerund → unchanged; non-verb opener → left alone
+    assert templates._present_continuous("Running tests") == "Running tests"
+    assert templates._present_continuous("Quick check of logs") == "Quick check of logs"
