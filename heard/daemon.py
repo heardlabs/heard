@@ -148,19 +148,12 @@ class Daemon:
         self._account_usage: dict | None = None
         self._account_usage_at: float = 0.0
         self.tts = self._make_tts()
-        # Anonymous-trial first-launch path. If we booted to NullTTS
-        # because the user has no token AND no BYOK key, fire the
-        # device-bound /v1/auth/anonymous endpoint in a background
-        # thread. Success persists token+plan+expiry+is_anonymous to
-        # config and reloads — _make_tts then picks ManagedTTS on the
-        # next pass, and the menu bar's greeting plays out. Failure
-        # (offline, server down) retries with backoff a few times and
-        # gives up silently — the user stays on NullTTS but the wizard
-        # still works and a later reload (e.g. on sign-in) will pick
-        # up a real backend. Skipped if any heard token / BYOK key is
-        # already set, or if the user has been signed out (heard_plan
-        # = "expired" or "signed_out") so we don't re-create anon
-        # state on a deliberate sign-out.
+        # No anonymous-trial first-launch path — anon trials were retired
+        # 2026-06-02 (sign-in now required; /v1/auth/anonymous returns 410
+        # Gone). A fresh install with no token / BYOK key boots to NullTTS
+        # and the onboarding wizard routes the user into sign-in. See
+        # heard_api.py (request_anon_trial removed) and the server's
+        # signup.ts authAnonTrial (410).
         self.sessions = SessionStore()
         # Multi-agent router. Decides per-event whether to speak,
         # drop, or defer to a digest summary, based on how many
