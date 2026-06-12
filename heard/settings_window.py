@@ -1372,7 +1372,15 @@ class SettingsController(NSObject):
         self._refresh_all()
 
     def onUpgradeClicked_(self, _sender) -> None:
-        webbrowser.open("https://buy.stripe.com/bJecMYdBFfEW2oe5DG77O00")
+        import urllib.parse
+        url = "https://buy.stripe.com/bJecMYdBFfEW2oe5DG77O00"
+        email = (config.load().get("heard_email") or "").strip()
+        if email:
+            # client_reference_id (un-editable) keys the webhook upgrade to
+            # this Heard account regardless of the billing email they enter.
+            q = urllib.parse.quote(email)
+            url = f"{url}?prefilled_email={q}&client_reference_id={q}"
+        webbrowser.open(url)
 
     def onClaimInstallCode_(self, _sender) -> None:
         field = self._refs["account"]["code_field"]

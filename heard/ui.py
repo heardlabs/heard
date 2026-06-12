@@ -975,7 +975,11 @@ class HeardApp(rumps.App):
         email = (cfg.get("heard_email") or "").strip()
         url = self._UPGRADE_URL
         if email:
-            url = f"{url}?prefilled_email={urllib.parse.quote(email)}"
+            q = urllib.parse.quote(email)
+            # prefilled_email is editable at checkout; client_reference_id is
+            # NOT — the webhook keys the upgrade off it so it always links to
+            # this Heard account even if they pay with a different email.
+            url = f"{url}?prefilled_email={q}&client_reference_id={q}"
         try:
             webbrowser.open(url)
         except Exception:
