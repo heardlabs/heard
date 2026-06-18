@@ -333,10 +333,15 @@ class HeardApp(rumps.App):
             self.pause_item,
             self.continue_item,
             None,
-            self.persona_menu,
-            self.speed_menu,
+            # Menu bar = quick access only. Persona, Active agents, and the
+            # rest of the tuning live in Settings now; the menu keeps just
+            # the two knobs worth a one-click flip: Mode (top) then Speed
+            # (bottom). The persona_menu / active_sessions_menu objects are
+            # still constructed above so their refresh() paths stay valid —
+            # they're just no longer surfaced here (same orphan pattern as
+            # options_menu).
             self.mode_menu,
-            self.active_sessions_menu,
+            self.speed_menu,
             None,
             self.report_problem_item,
             self.settings_item,
@@ -409,10 +414,21 @@ class HeardApp(rumps.App):
             # checkmark lands on the right item.
             item.state = 1 if label.lower() == active_persona else 0
         active_speed = float(cfg.get("speed", 1.0))
-        for label, item in self.speed_menu.items():
-            # Match the speed value embedded in the label (e.g. "Slow (0.85×)")
-            value = float(label.split("(")[1].split("×")[0])
-            item.state = 1 if abs(value - active_speed) < 0.01 else 0
+        # Tick the CLOSEST preset, not an exact match. The config default
+        # (1.05) and per-persona speeds (jarvis = 0.95) don't equal any
+        # menu value (1.0 / 1.15 / 1.5), so an exact-match check left the
+        # submenu with no checkmark at all. Nearest-match always lands the
+        # tick on one item.
+        def _speed_val(label: str) -> float:
+            return float(label.split("(")[1].split("×")[0])
+
+        speed_items = list(self.speed_menu.items())
+        if speed_items:
+            closest_label = min(
+                speed_items, key=lambda li: abs(_speed_val(li[0]) - active_speed)
+            )[0]
+            for label, item in speed_items:
+                item.state = 1 if label == closest_label else 0
         # Mode checkmark — unknown values land on Co-pilot.
         active_mode = (cfg.get("mode") or "copilot").strip().lower()
         if active_mode not in ("copilot", "companion"):

@@ -158,6 +158,7 @@ def ask_defect_report(*, default_category: str = "other") -> DefectResult:
     from AppKit import (  # noqa: PLC0415
         NSAlert,
         NSAlertFirstButtonReturn,
+        NSLayoutAttributeLeading,
         NSMakeRect,
         NSPopUpButton,
         NSStackView,
@@ -193,13 +194,20 @@ def ask_defect_report(*, default_category: str = "other") -> DefectResult:
     except AttributeError:
         pass
 
-    # Stack them vertically. NSStackView handles spacing + alignment
-    # without having to manually position child views.
+    # Stack them vertically. NSStackView uses Auto Layout, so the frame
+    # widths above are ignored — a popup left to its own devices hugs its
+    # title and renders narrow + centered while the text field stretches,
+    # which is the "formatting's off" misalignment. Left-align the stack
+    # and pin BOTH children to the same explicit width so the popup and
+    # the note field share one left edge and one width.
     stack = NSStackView.alloc().initWithFrame_(NSMakeRect(0, 0, width, 62))
     stack.setOrientation_(NSUserInterfaceLayoutOrientationVertical)
+    stack.setAlignment_(NSLayoutAttributeLeading)
     stack.setSpacing_(8.0)
     stack.addArrangedSubview_(popup)
     stack.addArrangedSubview_(note_field)
+    popup.widthAnchor().constraintEqualToConstant_(width).setActive_(True)
+    note_field.widthAnchor().constraintEqualToConstant_(width).setActive_(True)
     alert.setAccessoryView_(stack)
 
     # Focus the popup so keyboard nav works immediately. (Tab moves to
