@@ -137,11 +137,23 @@ def test_should_compress_false_when_no_events():
 
 
 def test_should_compress_true_on_first_events_after_tick_window_elapsed():
-    """compressed_at=0 means "never compressed" → elapsed treats it
-    as past the window; one event is enough to trigger."""
+    """compressed_at=0 means "never compressed" → elapsed treats it as
+    past the window; the time-trigger fires once at least
+    MIN_NEW_EVENTS_FOR_TICK events have accrued (a trickle below that
+    no longer churns a full recompress)."""
     m = wm.WorkingMemoryManager()
-    m.observe(_ev())
+    for _ in range(wm.MIN_NEW_EVENTS_FOR_TICK):
+        m.observe(_ev())
     assert m._should_compress() is True
+
+
+def test_should_compress_false_after_tick_window_with_subthreshold_trickle():
+    """A slow trickle below MIN_NEW_EVENTS_FOR_TICK must NOT trigger a
+    time-based recompress, even past the tick window — that drip was
+    the background churn we cut."""
+    m = wm.WorkingMemoryManager()
+    m.observe(_ev())  # 1 event, below the min
+    assert m._should_compress() is False
 
 
 def test_should_compress_false_inside_tick_window_with_few_events():
@@ -245,7 +257,8 @@ def test_compress_advances_events_at_compression():
 def test_maybe_compress_calls_compress_when_gate_passes():
     m = wm.WorkingMemoryManager()
     reg = AgentStateRegistry()
-    m.observe(_ev())
+    for _ in range(wm.MIN_NEW_EVENTS_FOR_TICK):
+        m.observe(_ev())
     with patch.object(wm.persona_mod, "call_with_prompt", return_value="prose") as call:
         ran = m.maybe_compress(agent_states=reg, persona=_persona())
     assert ran is True

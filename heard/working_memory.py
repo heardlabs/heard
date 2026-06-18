@@ -43,11 +43,19 @@ if TYPE_CHECKING:
 # Window: how long between compression ticks, minimum. The actual
 # tick may be longer if there's been no new activity since last
 # compression — we don't burn Haiku tokens summarising silence.
-COMPRESS_TICK_S: float = 30.0
+COMPRESS_TICK_S: float = 60.0
+
+# The time-based tick only fires if at least this many new events have
+# accrued since the last compression. Without it, a slow trickle (one
+# or two trivial events) triggered a full ~3,500-token recompress every
+# tick during active work — constant background Haiku churn for almost
+# no change. A real burst still refreshes immediately via the threshold
+# below; this just stops the steady drip from re-summarising near-silence.
+MIN_NEW_EVENTS_FOR_TICK: int = 3
 
 # Also re-compress sooner if this many new events arrive between
 # ticks (a burst of activity should refresh the summary even if it
-# hasn't been 30s yet).
+# hasn't been the full tick yet).
 COMPRESS_NEW_EVENT_THRESHOLD: int = 12
 
 # Buffer of recent events used as input to compression. Old events
@@ -211,7 +219,7 @@ class WorkingMemoryManager:
             return False
         now = time.monotonic()
         elapsed = now - last_at if last_at else 9999.0
-        if elapsed >= COMPRESS_TICK_S:
+        if elapsed >= COMPRESS_TICK_S and new_events >= MIN_NEW_EVENTS_FOR_TICK:
             return True
         if new_events >= COMPRESS_NEW_EVENT_THRESHOLD:
             return True
