@@ -50,11 +50,12 @@ live path**. There are now exactly three lanes (see the process diagram):
    brain (latency/cost). Cheap, no LLM.
 3. **No-LLM floor** (`Daemon._floor_text`) — when the brain punts (LLM
    unreachable: managed daily cap, outage, no provider). Tools keep their
-   clean template; a **final** gets a short canned line ("That's done —
-   the details are in your terminal") rather than its raw text read
-   **verbatim** (the old "it read everything" bug); mid-stream prose is
-   dropped. A final genuinely can't be summarised without an LLM, so the
-   honest floor is "go look," not the wall.
+   clean template; a **final** is read as-is if short, else swapped for a
+   bounded LEAD of the message prefixed with the project (`_final_lead` —
+   "On influencer-outreach, the network's built…") rather than read
+   **verbatim** (the old "it read everything" bug) and rather than the
+   old "details are in your terminal" punt (the listener has no screen —
+   tell them the substance). Mid-stream prose is dropped.
 
 **What was deleted:** the ~164-line v1 branch in `Daemon._handle_event`
 (verbosity re-gate, `multi_agent.classify` routing, the `persona.rewrite`

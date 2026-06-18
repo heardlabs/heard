@@ -585,8 +585,9 @@ def test_system_text_companion_mode_appends_addendum():
     text = harness._build_system_text(_persona(), mode="companion")
     assert "COMPANION MODE" in text
     # Addendum must come AFTER the base block so its rules override
-    # ("speak less often" beats "default to speaking" on conflict).
-    base_idx = text.index("DEFAULT TO SPEAKING")
+    # (Companion's "narrate nearly everything" overrides the base
+    # block's Co-pilot-leaning "default to silence on routine").
+    base_idx = text.index("SPEAK FOR SIGNAL")
     addendum_idx = text.index("COMPANION MODE")
     assert base_idx < addendum_idx
 
@@ -721,6 +722,33 @@ def test_user_message_includes_agent_table_and_event():
     assert "edit" in msg or "tool:edit" in msg
     assert "Current event:" in msg
     assert "thinking aloud" in msg
+
+
+def test_user_message_opener_forbids_silence():
+    """The turn opener must demand speech — no '(silence) is valid'
+    escape hatch, so the first assistant line always voices and the
+    listener gets immediate audio instead of a dead-air ramp-up."""
+    reg = AgentStateRegistry()
+    msg = harness._build_user_message(
+        event=_ev(kind="intermediate", neutral="let me look into that"),
+        agent_states=reg,
+        working_memory="",
+        is_opener=True,
+    )
+    assert "OPENER" in msg
+    assert "silence is a" not in msg.lower()
+
+
+def test_user_message_non_opener_intermediate_allows_silence():
+    """A normal mid-stream intermediate keeps the silence option."""
+    reg = AgentStateRegistry()
+    msg = harness._build_user_message(
+        event=_ev(kind="intermediate", neutral="still going"),
+        agent_states=reg,
+        working_memory="",
+        is_opener=False,
+    )
+    assert "silence is a" in msg.lower()
 
 
 def test_user_message_handles_no_active_agents():
