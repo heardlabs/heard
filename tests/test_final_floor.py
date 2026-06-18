@@ -35,11 +35,24 @@ _NO_ADDR = types.SimpleNamespace(address="")
 _SIR = types.SimpleNamespace(address="sir")
 
 
-def test_long_final_never_read_verbatim(daemon):
+def test_long_final_reads_bounded_lead_not_wall(daemon):
+    """A long final is no longer punted to the terminal — the floor reads
+    a bounded LEAD (project + start of the message), never the whole wall
+    and never 'the details are in your terminal'."""
     wall = "So I went through the auth flow and " + ("blah " * 80)
+    out = daemon._floor_text("final", wall, _NO_ADDR, project="heard")
+    assert len(out) <= 260                          # bounded, not the whole wall
+    assert out.count("blah") < wall.count("blah")   # truncated, not verbatim
+    assert "auth flow" in out               # but it DID give the substance
+    assert "terminal" not in out.lower()    # never punt to the terminal
+    assert out.startswith("On heard")       # project named
+
+
+def test_long_final_no_project_still_not_terminal(daemon):
+    wall = "Rebuilt the pipeline end to end and " + ("blah " * 80)
     out = daemon._floor_text("final", wall, _NO_ADDR)
-    assert "blah" not in out  # the wall is gone
-    assert out == "That's done — the details are in your terminal."
+    assert "terminal" not in out.lower()
+    assert "Rebuilt the pipeline" in out
 
 
 def test_short_final_read_as_is(daemon):

@@ -234,6 +234,22 @@ class Daemon:
         # bursts during a normal turn would silently lose the first
         # one or two beats.
         self._queue_max = 5
+        # Held-while-dictating buffer. When the mic is active (Wispr /
+        # dictation), narration would otherwise be dropped — instead we
+        # stash it here and replay it through the queue once the mic
+        # frees up, so the listener hears what happened while they
+        # talked. Bounded to _queue_max and stale-pruned (a fresh result
+        # drops held routine progress) so release plays the freshest
+        # signal, never a minute-long backlog. Each entry is (item,
+        # priority); item matches a _queue tuple.
+        self._deferred_while_mic: list[tuple[tuple, bool]] = []
+        # Per-session turn-opener tracking. A user prompt (prompt_intent
+        # event) adds the session here; the FIRST intermediate that
+        # follows is the turn's "opener" (Claude's short first reply) and
+        # is force-spoken so the listener gets immediate audio instead of
+        # a long dead-air gap while work ramps up. Cleared once the opener
+        # fires (or on the next prompt).
+        self._opener_pending: set[str] = set()
         # Last project (repo) name we actually spoke about, tracked at the
         # speech-drain layer so a brief "Now on <project>" tag can lead the
         # narration whenever the spoken project changes — so the user knows
@@ -846,6 +862,7 @@ class Daemon:
             self._mic_active = False
             self._mic_release_timer = None
             _log("mic_released")
+            self._flush_deferred_while_mic()
 
         if self._mic_release_timer is not None:
             self._mic_release_timer.cancel()
@@ -854,6 +871,28 @@ class Daemon:
         )
         self._mic_release_timer.daemon = True
         self._mic_release_timer.start()
+
+    def _flush_deferred_while_mic(self) -> None:
+        """Mic just freed up — replay what we held back while the listener
+        was dictating. Items go back through ``_start_speech`` (mic now
+        clear) so the normal queue rules apply: a held final jumps the
+        front and clears stale held progress, the queue stays capped.
+        ``coexists=True`` so items from different sessions that piled up
+        during dictation all get to play in turn rather than the
+        freshest-session-wins drop cancelling them on the way in."""
+        with self._queue_cv:
+            deferred = self._deferred_while_mic
+            self._deferred_while_mic = []
+        if not deferred:
+            return
+        _log("mic_deferred_flush", count=len(deferred))
+        for item, priority in deferred:
+            text, cfg, persona, session_id, voice_override, history_meta = item
+            self._start_speech(
+                text, cfg=cfg, persona=persona, session_id=session_id,
+                voice_override=voice_override, history_meta=history_meta,
+                coexists=True, priority=priority,
+            )
 
     def _stop_audio_monitor(self) -> None:
         if self._mic_release_timer is not None:
@@ -1738,9 +1777,25 @@ class Daemon:
         if bool(self.cfg.get("muted")):
             _log("speech_skipped", reason="muted", session=session_id)
             return
-        # Mic-active suppression — see _speak / _on_mic_active.
+        # Mic-active suppression — see _speak / _on_mic_active. Rather
+        # than DROP what we'd say while the listener is dictating, hold
+        # it and replay on mic-release (_flush_deferred_while_mic). Keep
+        # the buffer lean: a fresh result/decision (priority) drops any
+        # held routine progress ahead of it, and the buffer is capped at
+        # _queue_max — so release plays the freshest signal, not a wall.
         if self._mic_active:
-            _log("speech_skipped", reason="mic_active", session=session_id)
+            item = (text, cfg, persona, session_id, voice_override, history_meta or {})
+            with self._queue_cv:
+                if priority:
+                    self._deferred_while_mic = [
+                        d for d in self._deferred_while_mic
+                        if (d[0][5] or {}).get("kind") != "intermediate"
+                    ]
+                self._deferred_while_mic.append((item, priority))
+                if len(self._deferred_while_mic) > self._queue_max:
+                    self._deferred_while_mic = self._deferred_while_mic[-self._queue_max:]
+                held = len(self._deferred_while_mic)
+            _log("speech_deferred_mic", session=session_id, held=held)
             return
         with self._queue_cv:
             # Scheduler-driven project flushes pass ``coexists=True`` so
@@ -1757,11 +1812,21 @@ class Daemon:
                     _log("queue_drop_other_session", dropped=dropped, session=session_id)
             item = (text, cfg, persona, session_id, voice_override, history_meta or {})
             if priority:
-                # Immediate-ack lane. A short "On it — checking the logs"
-                # is the agent's CURRENT action; it's stale within seconds.
-                # Jump it to the FRONT so it plays next (after whatever's
-                # mid-sentence), not behind a backlog of queued narration.
-                # Trim keeps the front (the ack) and drops the oldest tail.
+                # Results / decisions / errors — the thing the listener is
+                # actually waiting on. The moment one lands, any queued
+                # mid-stream progress (milestones) is stale: the listener
+                # wants the result NOW, not behind "still structuring the
+                # network." So drop pending routine progress, then jump the
+                # result to the FRONT so it plays next (after whatever's
+                # mid-sentence). Trim drops the oldest tail if still over cap.
+                before = len(self._queue)
+                self._queue = [
+                    e for e in self._queue
+                    if (e[5] or {}).get("kind") != "intermediate"
+                ]
+                dropped_stale = before - len(self._queue)
+                if dropped_stale:
+                    _log("queue_drop_stale", dropped=dropped_stale)
                 self._queue.insert(0, item)
                 if len(self._queue) > self._queue_max:
                     dropped = len(self._queue) - self._queue_max
@@ -1914,6 +1979,10 @@ class Daemon:
         # need it to decide whether to fire an implicit signal.
         was_speaking = self._current_cancel is not None
         self._cancel_only()
+        # Pausing means "quiet" — drop anything we were holding to replay
+        # after dictation too, so unpausing later doesn't dump stale lines.
+        with self._queue_cv:
+            self._deferred_while_mic = []
         # User-initiated mute (hotkey, menu, socket) correlates with
         # the most-recent utterance as a preference signal: "didn't
         # want what I was hearing." Either mid-utterance or shortly
@@ -2160,7 +2229,32 @@ class Daemon:
     # a short canned line instead of reading the wall.
     _FLOOR_FINAL_VERBATIM_MAX = 240
 
-    def _floor_text(self, kind: str, neutral: str, persona) -> str:
+    def _final_lead(self, neutral: str, *, max_chars: int = 220) -> str:
+        """First sentence-or-two of a long final, markdown-stripped — a
+        no-LLM lead for the floor that beats punting the listener to
+        their terminal. Returns "" if nothing usable."""
+        from heard import markdown
+        text = markdown.strip(neutral or "").strip()
+        if not text:
+            return ""
+        parts = re.split(r"(?<=[.!?])\s+", text)
+        out = ""
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            if out and len(out) + 1 + len(p) > max_chars:
+                break
+            out = p if not out else f"{out} {p}"
+            if len(out) >= max_chars:
+                break
+        if len(out) > max_chars:
+            # One run-on sentence longer than the budget — cut on the last
+            # word boundary so we don't slice mid-word.
+            out = out[:max_chars].rsplit(" ", 1)[0]
+        return out.strip()
+
+    def _floor_text(self, kind: str, neutral: str, persona, project: str = "") -> str:
         """No-LLM fallback for an event the harness punted on and no LLM
         could summarize. The honest floor by event kind:
 
@@ -2184,7 +2278,17 @@ class Daemon:
         if kind == "final":
             if neutral and len(neutral) <= self._FLOOR_FINAL_VERBATIM_MAX:
                 return _with_addr(neutral)
-            return _with_addr("That's done — the details are in your terminal")
+            # Long final + no LLM to summarize. Still don't punt the
+            # listener to their terminal — read the LEAD of the actual
+            # message, prefixed with the project so they know WHAT
+            # finished. An honest partial beats "go look."
+            proj = (project or "").strip()
+            lead = self._final_lead(neutral)
+            if lead:
+                return _with_addr(f"On {proj}, {lead}" if proj else lead)
+            if proj:
+                return _with_addr(f"That's wrapped up on {proj}")
+            return _with_addr("That's wrapped up")
         if kind == "intermediate":
             return ""
         return neutral
@@ -2282,6 +2386,11 @@ class Daemon:
         # as inert state; honoring it would resurrect the old behavior
         # so we just always-drop the event now.
         if kind == "prompt_intent":
+            # A new user prompt opens a turn — arm the opener so the
+            # first intermediate that follows is force-spoken (immediate
+            # audio, no dead-air ramp-up). The event itself stays retired.
+            if session_id:
+                self._opener_pending.add(session_id)
             _log("event_drop", kind=kind, reason="prompt_intent_retired")
             return
 
@@ -2369,11 +2478,11 @@ class Daemon:
                     persona=persona,
                     session_id=session_id,
                     history_meta=history_meta,
-                    # Short assistant preambles ("On it — …") are the
-                    # responsive stream: jump the queue so they're not
-                    # stale by the time they play. Tool announcements
-                    # keep the normal FIFO lane.
-                    priority=(kind == "intermediate"),
+                    # Errors and user-facing questions jump the queue and
+                    # clear stale progress ahead of them — they're the
+                    # signal the listener can't afford to hear late. Routine
+                    # tool announcements keep the normal FIFO lane.
+                    priority=harness.is_critical_template_event(req),
                 )
                 return
 
@@ -2384,6 +2493,13 @@ class Daemon:
         #   - speak=False       → harness chose silence; suppress
         #   - speak=True        → enqueue harness.text directly
         if harness.is_enabled(cfg):
+            # Is this the turn's opener? The first intermediate after a
+            # user prompt. Consume the pending flag now so only the first
+            # one qualifies; force it to speak (below) so the listener
+            # gets immediate audio instead of a dead-air ramp-up.
+            is_opener = kind == "intermediate" and session_id in self._opener_pending
+            if is_opener:
+                self._opener_pending.discard(session_id)
             harness_error = False
             try:
                 decision = harness.narrate(
@@ -2393,6 +2509,7 @@ class Daemon:
                     agent_states=self.agent_states,
                     working_memory=self.working_memory.snapshot(),
                     cwd=cwd,
+                    is_opener=is_opener,
                 )
             except Exception:
                 decision = None
@@ -2405,6 +2522,58 @@ class Daemon:
                     _log("harness_think", kind=kind, tag=tag,
                          text=decision.think[:240].replace("\n", " "))
                 if not decision.speak:
+                    # A final is the result the listener explicitly wants
+                    # ("the newest update of what just happened") — the
+                    # brain is NOT allowed to swallow it as "routine /
+                    # housekeeping." If it tried to skip a final, fall
+                    # through to the floor (short final read as-is, long
+                    # final → a clean "that's done" line) rather than
+                    # going silent. Mid-stream events may still be skipped.
+                    if kind == "final":
+                        _log("harness_skip_override", kind=kind, tag=tag,
+                             reason="final_always_speaks")
+                        info = self.router._sessions.get(session_id)  # noqa: SLF001
+                        proj = getattr(info, "repo_name", "") or ""
+                        floor = self._floor_text(kind, neutral, persona, project=proj)
+                        if floor:
+                            history_meta = {
+                                "kind": kind, "tag": tag, "neutral": neutral,
+                                "profile": cfg.get("verbosity", "normal"),
+                                "repo_name": proj,
+                                "cwd": cwd or "", "via": "floor",
+                            }
+                            _log("event_speak", kind=kind, tag=tag,
+                                 persona=persona.name, chars=len(floor), via="floor")
+                            self._start_speech(
+                                floor, cfg=cfg, persona=persona,
+                                session_id=session_id, history_meta=history_meta,
+                                priority=True,
+                            )
+                            return
+                    # The opener must never be swallowed either — it's the
+                    # turn's immediate "I'm on it." If the brain skipped it,
+                    # speak a clean lead of the agent's first line so there's
+                    # instant audio at turn start.
+                    if is_opener:
+                        lead = self._final_lead(neutral, max_chars=160)
+                        if lead:
+                            _log("harness_skip_override", kind=kind, tag=tag,
+                                 reason="opener_always_speaks")
+                            info = self.router._sessions.get(session_id)  # noqa: SLF001
+                            history_meta = {
+                                "kind": kind, "tag": tag, "neutral": neutral,
+                                "profile": cfg.get("verbosity", "normal"),
+                                "repo_name": getattr(info, "repo_name", "") or "",
+                                "cwd": cwd or "", "via": "floor",
+                            }
+                            _log("event_speak", kind=kind, tag=tag,
+                                 persona=persona.name, chars=len(lead), via="floor")
+                            self._start_speech(
+                                lead, cfg=cfg, persona=persona,
+                                session_id=session_id, history_meta=history_meta,
+                                priority=True,
+                            )
+                            return
                     _log("event_drop", kind=kind, tag=tag, reason="harness_skip")
                     return
                 # Harness produced text — bypass the v1 verbosity /
@@ -2472,11 +2641,11 @@ class Daemon:
                     session_id=session_id,
                     voice_override=focused_voice,
                     history_meta=history_meta,
-                    # Mid-stream prose ("I'm starting X") is time-sensitive —
-                    # jump the backlog like the old fast lane did, so routing
-                    # it through the harness for plain-English doesn't bring
-                    # back the 5.5s queue wait. Finals wait their turn.
-                    priority=(kind == "intermediate"),
+                    # A final IS the result the listener is waiting on:
+                    # jump it to the front and clear any queued mid-stream
+                    # milestones ahead of it (they're stale once the result
+                    # lands). Milestones themselves stay FIFO and droppable.
+                    priority=(kind == "final"),
                 )
                 return
             _log("event_harness_punt", kind=kind, tag=tag)
@@ -2499,22 +2668,23 @@ class Daemon:
             # mid-stream blip is dropped, tool-ish events keep their clean
             # template. This replaces the old v1 rewrite fallback, whose
             # template→neutral chain read the raw wall when Haiku was down.
-            floor = self._floor_text(kind, neutral, persona)
+            info = self.router._sessions.get(session_id)  # noqa: SLF001
+            proj = getattr(info, "repo_name", "") or ""
+            floor = self._floor_text(kind, neutral, persona, project=proj)
             if not floor:
                 _log("event_drop", kind=kind, tag=tag, reason="floor_drop")
                 return
-            info = self.router._sessions.get(session_id)  # noqa: SLF001
             history_meta = {
                 "kind": kind, "tag": tag, "neutral": neutral,
                 "profile": cfg.get("verbosity", "normal"),
-                "repo_name": getattr(info, "repo_name", "") or "",
+                "repo_name": proj,
                 "cwd": cwd or "", "via": "floor",
             }
             _log("event_speak", kind=kind, tag=tag, persona=persona.name,
                  chars=len(floor), via="floor")
             self._start_speech(
                 floor, cfg=cfg, persona=persona, session_id=session_id,
-                history_meta=history_meta, priority=(kind == "intermediate"),
+                history_meta=history_meta, priority=(kind == "final"),
             )
             return
 

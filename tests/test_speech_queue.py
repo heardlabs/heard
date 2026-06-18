@@ -367,6 +367,82 @@ def test_new_session_drops_queued_items_from_other_sessions(tmp_path, monkeypatc
     assert "session-A-third" not in spoken
 
 
+def test_mic_active_defers_then_flushes_on_release(tmp_path, monkeypatch):
+    """While the mic is hot (user dictating via Wispr), narration is
+    HELD, not dropped — and replays through the queue once the mic
+    frees up, so the listener hears what happened while they talked."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    spoken: list[str] = []
+    lock = threading.Lock()
+
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
+        if cancel.is_set():
+            return
+        with lock:
+            spoken.append(text)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    daemon._mic_active = True
+    daemon._start_speech("held-1", session_id="A")
+    daemon._start_speech("held-2", session_id="A")
+
+    # Nothing plays while the mic is hot; both lines are held.
+    with daemon._queue_cv:
+        assert daemon._queue == []
+        assert len(daemon._deferred_while_mic) == 2
+
+    # Mic frees up → held lines replay through the queue and play in order.
+    daemon._mic_active = False
+    daemon._flush_deferred_while_mic()
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        with daemon._queue_cv:
+            drained = not daemon._queue and (
+                daemon._speech_worker is None or not daemon._speech_worker.is_alive()
+            )
+        if drained:
+            break
+        time.sleep(0.02)
+
+    assert spoken == ["held-1", "held-2"]
+    with daemon._queue_cv:
+        assert daemon._deferred_while_mic == []
+
+
+def test_mic_held_buffer_drops_stale_routine_on_result(tmp_path, monkeypatch):
+    """A result (priority final) held while dictating drops the routine
+    progress held ahead of it — release plays the fresh signal, not the
+    stale mid-task step that the result already supersedes."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+    daemon._mic_active = True
+
+    daemon._start_speech("still working on it",
+                         history_meta={"kind": "intermediate"})
+    daemon._start_speech("done — network's built",
+                         history_meta={"kind": "final"}, priority=True)
+
+    with daemon._queue_cv:
+        held = [item[0] for item, _pri in daemon._deferred_while_mic]
+    assert "still working on it" not in held, "stale routine should be dropped"
+    assert "done — network's built" in held
+
+
+def test_mute_clears_held_dictation_buffer(tmp_path, monkeypatch):
+    """Pausing Heard drops the held-while-dictating buffer too, so
+    unpausing later doesn't dump stale lines."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+    daemon._mic_active = True
+    daemon._start_speech("held", history_meta={"kind": "final"}, priority=True)
+    with daemon._queue_cv:
+        assert daemon._deferred_while_mic
+    daemon._do_mute(source="socket")
+    with daemon._queue_cv:
+        assert daemon._deferred_while_mic == []
+
+
 def test_silence_clears_queue(tmp_path, monkeypatch):
     """The silence hotkey should zero out queued events, not just
     cancel the in-flight one."""
