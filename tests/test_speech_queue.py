@@ -412,10 +412,10 @@ def test_mic_active_defers_then_flushes_on_release(tmp_path, monkeypatch):
         assert daemon._deferred_while_mic == []
 
 
-def test_mic_held_buffer_drops_stale_routine_on_result(tmp_path, monkeypatch):
-    """A result (priority final) held while dictating drops the routine
-    progress held ahead of it — release plays the fresh signal, not the
-    stale mid-task step that the result already supersedes."""
+def test_mic_held_buffer_keeps_progress_and_results(tmp_path, monkeypatch):
+    """While dictating, BOTH progress and results are held (no dropping)
+    so the listener gets a full catch-up on release — a held result no
+    longer wipes the progress lines ahead of it."""
     daemon = _make_daemon(tmp_path, monkeypatch)
     daemon._mic_active = True
 
@@ -426,8 +426,22 @@ def test_mic_held_buffer_drops_stale_routine_on_result(tmp_path, monkeypatch):
 
     with daemon._queue_cv:
         held = [item[0] for item, _pri in daemon._deferred_while_mic]
-    assert "still working on it" not in held, "stale routine should be dropped"
-    assert "done — network's built" in held
+    assert held == ["still working on it", "done — network's built"]
+
+
+def test_mic_held_buffer_caps_at_deferred_max(tmp_path, monkeypatch):
+    """The held buffer is bounded so a very long dictation can't dump an
+    unbounded wall — oldest held lines drop past the cap."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+    daemon._mic_active = True
+    cap = daemon._DEFERRED_MIC_MAX
+    for i in range(cap + 3):
+        daemon._start_speech(f"line-{i}", history_meta={"kind": "intermediate"})
+    with daemon._queue_cv:
+        held = [item[0] for item, _pri in daemon._deferred_while_mic]
+    assert len(held) == cap
+    assert held[0] == "line-3"   # oldest three dropped
+    assert held[-1] == f"line-{cap + 2}"
 
 
 def test_mute_clears_held_dictation_buffer(tmp_path, monkeypatch):

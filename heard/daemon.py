@@ -243,6 +243,11 @@ class Daemon:
         # signal, never a minute-long backlog. Each entry is (item,
         # priority); item matches a _queue tuple.
         self._deferred_while_mic: list[tuple[tuple, bool]] = []
+        # Cap on the held-while-dictating buffer (separate from the live
+        # queue's _queue_max). Larger, because this is a catch-up of a
+        # whole dictation window, not a live backlog — we want a fuller
+        # replay, bounded so a very long dictation still can't dump a wall.
+        self._DEFERRED_MIC_MAX = 10
         # Per-session turn-opener tracking. A user prompt (prompt_intent
         # event) adds the session here; the FIRST intermediate that
         # follows is the turn's "opener" (Claude's short first reply) and
@@ -874,25 +879,30 @@ class Daemon:
 
     def _flush_deferred_while_mic(self) -> None:
         """Mic just freed up — replay what we held back while the listener
-        was dictating. Items go back through ``_start_speech`` (mic now
-        clear) so the normal queue rules apply: a held final jumps the
-        front and clears stale held progress, the queue stays capped.
-        ``coexists=True`` so items from different sessions that piled up
-        during dictation all get to play in turn rather than the
-        freshest-session-wins drop cancelling them on the way in."""
+        was dictating, as a full catch-up in chronological order.
+
+        We append the whole held batch straight onto the queue rather than
+        re-running each through ``_start_speech``. Routing them back through
+        the normal path would re-apply the live-queue rules — the 5-item
+        cap would re-truncate the batch, and a held result (priority) would
+        clear the held progress lines ahead of it — which is exactly the
+        over-dropping the listener asked us to stop. The batch is already
+        bounded (``_DEFERRED_MIC_MAX``) and already in order, so we play it
+        as-is."""
         with self._queue_cv:
             deferred = self._deferred_while_mic
             self._deferred_while_mic = []
-        if not deferred:
-            return
+            if not deferred:
+                return
+            for item, _priority in deferred:
+                self._queue.append(item)
+            if self._speech_worker is None or not self._speech_worker.is_alive():
+                self._speech_worker = threading.Thread(
+                    target=self._drain_queue, daemon=True
+                )
+                self._speech_worker.start()
+            self._queue_cv.notify()
         _log("mic_deferred_flush", count=len(deferred))
-        for item, priority in deferred:
-            text, cfg, persona, session_id, voice_override, history_meta = item
-            self._start_speech(
-                text, cfg=cfg, persona=persona, session_id=session_id,
-                voice_override=voice_override, history_meta=history_meta,
-                coexists=True, priority=priority,
-            )
 
     def _stop_audio_monitor(self) -> None:
         if self._mic_release_timer is not None:
@@ -1779,21 +1789,19 @@ class Daemon:
             return
         # Mic-active suppression — see _speak / _on_mic_active. Rather
         # than DROP what we'd say while the listener is dictating, hold
-        # it and replay on mic-release (_flush_deferred_while_mic). Keep
-        # the buffer lean: a fresh result/decision (priority) drops any
-        # held routine progress ahead of it, and the buffer is capped at
-        # _queue_max — so release plays the freshest signal, not a wall.
+        # it and replay on mic-release (_flush_deferred_while_mic). We
+        # keep BOTH progress and results so the listener gets a fuller
+        # catch-up of what happened while they talked — the only bound is
+        # the buffer cap (most recent _DEFERRED_MIC_MAX), so a very long
+        # dictation still can't dump an unbounded backlog.
         if self._mic_active:
             item = (text, cfg, persona, session_id, voice_override, history_meta or {})
             with self._queue_cv:
-                if priority:
-                    self._deferred_while_mic = [
-                        d for d in self._deferred_while_mic
-                        if (d[0][5] or {}).get("kind") != "intermediate"
-                    ]
                 self._deferred_while_mic.append((item, priority))
-                if len(self._deferred_while_mic) > self._queue_max:
-                    self._deferred_while_mic = self._deferred_while_mic[-self._queue_max:]
+                if len(self._deferred_while_mic) > self._DEFERRED_MIC_MAX:
+                    self._deferred_while_mic = (
+                        self._deferred_while_mic[-self._DEFERRED_MIC_MAX:]
+                    )
                 held = len(self._deferred_while_mic)
             _log("speech_deferred_mic", session=session_id, held=held)
             return
