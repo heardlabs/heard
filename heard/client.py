@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -221,25 +222,37 @@ def start_headless_daemon() -> bool:
             )
             return False
 
-        # If another daemon is already running (e.g. left over from a
-        # crash, socket file got removed) — don't pile a second one on
-        # top. Surface the situation; the user can `pkill -f heard.daemon`.
+        # If a heard.daemon process is still around but NOT answering the
+        # socket (we only get here after is_daemon_alive() was False), it's
+        # a wedged orphan — almost always one the menu-bar app left behind
+        # when it quit for an in-app update without reaping its daemon
+        # child. The old behaviour refused to spawn and told the user to
+        # `pkill` by hand, which is exactly why an in-app update relaunched
+        # into a dead app. Reap the orphan ourselves and take over — this
+        # lives in startup, so it self-heals on the very next launch (and
+        # travels with the new version, fixing the upgrade hop for users
+        # already on a broken build).
         others = _other_daemon_pids()
         if others:
-            notify.notify(
-                "Heard — orphan daemon detected",
-                f"Another heard.daemon (pid={others[0]}) is running but not responding. "
-                "Run `pkill -f heard.daemon` in a terminal to clear it.",
-                kind="orphan_daemon",
-            )
+            for pid in others:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except OSError:
+                    pass
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and _other_daemon_pids():
+                time.sleep(0.1)
+            for pid in _other_daemon_pids():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
             print(
-                f"heard: another heard.daemon is already running "
-                f"(pid={others[0]}) but isn't responding on the socket. "
-                f"Refusing to spawn a second one. Run "
-                f"`pkill -f heard.daemon` to clear it.",
+                f"heard: reaped {len(others)} wedged heard.daemon orphan(s) "
+                f"(pid={others[0]}…) that weren't answering the socket; "
+                f"starting a fresh daemon.",
                 file=sys.stderr, flush=True,
             )
-            return False
 
         # Stale socket from a previous unclean shutdown — safe to remove
         # only because we've confirmed no other daemon owns it.
