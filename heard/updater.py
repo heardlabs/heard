@@ -484,6 +484,7 @@ def _build_swap_script(
     target_version: str,
     marker_path: Path,
     log_path: Path,
+    stale_runtime_files: tuple[str, ...] = (),
 ) -> str:
     """Render the bash helper that performs the actual bundle swap.
 
@@ -503,8 +504,18 @@ def _build_swap_script(
        surface the "we cleaned up after ourselves" notification.
     6. ``open`` to relaunch.
 
+    Before the relaunch it removes the daemon's stale runtime files
+    (``stale_runtime_files`` — the Unix socket + pid file). The old
+    process owned them; if they survive the swap, the freshly-opened
+    app launches into a stale socket and the daemon never binds — the
+    relaunch "crashes" and the user has to open the app a second time.
+    (This is the same cleanup the manual hot-patch flow does by hand.)
+
     Logs to ``log_path`` so a failed swap is debuggable; the helper is
     detached so it has no stdout/stderr to inherit from us."""
+    rm_runtime = "".join(
+        f"/bin/rm -f {shlex.quote(p)}\n" for p in stale_runtime_files
+    )
     return (
         "#!/bin/bash\n"
         "set -u\n"
@@ -528,6 +539,9 @@ def _build_swap_script(
         "/usr/bin/xattr -dr com.apple.quarantine \"$target\" 2>/dev/null || true\n"
         "mkdir -p \"$(dirname \"$marker\")\"\n"
         "printf '%s' \"$version\" > \"$marker\"\n"
+        # Clear the dead daemon's socket + pid so the relaunched app can
+        # bind a fresh one instead of dying on a stale socket.
+        f"{rm_runtime}"
         "/usr/bin/open \"$target\"\n"
         "echo \"--- $(date) swap done ---\"\n"
     )
@@ -558,6 +572,14 @@ def stage_and_swap(
     log_path = updates_dir / "apply_update.log"
     marker_path = _post_update_marker_path()
 
+    # The daemon's socket + pid belong to the process we're about to
+    # replace; clear them in the swap so the relaunch comes up clean.
+    try:
+        from heard import config
+        stale_runtime_files = (str(config.SOCKET_PATH), str(config.PID_PATH))
+    except Exception:
+        stale_runtime_files = ()
+
     script = _build_swap_script(
         parent_pid=parent_pid,
         staged_app=staged_app,
@@ -565,6 +587,7 @@ def stage_and_swap(
         target_version=target_version,
         marker_path=marker_path,
         log_path=log_path,
+        stale_runtime_files=stale_runtime_files,
     )
     helper_path.write_text(script, encoding="utf-8")
     helper_path.chmod(0o755)

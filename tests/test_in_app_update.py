@@ -21,6 +21,7 @@ These tests pin the contract end-to-end:
 from __future__ import annotations
 
 import os
+import shlex
 from unittest.mock import patch
 
 import pytest
@@ -194,6 +195,30 @@ def test_build_swap_script_contains_required_steps(_scratch):
     # Version is shell-quoted so a future "v0.8.1-beta" tag doesn't
     # break the script.
     assert "0.8.1" in script
+
+
+def test_build_swap_script_clears_stale_daemon_runtime_files(_scratch):
+    """The relaunch must clear the dead daemon's socket + pid before
+    `open`, or the new app launches into a stale socket and the daemon
+    never binds (the "in-app update crashes on relaunch" bug). The
+    rm -f for each runtime file must appear BEFORE the open."""
+    data_dir, install_path = _scratch
+    staged = data_dir / "updates" / "staging" / "Heard.app"
+    sock = str(data_dir / "daemon.sock")
+    pid = str(data_dir / "daemon.pid")
+    script = updater._build_swap_script(
+        parent_pid=99999,
+        staged_app=staged,
+        target_app=install_path,
+        target_version="0.8.1",
+        marker_path=data_dir / "updates" / "post_update.txt",
+        log_path=data_dir / "updates" / "apply_update.log",
+        stale_runtime_files=(sock, pid),
+    )
+    assert f"/bin/rm -f {shlex.quote(sock)}" in script
+    assert f"/bin/rm -f {shlex.quote(pid)}" in script
+    # Cleanup must happen before the relaunch.
+    assert script.index(sock) < script.index("/usr/bin/open")
 
 
 def test_stage_and_swap_writes_helper_without_spawning(_scratch):
