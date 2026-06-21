@@ -46,6 +46,32 @@ _HOTKEY_GLYPHS = {
 }
 
 
+def _resolve_onboarded(cfg: dict) -> tuple[bool, bool]:
+    """Decide whether the user counts as onboarded, with self-heal.
+
+    Returns ``(onboarded, should_persist)``. The first-launch wizard is
+    gated purely on the ``onboarded`` flag, so a flag that drifted false
+    (config reset, upgrade from a build predating the flag, an in-app
+    update relaunch) would re-show the wizard to an existing user — the
+    "clicking install makes me re-onboard" report.
+
+    A user with ANY "already set up" signal — a managed sign-in token, a
+    BYOK ElevenLabs key, or a prior greeting — has plainly finished
+    setup, so we treat them as onboarded and flag the drifted value for
+    healing. A genuine first-timer has none of these and still onboards.
+    """
+    if cfg.get("onboarded"):
+        return True, False
+    already_set_up = bool(
+        (cfg.get("heard_token") or "").strip()
+        or (cfg.get("elevenlabs_api_key") or "").strip()
+        or cfg.get("greeted")
+    )
+    if already_set_up:
+        return True, True  # treat as onboarded, persist the healed flag
+    return False, False
+
+
 def _pretty_hotkey(binding: str) -> str:
     """Format a pynput hotkey string as a compact glyph form. Unknown
     tokens pass through verbatim so a user-defined named key (e.g.
@@ -370,7 +396,15 @@ class HeardApp(rumps.App):
         # the user clicks "Skip setup".
         if not self._first_launch_checked and alive:
             self._first_launch_checked = True
-            if not cfg.get("onboarded"):
+            onboarded, heal = _resolve_onboarded(cfg)
+            if heal:
+                # Persist the healed flag so we stop re-deciding it every
+                # launch (and so the daemon's narration gate sees it too).
+                try:
+                    config.set_value("onboarded", True)
+                except Exception:
+                    pass
+            if not onboarded:
                 self._first_launch_prompt()
 
         last_error = (status or {}).get("last_error") or None
