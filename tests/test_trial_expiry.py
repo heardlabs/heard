@@ -100,6 +100,22 @@ def test_sync_plan_from_me_persists_server_plan_over_stale_config(tmp_path, monk
     assert reloaded["called"] is True
 
 
+def test_request_account_refresh_accelerates_and_wakes_poll(tmp_path, monkeypatch):
+    """Clicking Upgrade must poll /v1/me hard immediately: the wake event
+    fires (cuts the current sleep) and an accelerate window opens so the
+    plan flips within seconds of the Stripe webhook, not the next tick."""
+    import time as _time
+
+    daemon, _ = _make_daemon(
+        tmp_path, monkeypatch, {"heard_token": "tok", "heard_plan": "trial"}
+    )
+    assert not daemon._usage_poll_wake.is_set()
+    before = _time.monotonic()
+    daemon._request_account_refresh(accelerate_s=600.0)
+    assert daemon._usage_poll_wake.is_set()
+    assert daemon._usage_poll_accelerate_until >= before + 599.0
+
+
 def test_sync_plan_from_me_noop_when_already_matching(tmp_path, monkeypatch):
     """No drift → no write, no reload (don't thrash config every poll)."""
     future_ms = int(time.time() * 1000) + 10 * 24 * 60 * 60 * 1000

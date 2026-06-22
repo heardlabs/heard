@@ -1045,6 +1045,14 @@ class HeardApp(rumps.App):
             webbrowser.open(url)
         except Exception:
             pass
+        # They're about to pay in the browser. Tell the daemon to poll
+        # /v1/me hard for the next few minutes so the plan flips to pro
+        # within seconds of the Stripe webhook landing — the menu turns
+        # Pro on return instead of waiting for the next 5-minute tick.
+        try:
+            client.send({"cmd": "refresh_account"})
+        except Exception:
+            pass
 
     # --- account + api-key row builders -----------------------------------
 

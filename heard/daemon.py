@@ -147,6 +147,14 @@ class Daemon:
         # of "0 / 100K" until the first poll completes.
         self._account_usage: dict | None = None
         self._account_usage_at: float = 0.0
+        # /v1/me poll pacing. The loop normally ticks every 5 min, but an
+        # upgrade happens out-of-band (browser → Stripe → webhook), so we
+        # poll FAST for a short window right after the user initiates an
+        # upgrade — the plan then flips within seconds of the webhook
+        # landing instead of on the next 5-min tick. `_usage_poll_wake`
+        # interrupts the sleep for an immediate poll.
+        self._usage_poll_wake = threading.Event()
+        self._usage_poll_accelerate_until: float = 0.0
         self.tts = self._make_tts()
         # No anonymous-trial first-launch path — anon trials were retired
         # 2026-06-02 (sign-in now required; /v1/auth/anonymous returns 410
@@ -2806,6 +2814,12 @@ class Daemon:
         if cmd == "reload":
             self._reload_config()
             return None
+        if cmd == "refresh_account":
+            # Menu fires this when the user clicks Upgrade — poll /v1/me
+            # now + fast for a window so the plan flips to pro within
+            # seconds of the Stripe webhook, not on the next 5-min tick.
+            self._request_account_refresh()
+            return None
         if cmd == "request_accessibility":
             # Fired by the UI after onboarding finishes. Triggers the
             # macOS Accessibility prompt, then restarts the hotkey
@@ -3125,17 +3139,33 @@ class Daemon:
         on the first user interaction. Daemonised so a daemon shutdown
         doesn't wait for the sleep."""
         def _loop() -> None:
-            import time as _time
-
-            _time.sleep(3.0)
+            self._usage_poll_wake.wait(3.0)
             while True:
+                self._usage_poll_wake.clear()
                 try:
                     self._refresh_account_usage()
                 except Exception:
                     pass
-                _time.sleep(300.0)
+                # Tick fast inside an accelerate window (just-initiated
+                # upgrade), otherwise the steady 5-minute cadence. An
+                # explicit wake (refresh_account cmd) cuts the sleep short.
+                interval = (
+                    15.0
+                    if time.monotonic() < self._usage_poll_accelerate_until
+                    else 300.0
+                )
+                self._usage_poll_wake.wait(interval)
 
         threading.Thread(target=_loop, daemon=True).start()
+
+    def _request_account_refresh(self, accelerate_s: float = 600.0) -> None:
+        """Poll /v1/me now and keep polling fast for ``accelerate_s``
+        seconds. Driven by the ``refresh_account`` socket cmd, which the
+        menu fires the moment the user clicks Upgrade — so the plan flips
+        to pro within seconds of the Stripe webhook, not on the next
+        5-minute tick. Falls back to the steady cadence after the window."""
+        self._usage_poll_accelerate_until = time.monotonic() + accelerate_s
+        self._usage_poll_wake.set()
 
     def serve(self) -> None:
         sock_path = str(config.SOCKET_PATH)
