@@ -50,13 +50,22 @@ Paste this into Claude Code, Codex, or any AI coding tool:
 
 Download the latest [`Heard.zip`](https://heard.dev/download/manual?format=zip), drag `Heard.app` into `/Applications`, double-click to launch. Onboarding walks you through voice / API key / hotkey / which agents to wire up.
 
+### Codex
+
+Heard supports both **Codex CLI** and **Codex App**.
+
+- **Codex CLI:** turn on Codex in Heard, then open Codex CLI, type `/hooks`, and trust the Heard hooks.
+- **Codex App:** keep Heard running from the menu bar. Heard watches Codex Desktop's local session log and narrates new app activity automatically once Codex is enabled.
+
+You should not need to run a development daemon. If Heard ever starts with a stale daemon socket or pid file, the app now cleans that up on launch.
+
 ## What it does
 
 - **Narrates with judgment, not just transcription.** Heard decides what to say based on context — your recent activity, what tool just ran, whether something is a decision moment or routine progress. Not every tool call gets the same airtime.
 - **Two listening modes you switch between.** **Co-pilot** for screen-on work — short hooks and signposts. **Companion** for eyes-off (driving, cooking, walking) — fuller briefings that name the choice, surface the decision, end with a hook into action.
 - **Multi-agent aware.** Run 3+ agents in parallel; Heard voices the most salient one and quietly summarises the others. Each gets a distinct voice so you can tell them apart by ear.
 - **Four personas, fork-your-own.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator).
-- **Works with any coding CLI.** First-class adapters for Claude Code + Codex; `heard run <command>` wraps anything else.
+- **Works with any coding CLI.** First-class adapters for Claude Code, Codex CLI, and Codex App; `heard run <command>` wraps anything else.
 
 ## Personas
 
@@ -123,7 +132,7 @@ Yes — Apache 2.0. The easiest places to contribute are adapters (`heard/adapte
 
 ## Compatibility
 
-macOS 13+ · Claude Code + Codex first-class · Cursor and Aider planned · anything else via `heard run`.
+macOS 13+ · Claude Code + Codex CLI/App first-class · Cursor and Aider planned · anything else via `heard run`.
 
 ## Status
 

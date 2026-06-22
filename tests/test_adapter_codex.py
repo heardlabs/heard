@@ -47,43 +47,41 @@ def test_uninstall_removes(tmp_path):
             assert not any("heard.hook" in h.get("command", "") for h in entry.get("hooks", []))
 
 
-def test_feature_flag_detected(tmp_path):
+def test_feature_flag_disabled_when_hooks_false(tmp_path):
     config_file = tmp_path / "config.toml"
-    config_file.write_text("[features]\ncodex_hooks = true\nother_thing = false\n")
+    config_file.write_text("[features]\nhooks = false\nother_thing = true\n")
     with patch.object(codex, "CONFIG_PATH", config_file):
-        assert codex._feature_flag_enabled() is True
+        assert codex._feature_flag_disabled() is True
 
 
-def test_feature_flag_off_when_false(tmp_path):
+def test_feature_flag_disabled_when_deprecated_alias_false(tmp_path):
     config_file = tmp_path / "config.toml"
     config_file.write_text("[features]\ncodex_hooks = false\n")
     with patch.object(codex, "CONFIG_PATH", config_file):
-        assert codex._feature_flag_enabled() is False
+        assert codex._feature_flag_disabled() is True
 
 
-def test_feature_flag_off_when_missing(tmp_path):
+def test_feature_flag_not_disabled_when_missing(tmp_path):
     config_file = tmp_path / "config.toml"
     config_file.write_text("[other]\nkey = true\n")
     with patch.object(codex, "CONFIG_PATH", config_file):
-        assert codex._feature_flag_enabled() is False
+        assert codex._feature_flag_disabled() is False
 
 
 def test_feature_flag_no_space_form(tmp_path):
-    """Earlier the regex required `codex_hooks\\s*=\\s*true`. The TOML
-    parser handles `codex_hooks=true` without spaces too."""
+    """The TOML parser handles `hooks=false` without spaces too."""
     config_file = tmp_path / "config.toml"
-    config_file.write_text("[features]\ncodex_hooks=true\n")
+    config_file.write_text("[features]\nhooks=false\n")
     with patch.object(codex, "CONFIG_PATH", config_file):
-        assert codex._feature_flag_enabled() is True
+        assert codex._feature_flag_disabled() is True
 
 
 def test_feature_flag_subtable_form_does_not_match(tmp_path):
-    """`[features.codex_hooks]` is a sub-table, not a boolean. The
-    old regex matched it accidentally; tomllib correctly distinguishes."""
+    """`[features.hooks]` is a sub-table, not a boolean."""
     config_file = tmp_path / "config.toml"
-    config_file.write_text("[features.codex_hooks]\nenabled = true\n")
+    config_file.write_text("[features.hooks]\nenabled = false\n")
     with patch.object(codex, "CONFIG_PATH", config_file):
-        assert codex._feature_flag_enabled() is False
+        assert codex._feature_flag_disabled() is False
 
 
 def test_feature_flag_handles_other_keys_in_features(tmp_path):
@@ -91,15 +89,15 @@ def test_feature_flag_handles_other_keys_in_features(tmp_path):
     config_file.write_text(
         "[features]\n"
         "model_v2 = true\n"
-        "codex_hooks = true\n"
+        "hooks = true\n"
         "telemetry = false\n"
     )
     with patch.object(codex, "CONFIG_PATH", config_file):
-        assert codex._feature_flag_enabled() is True
+        assert codex._feature_flag_disabled() is False
 
 
 def test_feature_flag_malformed_toml_returns_false(tmp_path):
     config_file = tmp_path / "config.toml"
-    config_file.write_text("[features\ncodex_hooks = true\n")  # missing ]
+    config_file.write_text("[features\nhooks = false\n")  # missing ]
     with patch.object(codex, "CONFIG_PATH", config_file):
-        assert codex._feature_flag_enabled() is False
+        assert codex._feature_flag_disabled() is False

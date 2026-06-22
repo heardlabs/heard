@@ -12,6 +12,7 @@ here so the first tool event in a new CC session is fast.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -27,6 +28,7 @@ from pathlib import Path
 from heard import (
     accessibility,
     audio_monitor,
+    codex_app,
     config,
     defects,
     harness,
@@ -55,6 +57,90 @@ DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # weeks at a time on a busy machine; without rotation the structured
 # per-event lines accumulate into hundreds of MB.
 _LOG_ROTATE_BYTES = 10 * 1024 * 1024
+
+
+def _socket_accepts_ping(sock_path: str, timeout_s: float = 0.25) -> bool:
+    if not os.path.exists(sock_path):
+        return False
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout_s)
+        s.connect(sock_path)
+        s.sendall(json.dumps({"cmd": "ping"}).encode("utf-8"))
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
+def _pid_from_file(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError as e:
+        return e.errno == errno.EPERM
+
+
+def _terminate_pid(pid: int) -> None:
+    if pid == os.getpid():
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if not _pid_is_running(pid):
+            return
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def _unlink_if_present(path: str | Path) -> bool:
+    try:
+        os.unlink(path)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _prepare_runtime_for_bind(sock_path: str, pid_path: Path) -> bool:
+    """Return True when this process should bind a fresh daemon socket.
+
+    If another daemon is answering the socket, leave it alone and let
+    this launch exit. If the pid/socket files are stale, remove them.
+    If the pid points at a wedged process that is not answering, reap it
+    before binding so the next launch self-heals without manual cleanup.
+    """
+    if _socket_accepts_ping(sock_path):
+        _log("daemon_bind_skip", reason="already_running")
+        return False
+
+    stale_pid = _pid_from_file(pid_path)
+    if stale_pid and stale_pid != os.getpid() and _pid_is_running(stale_pid):
+        _log("daemon_stale_pid_reap", pid=stale_pid)
+        _terminate_pid(stale_pid)
+
+    try:
+        removed_sock = _unlink_if_present(sock_path)
+        removed_pid = _unlink_if_present(pid_path)
+        if removed_sock or removed_pid:
+            _log("daemon_runtime_cleaned", socket=removed_sock, pid=removed_pid)
+    except PermissionError as e:
+        _log("daemon_runtime_clean_failed", err=type(e).__name__)
+        raise
+    return True
 
 def _log(event: str, **fields: object) -> None:
     """One structured line per event, parseable by eye and by grep.
@@ -295,6 +381,7 @@ class Daemon:
         # complete) but never narrated, until /unquiet. In-memory: a
         # daemon restart clears mutes (acceptable — a session is bounded).
         self._muted_sessions: set[str] = set()
+        self._codex_app_observer: codex_app.CodexAppObserver | None = None
         self._start_hotkey()
         self._start_audio_monitor()
         # Layer 3 — Working Memory compressor thread. Idle-loops on
@@ -327,6 +414,7 @@ class Daemon:
         # version comparison naturally stops returning anything).
         self.pending_update: updater.UpdateInfo | None = None
         self._start_update_check()
+        self._start_codex_app_observer()
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
         # Phase 1 analytics. mark_first_launch_if_new flips the persisted
         # marker so subsequent boots fire `app_launched` instead. Both
@@ -651,6 +739,40 @@ class Daemon:
             on_update=_on_update,
             enabled=lambda: bool(self.cfg.get("update_check_enabled", True)),
         )
+
+    def _start_codex_app_observer(self) -> None:
+        """Tail Codex Desktop session logs when the Codex adapter is on."""
+        try:
+            from heard.adapters import codex as codex_adapter
+
+            if not codex_adapter.is_installed():
+                if self._codex_app_observer is not None:
+                    self._codex_app_observer.stop()
+                    self._codex_app_observer = None
+                    _log("codex_app_observer_stop", reason="codex_uninstalled")
+                return
+        except Exception as e:
+            _log("codex_app_observer_skip", reason="install_check_failed", err=type(e).__name__)
+            return
+        if self._codex_app_observer is not None:
+            return
+
+        def _emit(event: dict) -> None:
+            self._handle_event({"cmd": "event", **event})
+
+        def _observer_log(message: str) -> None:
+            _log("codex_app_observer", message=message)
+
+        try:
+            self._codex_app_observer = codex_app.CodexAppObserver(
+                emit=_emit,
+                log=_observer_log,
+            )
+            self._codex_app_observer.start()
+            _log("codex_app_observer_start")
+        except Exception as e:
+            self._codex_app_observer = None
+            _log("codex_app_observer_skip", reason="start_failed", err=type(e).__name__)
 
     def _start_digest_timer(self) -> None:
         """Per-project channel scheduler. Drains the router's pending
@@ -1200,6 +1322,7 @@ class Daemon:
             self._stop_audio_monitor()
             if new_auto_silence:
                 self._start_audio_monitor()
+        self._start_codex_app_observer()
         # Greeting check: if the user just signed in / pasted a key and
         # we re-picked from NullTTS to a real backend, fire the welcome
         # line on this reload rather than waiting for the next daemon
@@ -3169,12 +3292,19 @@ class Daemon:
 
     def serve(self) -> None:
         sock_path = str(config.SOCKET_PATH)
-        try:
-            os.unlink(sock_path)
-        except FileNotFoundError:
-            pass
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(sock_path)
+        if not _prepare_runtime_for_bind(sock_path, config.PID_PATH):
+            srv.close()
+            return
+        try:
+            srv.bind(sock_path)
+        except OSError:
+            if _socket_accepts_ping(sock_path):
+                _log("daemon_bind_skip", reason="race_already_running")
+                srv.close()
+                return
+            _unlink_if_present(sock_path)
+            srv.bind(sock_path)
         os.chmod(sock_path, 0o600)
         srv.listen(4)
         config.PID_PATH.write_text(str(os.getpid()))

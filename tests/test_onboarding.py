@@ -64,4 +64,6 @@ def test_after_install_prints_welcome_and_notifies(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "codex" in out
     assert "⌘⇧." in out
+    assert "Codex CLI" in out
+    assert "Codex App" in out
     assert called["title"] == "Heard is ready"

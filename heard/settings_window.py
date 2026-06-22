@@ -979,7 +979,7 @@ class SettingsController(NSObject):
         codex_check = _checkbox("", target=self, action="onCodexToggled:")
         codex_row = _setting_row(
             "Codex",
-            "Install Heard's hook for the Codex CLI.",
+            "Narrate Codex CLI hooks and Codex App sessions.",
             codex_check,
         )
         self._add_card(body, _card([cc_row, codex_row]))
@@ -3088,7 +3088,7 @@ class _OnboardingController(NSObject):
         cc = _checkbox("", target=self, action="onWizClaudeCode:")
         cc_row = _setting_row("Claude Code", "Narrate Claude Code's tool calls and replies.", cc)
         cx = _checkbox("", target=self, action="onWizCodex:")
-        cx_row = _setting_row("Codex", "Narrate the Codex CLI.", cx)
+        cx_row = _setting_row("Codex", "Narrate Codex CLI and Codex App.", cx)
         # Cursor — not wired up yet. Dimmed title + "Coming soon" tag in
         # place of a toggle so it reads as planned, not broken.
         cur_title = _label("Cursor", size=13, bold=True, dim=True)

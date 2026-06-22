@@ -7,11 +7,13 @@ knowing:
 
 1. Codex only emits "Bash" as tool_name today (other tools will come);
    our templates already handle that gracefully.
-2. Hooks are behind a feature flag in ~/.codex/config.toml:
+2. Hooks are enabled by default in current Codex. Users can turn them
+   off in ~/.codex/config.toml:
        [features]
-       codex_hooks = true
-   We check and warn; we do NOT edit config.toml automatically because
-   it may contain other user settings.
+       hooks = false
+   `codex_hooks` still works as a deprecated alias. We only warn when
+   hooks are explicitly disabled; we do NOT edit config.toml
+   automatically because it may contain other user settings.
 """
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ def _install_event(data: dict, event: str) -> None:
         {
             "type": "command",
             "command": _hook_command(),
-            "timeoutSec": 60,
+            "timeout": 60,
         }
     )
     arr[0]["hooks"] = cleaned
@@ -74,23 +76,25 @@ def install() -> None:
         _install_event(data, event)
     _write_hooks(data)
 
-    # Feature-flag check — warn the user when the flag isn't on.
+    # Feature-flag check — warn the user only when hooks are explicitly
+    # disabled. Current Codex enables hooks by default; `codex_hooks` is
+    # the old alias and should not be required for a working install.
     # stderr alone vanishes for menu-bar onboarding installs (the
     # process has no terminal). Push a macOS notification too so a
     # user who clicks "codex" in the onboarding window doesn't end
     # up with hooks installed but quietly disabled.
-    if not _feature_flag_enabled():
+    if _feature_flag_disabled():
         msg = (
-            f"Codex hooks are behind a feature flag. Add this to "
-            f"{CONFIG_PATH}:\n\n    [features]\n    codex_hooks = true\n"
+            f"Codex hooks are disabled. Remove this from "
+            f"{CONFIG_PATH}, or set:\n\n    [features]\n    hooks = true\n"
         )
         print(f"\nheard: {msg}", file=sys.stderr)
         try:
             from heard import notify
 
             notify.notify(
-                "Heard — Codex hooks need a feature flag",
-                f"Add `codex_hooks = true` under [features] in {CONFIG_PATH}",
+                "Heard — Codex hooks are disabled",
+                f"Set `hooks = true` under [features] in {CONFIG_PATH}",
                 kind="codex_flag_off",
             )
         except Exception:
@@ -120,20 +124,21 @@ def is_installed() -> bool:
     return False
 
 
-def _feature_flag_enabled() -> bool:
-    """True iff ``codex_hooks = true`` is set under ``[features]``.
+def _feature_flag_disabled() -> bool:
+    """True iff Codex hooks are explicitly disabled in ``[features]``.
 
-    Uses tomllib so all of these resolve correctly:
+    Current Codex uses ``hooks`` as the canonical key and enables hooks
+    by default. ``codex_hooks`` remains a deprecated alias, so treat an
+    explicit false value for either key as disabled:
 
       [features]                   [features.codex_hooks]
-      codex_hooks = true           # not what we want — wrong shape
+      hooks = false                # not what we want — wrong shape
 
-      [features]                   features.codex_hooks=true
-      codex_hooks=true             # inline, no spaces
+      [features]                   features.hooks=false
+      hooks=false                  # inline, no spaces
 
-    The earlier regex-only check missed the no-space form and
-    couldn't distinguish a [features.codex_hooks] sub-table from
-    the boolean we actually wanted.
+    Sub-tables such as ``[features.hooks]`` are not booleans and should
+    not count as disabled.
     """
     if not CONFIG_PATH.exists() or tomllib is None:
         return False
@@ -145,4 +150,4 @@ def _feature_flag_enabled() -> bool:
     features = data.get("features")
     if not isinstance(features, dict):
         return False
-    return features.get("codex_hooks") is True
+    return features.get("hooks") is False or features.get("codex_hooks") is False

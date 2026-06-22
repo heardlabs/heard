@@ -18,6 +18,12 @@ import textwrap
 
 
 def welcome_block(agent: str) -> str:
+    codex_steps = ""
+    if agent == "codex":
+        codex_steps = """\
+          • Codex CLI        open Codex CLI, type /hooks, trust Heard
+          • Codex App        keep Heard running; app sessions narrate automatically
+"""
     return textwrap.dedent(
         f"""
         ✓ Installed for {agent}.
@@ -27,6 +33,7 @@ def welcome_block(agent: str) -> str:
           • Menu bar          heard ui
           • Try Jarvis voice  heard preset jarvis
           • For dry narration set ANTHROPIC_API_KEY (uses Claude Haiku 4.5)
+{codex_steps}
 
         First narration downloads the voice model (~350 MB, one-time) and
         macOS will ask once for Accessibility access — that's the hotkey.
