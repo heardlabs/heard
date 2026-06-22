@@ -103,6 +103,8 @@ def install(
         typer.echo(f"Unknown agent: {agent}. Supported: {', '.join(ADAPTERS)}", err=True)
         raise typer.Exit(1)
     config.ensure_dirs()
+    if agent == "codex" and hasattr(adapter, "set_enabled"):
+        adapter.set_enabled(True)
     adapter.install()
     onboarding.after_install(agent)
 
@@ -115,6 +117,8 @@ def uninstall(agent: str) -> None:
         typer.echo(f"Unknown agent: {agent}. Supported: {', '.join(ADAPTERS)}", err=True)
         raise typer.Exit(1)
     adapter.uninstall()
+    if agent == "codex" and hasattr(adapter, "set_enabled"):
+        adapter.set_enabled(False)
     typer.echo(f"Removed hook for {agent}.")
 
 
@@ -217,7 +221,8 @@ def status() -> None:
     typer.echo(f"daemon:       {alive} (socket: {config.SOCKET_PATH})")
     typer.echo(f"service:      {'installed' if service.is_installed() else 'not installed'}")
     for name, adapter in ADAPTERS.items():
-        installed = "installed" if adapter.is_installed() else "not installed"
+        state_fn = getattr(adapter, "is_enabled", adapter.is_installed)
+        installed = "installed" if state_fn() else "not installed"
         typer.echo(f"{name:<14}{installed}")
 
     # Harness observability — a quick health snapshot from the last

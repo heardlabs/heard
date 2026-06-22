@@ -70,3 +70,34 @@ def test_window_expiry_lets_line_speak_again(daemon, monkeypatch):
     t[0] += daemon._TOOL_DUP_WINDOW_S + 1.0
     # Window elapsed → no longer a duplicate.
     assert daemon._is_duplicate_tool_line("s", "Reading a file.") is False
+
+
+def test_duplicate_raw_final_event_is_observed_once(daemon, monkeypatch):
+    """Codex Desktop can surface one final through multiple channels.
+    The daemon should drop the second copy before Project Memory,
+    Working Memory, Agent State, or speech routing see it."""
+    seen: list[dict] = []
+    monkeypatch.setattr("heard.project_memory.record", lambda ev, **_kw: seen.append(ev))
+
+    from heard import config
+
+    real_load = config.load
+
+    def _load(**kw):
+        cfg = real_load(**kw)
+        cfg["onboarded"] = False
+        return cfg
+
+    monkeypatch.setattr("heard.config.load", _load)
+
+    ev = {
+        "kind": "final",
+        "tag": "final_long",
+        "neutral": "Done. I updated the RedNote graphics package.",
+        "ctx": {},
+        "session": {"id": "codex-session", "cwd": "/tmp/project"},
+    }
+    daemon._handle_event(ev)
+    daemon._handle_event(dict(ev))
+
+    assert seen == [ev]

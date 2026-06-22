@@ -31,6 +31,7 @@ HOOKS_PATH = Path.home() / ".codex" / "hooks.json"
 CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 HOOK_MARKER = "heard.hook"
 EVENTS = ("Stop", "PreToolUse", "PostToolUse")
+ENABLED_CONFIG_KEY = "codex_enabled"
 
 
 def _hook_command() -> str:
@@ -122,6 +123,31 @@ def is_installed() -> bool:
             if HOOK_MARKER in h.get("command", ""):
                 return True
     return False
+
+
+def set_enabled(enabled: bool) -> None:
+    """Persist the user's Codex preference.
+
+    Codex Desktop does not rely on the CLI hook file, so the app-level
+    observer needs a separate on/off bit.
+    """
+    try:
+        from heard import config
+
+        config.set_value(ENABLED_CONFIG_KEY, bool(enabled))
+    except Exception:
+        pass
+
+
+def is_enabled() -> bool:
+    try:
+        from heard import config
+
+        if bool(config.load().get(ENABLED_CONFIG_KEY, False)):
+            return True
+    except Exception:
+        pass
+    return is_installed()
 
 
 def _feature_flag_disabled() -> bool:

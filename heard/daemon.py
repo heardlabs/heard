@@ -376,6 +376,13 @@ class Daemon:
         self._recent_tool_lines: dict[str, collections.deque] = (
             collections.defaultdict(lambda: collections.deque(maxlen=12))
         )
+        # Raw event duplicate suppression. Codex Desktop can surface the
+        # same assistant result through more than one channel (app-log
+        # observer + hook/task-complete metadata), and without a gate the
+        # final gets spoken twice and stored twice for /heard recaps.
+        self._recent_event_signatures: dict[str, collections.deque] = (
+            collections.defaultdict(lambda: collections.deque(maxlen=32))
+        )
         # Per-session mute. Holds the session_ids the user has silenced
         # via /quiet — events from these are observed (state/memory stay
         # complete) but never narrated, until /unquiet. In-memory: a
@@ -741,18 +748,19 @@ class Daemon:
         )
 
     def _start_codex_app_observer(self) -> None:
-        """Tail Codex Desktop session logs when the Codex adapter is on."""
+        """Tail Codex Desktop session logs when the Codex adapter is enabled."""
         try:
             from heard.adapters import codex as codex_adapter
 
-            if not codex_adapter.is_installed():
+            is_enabled = getattr(codex_adapter, "is_enabled", codex_adapter.is_installed)
+            if not is_enabled():
                 if self._codex_app_observer is not None:
                     self._codex_app_observer.stop()
                     self._codex_app_observer = None
-                    _log("codex_app_observer_stop", reason="codex_uninstalled")
+                    _log("codex_app_observer_stop", reason="codex_disabled")
                 return
         except Exception as e:
-            _log("codex_app_observer_skip", reason="install_check_failed", err=type(e).__name__)
+            _log("codex_app_observer_skip", reason="enabled_check_failed", err=type(e).__name__)
             return
         if self._codex_app_observer is not None:
             return
@@ -2379,6 +2387,30 @@ class Daemon:
     # repeat and suppressed. Long enough to swallow a tight read/search
     # burst; short enough that a genuinely new beat 30s later still speaks.
     _TOOL_DUP_WINDOW_S = 25.0
+    _EVENT_DUP_WINDOW_S = 10.0
+
+    def _event_signature(self, kind: str, tag: str, text: str) -> str:
+        return "\0".join((kind, tag, " ".join((text or "").lower().split())))
+
+    def _is_duplicate_event(
+        self,
+        session_id: str,
+        kind: str,
+        tag: str,
+        text: str,
+    ) -> bool:
+        """True for the same raw event repeated in one session shortly
+        after itself. Records the signature either way."""
+        if not text:
+            return False
+        sig = self._event_signature(kind, tag, text)
+        now = time.monotonic()
+        recent = self._recent_event_signatures[session_id or "default"]
+        is_dup = any(
+            s == sig and (now - ts) <= self._EVENT_DUP_WINDOW_S for s, ts in recent
+        )
+        recent.append((sig, now))
+        return is_dup
 
     def _is_duplicate_tool_line(self, session_id: str, text: str) -> bool:
         """True if ``text`` was already spoken for this session within
@@ -2474,6 +2506,10 @@ class Daemon:
         sess_payload = req.get("session") or {}
         session_id = sess_payload.get("id") or "default"
         cwd = sess_payload.get("cwd")
+
+        if self._is_duplicate_event(session_id, kind, tag, neutral):
+            _log("event_drop", kind=kind, tag=tag, reason="duplicate_event")
+            return
 
         # Layer 2 — Agent State observation. Always-on, deterministic,
         # never calls an LLM. Done unconditionally before any verbosity

@@ -1,9 +1,9 @@
-"""Small native text-input prompt — the answer surface for Heard's
-"talk to me" affordances.
+"""Small native prompts — the answer surface for Heard's "talk to me"
+affordances.
 
 First use case: the resume-from-pause panel that asks the user
-whether to catch them up or start fresh. Designed as a reusable
-primitive so future "switch persona to Aria" / "pin the api agent" /
+whether to catch them up or start fresh. Designed as reusable
+primitives so future "switch persona to Aria" / "pin the api agent" /
 "start a voice journal entry" prompts can land on the same surface
 without reinventing it.
 
@@ -61,6 +61,65 @@ class PromptResult:
 
     submitted: bool
     text: str
+
+
+@dataclass(frozen=True)
+class ChoiceResult:
+    """Outcome of an ``ask_choice`` call.
+
+    ``submitted`` is True when the user clicked one of the offered
+    choices; False on Esc / window close. ``choice`` is the canonical
+    key for the clicked choice, or the configured fallback choice when
+    the dialog is dismissed."""
+
+    submitted: bool
+    choice: str
+
+
+def ask_choice(
+    *,
+    title: str,
+    message: str,
+    choices: tuple[tuple[str, str], ...],
+    cancel_choice: str,
+) -> ChoiceResult:
+    """Show a modal two- or three-choice prompt.
+
+    ``choices`` is ``(canonical_key, button_label)`` pairs. The first
+    choice is the default/primary button; macOS renders it as the
+    emphasized action. Dismissing the dialog returns ``cancel_choice``.
+    """
+    if not (2 <= len(choices) <= 3):
+        raise ValueError("ask_choice expects two or three choices")
+
+    keys = [key for key, _label in choices]
+    if cancel_choice not in keys:
+        raise ValueError("cancel_choice must be one of the choice keys")
+
+    # Lazy AppKit import — see `ask()` for rationale.
+    from AppKit import (  # noqa: PLC0415
+        NSAlert,
+        NSAlertFirstButtonReturn,
+        NSAlertSecondButtonReturn,
+        NSAlertThirdButtonReturn,
+    )
+
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_(title)
+    alert.setInformativeText_(message)
+    for _key, label in choices:
+        alert.addButtonWithTitle_(label)
+
+    response = alert.runModal()
+    response_values = (
+        NSAlertFirstButtonReturn,
+        NSAlertSecondButtonReturn,
+        NSAlertThirdButtonReturn,
+    )
+    for idx, response_value in enumerate(response_values[: len(choices)]):
+        if response == response_value:
+            return ChoiceResult(submitted=True, choice=choices[idx][0])
+    return ChoiceResult(submitted=False, choice=cancel_choice)
 
 
 def ask(

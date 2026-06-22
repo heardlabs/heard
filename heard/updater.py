@@ -162,7 +162,7 @@ def _load_state() -> dict:
 def _save_state(state: dict) -> None:
     p = _state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
     tmp.replace(p)
 

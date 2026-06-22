@@ -1302,7 +1302,8 @@ class SettingsController(NSObject):
             if adapter is None:
                 continue
             try:
-                installed = adapter.is_installed()
+                state_fn = getattr(adapter, "is_enabled", adapter.is_installed)
+                installed = state_fn()
             except Exception:
                 installed = False
             r[key].setState_(1 if installed else 0)
@@ -1650,6 +1651,9 @@ class SettingsController(NSObject):
         if adapter is None:
             return
         action = None
+        is_codex = name == "codex" and hasattr(adapter, "set_enabled")
+        if is_codex:
+            adapter.set_enabled(want_installed)
         try:
             if want_installed and not adapter.is_installed():
                 adapter.install()
@@ -1660,6 +1664,8 @@ class SettingsController(NSObject):
         except Exception as e:
             print(f"adapter {name} toggle failed: {e}", file=sys.stderr)
         self._refresh_advanced(config.load(), client.get_status() or {})
+        if action is not None or is_codex:
+            _reload_daemon()
         if action is not None:
             try:
                 from heard import analytics
@@ -3128,7 +3134,8 @@ class _OnboardingController(NSObject):
             if adapter is None or sw is None:
                 continue
             try:
-                installed = adapter.is_installed()
+                state_fn = getattr(adapter, "is_enabled", adapter.is_installed)
+                installed = state_fn()
             except Exception:
                 installed = False
             sw.setState_(1 if installed else 0)
@@ -3315,6 +3322,9 @@ class _OnboardingController(NSObject):
         adapter = ADAPTERS.get(name)
         if adapter is None:
             return
+        is_codex = name == "codex" and hasattr(adapter, "set_enabled")
+        if is_codex:
+            adapter.set_enabled(want)
         try:
             if want and not adapter.is_installed():
                 adapter.install()
@@ -3322,6 +3332,8 @@ class _OnboardingController(NSObject):
                 adapter.uninstall()
         except Exception as e:
             print(f"adapter {name} toggle failed: {e}", file=sys.stderr)
+        if is_codex:
+            _reload_daemon()
         self._enter_agents()
 
 # Public API ----------------------------------------------------------------

@@ -15,7 +15,7 @@ safe on a headless test runner."""
 from __future__ import annotations
 
 from heard import defects
-from heard.prompt_window import _DEFECT_CATEGORIES
+from heard.prompt_window import _DEFECT_CATEGORIES, ask_choice
 
 
 def test_every_dialog_slug_is_a_valid_defect_category():
@@ -53,3 +53,34 @@ def test_labels_are_distinct_and_non_empty():
 def test_slugs_are_distinct():
     slugs = [slug for slug, _ in _DEFECT_CATEGORIES]
     assert len(slugs) == len(set(slugs)), "duplicate dialog slugs"
+
+
+def test_choice_prompt_requires_two_or_three_choices():
+    """The click-choice prompt maps directly to NSAlert buttons. Keep
+    callers honest before AppKit is imported so this is testable on
+    headless runners."""
+    try:
+        ask_choice(
+            title="Pick one",
+            message="Nope",
+            choices=(("only", "Only"),),
+            cancel_choice="only",
+        )
+    except ValueError as e:
+        assert "two or three" in str(e)
+    else:
+        raise AssertionError("ask_choice accepted a one-choice prompt")
+
+
+def test_choice_prompt_cancel_choice_must_be_offered():
+    try:
+        ask_choice(
+            title="Pick one",
+            message="Nope",
+            choices=(("yes", "Yes"), ("no", "No")),
+            cancel_choice="later",
+        )
+    except ValueError as e:
+        assert "cancel_choice" in str(e)
+    else:
+        raise AssertionError("ask_choice accepted an unknown cancel choice")

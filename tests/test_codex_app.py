@@ -119,3 +119,50 @@ def test_observer_ignores_non_desktop_sessions(tmp_path: Path) -> None:
 
     assert observer.poll_once() == 0
     assert events == []
+
+
+def test_daemon_starts_observer_from_codex_enabled_preference(monkeypatch) -> None:
+    from heard import daemon as daemon_mod
+    from heard.adapters import codex as codex_adapter
+
+    started: list[bool] = []
+
+    class FakeObserver:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            started.append(True)
+
+    monkeypatch.setattr(codex_adapter, "is_enabled", lambda: True)
+    monkeypatch.setattr(daemon_mod.codex_app, "CodexAppObserver", FakeObserver)
+
+    daemon = daemon_mod.Daemon.__new__(daemon_mod.Daemon)
+    daemon._codex_app_observer = None
+    daemon._handle_event = lambda _event: None
+
+    daemon._start_codex_app_observer()
+
+    assert started == [True]
+    assert isinstance(daemon._codex_app_observer, FakeObserver)
+
+
+def test_daemon_stops_observer_when_codex_disabled(monkeypatch) -> None:
+    from heard import daemon as daemon_mod
+    from heard.adapters import codex as codex_adapter
+
+    stopped: list[bool] = []
+
+    class ExistingObserver:
+        def stop(self) -> None:
+            stopped.append(True)
+
+    monkeypatch.setattr(codex_adapter, "is_enabled", lambda: False)
+
+    daemon = daemon_mod.Daemon.__new__(daemon_mod.Daemon)
+    daemon._codex_app_observer = ExistingObserver()
+
+    daemon._start_codex_app_observer()
+
+    assert stopped == [True]
+    assert daemon._codex_app_observer is None

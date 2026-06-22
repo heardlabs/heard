@@ -83,6 +83,22 @@ def test_record_writes_one_jsonl_line_per_event():
     assert len(lines) == 2
 
 
+def test_record_skips_adjacent_duplicate_event():
+    ev = _ev(
+        sid="codex-session",
+        kind="final",
+        tag="final_long",
+        neutral="Done. I updated the RedNote graphics package.",
+    )
+    pm.record(ev)
+    pm.record(dict(ev))
+
+    recs = pm.iter_recent(cwd="/Users/k31z/Desktop/Projects/heard/heard")
+    assert [r["text"] for r in recs] == [
+        "Done. I updated the RedNote graphics package."
+    ]
+
+
 def test_record_schema_includes_required_fields():
     pm.record(
         _ev(neutral="ran the linter", ctx={"abs_path": "/x/y/auth.py"}),
@@ -304,6 +320,43 @@ def test_recap_turn_scopes_to_session_and_last_turn():
     assert "s1 LATEST essay about auth" in captured["user"]
     assert "s2 work" not in captured["user"]       # other session excluded
     assert "s1 OLD turn" not in captured["user"]    # earlier turn excluded
+
+
+def test_recap_turn_dedupes_existing_duplicate_records():
+    """Old logs may already contain duplicate final rows. The recap
+    prompt should not feed both copies to the LLM."""
+    cwd = "/Users/k31z/Desktop/Projects/heard/heard"
+    path = pm._path_for_cwd(cwd)
+    assert path is not None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    duplicate = {
+        "ts": "2026-06-22T16:29:24Z",
+        "session_id": "s1",
+        "kind": "final",
+        "tag": "final_long",
+        "text": "Done. I updated the RedNote graphics package.",
+        "ctx": {},
+        "spoken": "",
+        "via": "",
+        "agent_summary": "",
+    }
+    with path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"session_id": "s1", "kind": "final", "text": "old"}) + "\n")
+        f.write(json.dumps(duplicate) + "\n")
+        f.write(json.dumps({**duplicate, "ts": "2026-06-22T16:29:25Z"}) + "\n")
+
+    captured = {}
+
+    def _capture(_system_text, user_msg, **_kwargs):
+        captured["user"] = user_msg
+        return "Caught you up once."
+
+    from heard import persona as persona_mod
+    with patch.object(persona_mod, "call_with_prompt", side_effect=_capture):
+        out = pm.recap_turn(cwd=cwd, session_id="s1", persona=_persona())
+
+    assert out == "Caught you up once."
+    assert captured["user"].count("Done. I updated the RedNote graphics package.") == 1
 
 
 def test_recap_turn_none_without_session_or_records():

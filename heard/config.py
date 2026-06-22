@@ -181,6 +181,11 @@ DEFAULTS: dict[str, Any] = {
     # the daemon respawn on the next agent event. Only "Resume Heard"
     # (menu or hotkey) clears it — there's no auto-timeout.
     "muted": False,
+    # Codex integration preference. CLI hooks are still stored in
+    # ~/.codex/hooks.json, but Codex Desktop narration tails session
+    # logs directly, so "enabled" must not depend solely on the hook
+    # file existing.
+    "codex_enabled": False,
     # One-shot first-launch greeting. Flips True after the daemon
     # speaks the welcome line the first time it comes up with a real
     # TTS backend (i.e. *after* sign-in / key paste — a no-voice user

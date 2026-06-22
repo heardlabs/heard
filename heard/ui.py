@@ -738,10 +738,10 @@ class HeardApp(rumps.App):
 
     def on_continue(self, _sender) -> None:
         """Continue menu item. On resume with a non-empty pending
-        buffer, pop the text-input prompt so the persona can ask
-        "catch you up, or start fresh?" and the user can type (or
-        Wispr) their answer. Empty buffer → silent resume. The
-        daemon's awaiting flag stays armed for
+        buffer, pop the two-choice prompt so the persona can ask
+        "catch you up, or start fresh?" and the user can click their
+        answer. Empty buffer → silent resume. The daemon's awaiting
+        flag stays armed for
         ``_RESUME_INTENT_TIMEOUT_S`` so a missed click here doesn't
         park the daemon."""
         try:
@@ -768,9 +768,10 @@ class HeardApp(rumps.App):
         if pending_count <= 0:
             return
 
-        # Pop the resume prompt. PromptResult.text is the user's
-        # answer; we ship it to the daemon's resume_intent socket
-        # cmd regardless of what they typed (the daemon classifies).
+        # Pop the resume prompt. ChoiceResult.choice is the canonical
+        # answer text; we ship it to the daemon's resume_intent socket
+        # cmd so the same daemon-side classifier/action path handles
+        # clicks, legacy text input, and timeout fallback.
         try:
             from heard import prompt_window
 
@@ -780,17 +781,18 @@ class HeardApp(rumps.App):
                 cur_status = {}
             persona_name = cur_status.get("persona", "Heard")
             who = (persona_name or "Heard").strip().capitalize() or "Heard"
-            result = prompt_window.ask(
+            result = prompt_window.ask_choice(
                 title=f"{who}: welcome back.",
                 message=(
                     "While you were away, I queued up "
                     f"{pending_count} thing{'s' if pending_count != 1 else ''}. "
-                    "Want me to catch you up, or start fresh? "
-                    "(Empty / Skip = start fresh.)"
+                    "Want me to catch you up, or start fresh?"
                 ),
-                placeholder="catch me up  /  start fresh  /  …",
-                submit_label="OK",
-                cancel_label="Skip",
+                choices=(
+                    ("catch me up", "Catch Me Up"),
+                    ("start fresh", "Start Fresh"),
+                ),
+                cancel_choice="start fresh",
             )
         except Exception:
             # Prompt couldn't render (rare — AppKit unavailable in a
@@ -798,7 +800,7 @@ class HeardApp(rumps.App):
             # empty resume_intent so the daemon doesn't stay parked.
             result = None
 
-        text = result.text if (result is not None and result.submitted) else ""
+        text = result.choice if result is not None else ""
         try:
             client.resume_intent(text)
         except Exception:

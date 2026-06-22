@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+from heard import config
 from heard.adapters import codex
 
 
@@ -101,3 +102,35 @@ def test_feature_flag_malformed_toml_returns_false(tmp_path):
     config_file.write_text("[features\nhooks = false\n")  # missing ]
     with patch.object(codex, "CONFIG_PATH", config_file):
         assert codex._feature_flag_disabled() is False
+
+
+def test_codex_enabled_when_app_preference_is_on_without_cli_hook(tmp_path):
+    hooks_file = tmp_path / "hooks.json"
+    heard_config = tmp_path / "heard-config.yaml"
+    with (
+        patch.object(codex, "HOOKS_PATH", hooks_file),
+        patch.object(config, "CONFIG_PATH", heard_config),
+        patch.object(config, "CONFIG_DIR", tmp_path / "config"),
+        patch.object(config, "DATA_DIR", tmp_path / "data"),
+        patch.object(config, "MODELS_DIR", tmp_path / "data" / "models"),
+    ):
+        codex.set_enabled(True)
+        assert codex.is_installed() is False
+        assert codex.is_enabled() is True
+
+
+def test_codex_enabled_falls_back_to_existing_cli_hook(tmp_path):
+    hooks_file = tmp_path / "hooks.json"
+    config_file = tmp_path / "config.toml"
+    config_file.write_text("[features]\nhooks = true\n")
+    heard_config = tmp_path / "heard-config.yaml"
+    with (
+        patch.object(codex, "HOOKS_PATH", hooks_file),
+        patch.object(codex, "CONFIG_PATH", config_file),
+        patch.object(config, "CONFIG_PATH", heard_config),
+        patch.object(config, "CONFIG_DIR", tmp_path / "config"),
+        patch.object(config, "DATA_DIR", tmp_path / "data"),
+        patch.object(config, "MODELS_DIR", tmp_path / "data" / "models"),
+    ):
+        codex.install()
+        assert codex.is_enabled() is True

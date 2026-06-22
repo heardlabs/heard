@@ -60,6 +60,7 @@ _TEXT_TRIM = 800
 # they're often large blobs (full file contents, command outputs)
 # that don't help the LLM and bloat the log.
 _CTX_STRIP_KEYS = ("file_content", "full_content", "stdout", "stderr", "output")
+_LAST_RECORD_TAIL_BYTES = 64 * 1024
 
 
 def _project_memory_dir() -> Path:
@@ -134,6 +135,8 @@ def record(
     }
     try:
         _project_memory_dir().mkdir(parents=True, exist_ok=True)
+        if _is_same_record(_read_last_record(path), rec):
+            return
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         _maybe_rotate(path)
@@ -238,7 +241,7 @@ def recap(
     """
     from heard import persona as persona_mod  # noqa: PLC0415
 
-    records = iter_recent(cwd=cwd, limit=recent_limit)
+    records = _dedupe_records(iter_recent(cwd=cwd, limit=recent_limit))
     if not records:
         return None
     system_text = _build_recap_system_text(persona)
@@ -273,8 +276,10 @@ def recap_turn(
     sid = (session_id or "").strip()
     if not sid:
         return None
-    mine = [r for r in iter_recent(cwd=cwd, limit=recent_limit)
-            if (r.get("session_id") or "") == sid]
+    mine = [
+        r for r in _dedupe_records(iter_recent(cwd=cwd, limit=recent_limit))
+        if (r.get("session_id") or "") == sid
+    ]
     if not mine:
         return None
     turn = _last_turn_slice(mine)
@@ -301,6 +306,56 @@ def _last_turn_slice(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     last = final_idx[-1]
     start = final_idx[-2] + 1 if len(final_idx) >= 2 else 0
     return records[start:last + 1]
+
+
+def _record_signature(r: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        r.get("session_id") or "",
+        r.get("kind") or "",
+        r.get("tag") or "",
+        " ".join((r.get("text") or "").lower().split()),
+    )
+
+
+def _is_same_record(a: dict[str, Any] | None, b: dict[str, Any]) -> bool:
+    if not a:
+        return False
+    return _record_signature(a) == _record_signature(b)
+
+
+def _dedupe_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop adjacent duplicate event records before building LLM prompts."""
+    out: list[dict[str, Any]] = []
+    prev: dict[str, Any] | None = None
+    for rec in records:
+        if _is_same_record(prev, rec):
+            continue
+        out.append(rec)
+        prev = rec
+    return out
+
+
+def _read_last_record(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            f.seek(max(0, size - _LAST_RECORD_TAIL_BYTES))
+            chunk = f.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+    for line in reversed(chunk.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(rec, dict):
+            return rec
+    return None
 
 
 # ----- prompt assembly (pure, no LLM) ------------------------------------
