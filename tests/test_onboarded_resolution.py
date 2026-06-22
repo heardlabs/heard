@@ -10,7 +10,20 @@ prior greeting as onboarded and heals the flag.
 
 from __future__ import annotations
 
-from heard.ui import _resolve_onboarded
+from heard.ui import _cap_reached_label, _resolve_onboarded
+
+
+def test_cap_label_pro_is_monthly():
+    assert _cap_reached_label("pro") == "Monthly cloud limit reached — resets next month"
+
+
+def test_cap_label_trial_is_daily():
+    assert _cap_reached_label("trial") == "Daily cloud limit reached — back tomorrow"
+
+
+def test_cap_label_unknown_defaults_to_daily():
+    # Missing/blank plan must not claim "monthly" — daily is the safe default.
+    assert "Daily" in _cap_reached_label("")
 
 
 def test_genuine_first_timer_onboards():

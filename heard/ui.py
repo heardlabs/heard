@@ -46,6 +46,16 @@ _HOTKEY_GLYPHS = {
 }
 
 
+def _cap_reached_label(plan: str) -> str:
+    """Managed cap-reached banner, worded to the plan. Trial caps are
+    DAILY (reset tomorrow); Pro caps are MONTHLY (reset next month). The
+    DB tracks both in one `daily_chars_used` column, so the server's
+    reason is the same — only the user-facing wording must differ."""
+    if (plan or "").strip().lower() == "pro":
+        return "Monthly cloud limit reached — resets next month"
+    return "Daily cloud limit reached — back tomorrow"
+
+
 def _resolve_onboarded(cfg: dict) -> tuple[bool, bool]:
     """Decide whether the user counts as onboarded, with self-heal.
 
@@ -666,8 +676,9 @@ class HeardApp(rumps.App):
         # or the message format ever changes.
         if kind == "managed":
             reason = self._managed_reason(message)
+            if reason == "daily_cap_exceeded":
+                return _cap_reached_label(config.load().get("heard_plan") or "")
             return {
-                "daily_cap_exceeded": "Daily cloud limit reached — back tomorrow",
                 "trial_expired": "Trial ended — switching to local voices",
                 "token_unknown": "Sign-in expired — sign in again",
                 "device_revoked": "This Mac was signed out from your dashboard — sign in to keep narrating",

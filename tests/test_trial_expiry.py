@@ -75,6 +75,53 @@ def test_active_trial_keeps_managed_backend(tmp_path, monkeypatch):
     assert "heard_plan" not in persisted
 
 
+def test_sync_plan_from_me_persists_server_plan_over_stale_config(tmp_path, monkeypatch):
+    """A Stripe upgrade flips the server to pro, but the client only ever
+    wrote heard_plan at sign-in — so the menu stayed on 'trial'. The
+    /v1/me poll must persist the fresh plan + expiry and reload."""
+    future_ms = int(time.time() * 1000) + 10 * 24 * 60 * 60 * 1000
+    daemon, persisted = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok",
+            "heard_plan": "trial",
+            "heard_trial_expires_at": future_ms,
+            "elevenlabs_api_key": "sk_x",
+        },
+    )
+    reloaded = {"called": False}
+    monkeypatch.setattr(daemon, "_reload_config", lambda: reloaded.update(called=True))
+
+    daemon._sync_plan_from_me({"plan": "pro", "trial_expires_at": future_ms + 5000})
+
+    assert persisted.get("heard_plan") == "pro"
+    assert persisted.get("heard_trial_expires_at") == future_ms + 5000
+    assert reloaded["called"] is True
+
+
+def test_sync_plan_from_me_noop_when_already_matching(tmp_path, monkeypatch):
+    """No drift → no write, no reload (don't thrash config every poll)."""
+    future_ms = int(time.time() * 1000) + 10 * 24 * 60 * 60 * 1000
+    daemon, persisted = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok",
+            "heard_plan": "pro",
+            "heard_trial_expires_at": future_ms,
+            "elevenlabs_api_key": "sk_x",
+        },
+    )
+    reloaded = {"called": False}
+    monkeypatch.setattr(daemon, "_reload_config", lambda: reloaded.update(called=True))
+
+    daemon._sync_plan_from_me({"plan": "pro", "trial_expires_at": future_ms})
+
+    assert "heard_plan" not in persisted
+    assert reloaded["called"] is False
+
+
 def test_expired_trial_flips_plan_and_falls_back_to_no_voice(tmp_path, monkeypatch):
     """Trial expiry in the past, no BYOK key, no local model: flip plan
     to "expired" and fall through the selector to NullTTS (we no longer

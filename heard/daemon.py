@@ -918,6 +918,40 @@ class Daemon:
                 pass
             self._audio_monitor = None
 
+    def _sync_plan_from_me(self, me: dict) -> None:
+        """Persist plan + trial-expiry from a /v1/me snapshot when they've
+        drifted from local config, then reload so the change takes effect.
+
+        The menu's account row + upgrade CTA read cfg['heard_plan'] /
+        cfg['heard_trial_expires_at'], which were ONLY ever written at
+        sign-in. So a server-side plan change — a Stripe upgrade
+        (trial→pro), a cancellation, a re-trial — never reached the menu:
+        a paying Pro user stayed stuck showing 'trial · N days left ·
+        Upgrade to Pro'. The 5-minute /v1/me poll already had the truth;
+        it just never wrote it back. Now it does."""
+        server_plan = (me.get("plan") or "").strip().lower()
+        if server_plan not in ("trial", "pro", "expired"):
+            return
+        changed = False
+        if server_plan != (self.cfg.get("heard_plan") or "").strip().lower():
+            try:
+                config.set_value("heard_plan", server_plan)
+                changed = True
+            except Exception as e:
+                _log("plan_sync_persist_failed", err=str(e))
+        server_exp = me.get("trial_expires_at")
+        if isinstance(server_exp, (int, float)) and int(server_exp) != int(
+            self.cfg.get("heard_trial_expires_at") or 0
+        ):
+            try:
+                config.set_value("heard_trial_expires_at", int(server_exp))
+                changed = True
+            except Exception:
+                pass
+        if changed:
+            _log("plan_synced_from_me", plan=server_plan)
+            self._reload_config()
+
     def _maybe_expire_trial(self) -> None:
         """Trial-expiry check, run on daemon start + every cfg reload.
         Mutates ``self.cfg`` and persists when we flip plan; also fires
@@ -3080,6 +3114,7 @@ class Daemon:
             if isinstance(data, dict):
                 self._account_usage = data
                 self._account_usage_at = _time.time()
+                self._sync_plan_from_me(data)
         except (_urlerr.HTTPError, _urlerr.URLError, TimeoutError, OSError, ValueError):
             # Stay quiet; menu bar shows the previous value (or nothing).
             return
