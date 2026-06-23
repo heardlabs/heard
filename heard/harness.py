@@ -274,6 +274,56 @@ def is_focus_template_event(event: dict[str, Any]) -> bool:
     return is_critical_template_event(event)
 
 
+_FOCUS_ATTENTION_PHRASES: tuple[str, ...] = (
+    "approve",
+    "approval",
+    "blocked",
+    "blocker",
+    "can't continue",
+    "cannot continue",
+    "choose",
+    "confirm",
+    "decision",
+    "failed",
+    "failure",
+    "give me",
+    "how do you want",
+    "i need you",
+    "log in",
+    "needs your",
+    "permission",
+    "pick",
+    "stuck",
+    "tell me",
+    "waiting for you",
+    "waiting on you",
+    "want me to",
+    "what should",
+    "which",
+    "your move",
+)
+
+
+def is_focus_attention_event(event: dict[str, Any]) -> bool:
+    """True when Focus mode should let an event reach speech.
+
+    Focus is alert-only, so the daemon uses this as a deterministic
+    guard before the harness LLM. The model still shapes allowed alerts,
+    but it cannot decide that routine progress is worth narrating.
+    """
+    if is_focus_template_event(event):
+        return True
+    kind = (event.get("kind") or "").lower()
+    if kind not in {"final", "intermediate"}:
+        return False
+    text = " ".join(((event.get("neutral") or "").lower()).split())
+    if not text:
+        return False
+    if "?" in text:
+        return True
+    return any(phrase in text for phrase in _FOCUS_ATTENTION_PHRASES)
+
+
 def should_use_fast_path(
     event: dict[str, Any],
     *,

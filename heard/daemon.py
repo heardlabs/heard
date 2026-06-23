@@ -2617,6 +2617,11 @@ class Daemon:
             _log("event_drop", kind=kind, reason="prompt_intent_retired")
             return
 
+        focus_mode = (cfg.get("mode") or "copilot").strip().lower() == "focus"
+        if focus_mode and not harness.is_focus_attention_event(req):
+            _log("event_drop", kind=kind, tag=tag, reason="focus_attention_drop")
+            return
+
         # --- Fast-path gate for routine events (architecture step 6a
         # full). Only relevant when the harness is engaged — without
         # the harness, the v1 path already handles the verbosity
@@ -2635,7 +2640,6 @@ class Daemon:
                 multi_agent_active=active_count > 1,
                 recent_edit_paths=tuple(self._recent_edit_paths),
             ):
-                focus_mode = (cfg.get("mode") or "copilot").strip().lower() == "focus"
                 if focus_mode and not harness.is_focus_template_event(req):
                     _log("event_drop", kind=kind, tag=tag, reason="focus_fastpath_drop")
                     return
@@ -2720,7 +2724,6 @@ class Daemon:
         #   - speak=False       → harness chose silence; suppress
         #   - speak=True        → enqueue harness.text directly
         if harness.is_enabled(cfg):
-            focus_mode = (cfg.get("mode") or "copilot").strip().lower() == "focus"
             # Is this the turn's opener? The first intermediate after a
             # user prompt. Consume the pending flag now so only the first
             # one qualifies; force it to speak (below) so the listener

@@ -1023,6 +1023,26 @@ def test_is_focus_template_event_allows_only_alerts():
     assert harness.is_focus_template_event({}) is False
 
 
+def test_is_focus_attention_event_allows_only_actionable_alerts():
+    assert harness.is_focus_attention_event(_ev(tag="tool_question")) is True
+    assert harness.is_focus_attention_event(_ev(kind="final", neutral="Approve this?")) is True
+    assert harness.is_focus_attention_event(
+        _ev(kind="intermediate", neutral="Codex is waiting for you to choose.")
+    ) is True
+    assert harness.is_focus_attention_event(
+        _ev(kind="final", neutral="Tests failed, and I need you to approve the retry.")
+    ) is True
+
+    assert harness.is_focus_attention_event(
+        _ev(kind="final", neutral="All tests pass. Let me know if you want more.")
+    ) is False
+    assert harness.is_focus_attention_event(
+        _ev(kind="intermediate", neutral="Reading the auth handler next.")
+    ) is False
+    assert harness.is_focus_attention_event(_ev(kind="tool_pre", tag="tool_pre_bash")) is False
+    assert harness.is_focus_attention_event({}) is False
+
+
 def test_fast_path_multi_agent_disables_fast_path():
     """When 2+ agents are active, every routine event is potentially
     salient for cross-agent reasoning. Harness sees all (except

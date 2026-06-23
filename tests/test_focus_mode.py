@@ -129,3 +129,33 @@ def test_focus_drops_harness_punt_floor(tmp_path, monkeypatch):
     daemon._handle_event(_event(kind="final", neutral="All tests pass."))
 
     assert captured == []
+
+
+def test_focus_drops_routine_harness_speech(tmp_path, monkeypatch):
+    daemon, captured = _make_daemon(tmp_path, monkeypatch, {"mode": "focus"})
+    monkeypatch.setattr(
+        "heard.harness.narrate",
+        lambda *a, **kw: harness.HarnessDecision(
+            speak=True,
+            text="Done. The repo is clean.",
+        ),
+    )
+
+    daemon._handle_event(_event(kind="final", neutral="All tests pass."))
+
+    assert captured == []
+
+
+def test_focus_allows_actionable_harness_speech(tmp_path, monkeypatch):
+    daemon, captured = _make_daemon(tmp_path, monkeypatch, {"mode": "focus"})
+    monkeypatch.setattr(
+        "heard.harness.narrate",
+        lambda *a, **kw: harness.HarnessDecision(
+            speak=True,
+            text="Codex needs you to approve the install.",
+        ),
+    )
+
+    daemon._handle_event(_event(kind="final", neutral="Approve the install?"))
+
+    assert [c["text"] for c in captured] == ["Codex needs you to approve the install."]
