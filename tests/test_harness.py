@@ -1030,11 +1030,23 @@ def test_is_focus_attention_event_allows_only_actionable_alerts():
         _ev(kind="intermediate", neutral="Codex is waiting for you to choose.")
     ) is True
     assert harness.is_focus_attention_event(
+        _ev(kind="final", neutral="How should I convert Wise's USD/HKD to CAD?")
+    ) is True
+    assert harness.is_focus_attention_event(
+        _ev(kind="final", neutral="Do you want me to net those refunds instead?")
+    ) is True
+    assert harness.is_focus_attention_event(
         _ev(kind="final", neutral="Tests failed, and I need you to approve the retry.")
     ) is True
 
     assert harness.is_focus_attention_event(
         _ev(kind="final", neutral="All tests pass. Let me know if you want more.")
+    ) is False
+    assert harness.is_focus_attention_event(
+        _ev(kind="final", neutral="The finance tracker's ready. What would you like to do next?")
+    ) is False
+    assert harness.is_focus_attention_event(
+        _ev(kind="final", neutral="Want to call those done, or dig into anything else?")
     ) is False
     assert harness.is_focus_attention_event(
         _ev(kind="intermediate", neutral="Reading the auth handler next.")

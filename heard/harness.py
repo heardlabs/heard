@@ -304,6 +304,40 @@ _FOCUS_ATTENTION_PHRASES: tuple[str, ...] = (
 )
 
 
+_FOCUS_DECISION_QUESTION_PHRASES: tuple[str, ...] = (
+    "approval",
+    "approve",
+    "can i",
+    "choose",
+    "confirm",
+    "decide",
+    "do you want me to",
+    "how should",
+    "may i",
+    "pick",
+    "should i",
+    "want me to",
+    "what should i",
+    "which",
+)
+
+
+_FOCUS_ROUTINE_QUESTION_PHRASES: tuple[str, ...] = (
+    "anything else",
+    "call those done",
+    "call this done",
+    "dig into anything else",
+    "move on",
+    "ready for whatever comes next",
+    "shall we wrap",
+    "want to call",
+    "want to tweak",
+    "what do you want to do next",
+    "what would you like to do next",
+    "what's next",
+)
+
+
 def is_focus_attention_event(event: dict[str, Any]) -> bool:
     """True when Focus mode should let an event reach speech.
 
@@ -320,7 +354,9 @@ def is_focus_attention_event(event: dict[str, Any]) -> bool:
     if not text:
         return False
     if "?" in text:
-        return True
+        if any(phrase in text for phrase in _FOCUS_ROUTINE_QUESTION_PHRASES):
+            return False
+        return any(phrase in text for phrase in _FOCUS_DECISION_QUESTION_PHRASES)
     return any(phrase in text for phrase in _FOCUS_ATTENTION_PHRASES)
 
 
