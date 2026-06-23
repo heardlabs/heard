@@ -119,6 +119,35 @@ def test_codex_enabled_when_app_preference_is_on_without_cli_hook(tmp_path):
         assert codex.is_enabled() is True
 
 
+def test_codex_enabled_defaults_on_for_desktop_without_cli_hook(tmp_path):
+    hooks_file = tmp_path / "hooks.json"
+    heard_config = tmp_path / "heard-config.yaml"
+    with (
+        patch.object(codex, "HOOKS_PATH", hooks_file),
+        patch.object(config, "CONFIG_PATH", heard_config),
+        patch.object(config, "CONFIG_DIR", tmp_path / "config"),
+        patch.object(config, "DATA_DIR", tmp_path / "data"),
+        patch.object(config, "MODELS_DIR", tmp_path / "data" / "models"),
+    ):
+        assert codex.is_installed() is False
+        assert codex.is_enabled() is True
+
+
+def test_codex_can_be_explicitly_disabled_without_cli_hook(tmp_path):
+    hooks_file = tmp_path / "hooks.json"
+    heard_config = tmp_path / "heard-config.yaml"
+    with (
+        patch.object(codex, "HOOKS_PATH", hooks_file),
+        patch.object(config, "CONFIG_PATH", heard_config),
+        patch.object(config, "CONFIG_DIR", tmp_path / "config"),
+        patch.object(config, "DATA_DIR", tmp_path / "data"),
+        patch.object(config, "MODELS_DIR", tmp_path / "data" / "models"),
+    ):
+        codex.set_enabled(False)
+        assert codex.is_installed() is False
+        assert codex.is_enabled() is False
+
+
 def test_codex_enabled_falls_back_to_existing_cli_hook(tmp_path):
     hooks_file = tmp_path / "hooks.json"
     config_file = tmp_path / "config.toml"
