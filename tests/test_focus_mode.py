@@ -1,7 +1,7 @@
 """Focus listening mode.
 
 Alert-only mode should stay quiet for routine progress and normal
-finals, while still reliably speaking direct questions and failures.
+finals, while still reliably speaking direct user-action prompts.
 """
 
 from __future__ import annotations
@@ -118,8 +118,7 @@ def test_focus_allows_failure_fastpath(tmp_path, monkeypatch):
     daemon._handle_event(_event(kind="tool_post", tag="tool_post_failure",
                                neutral="Tests failed."))
 
-    assert [c["text"] for c in captured] == ["Tests failed."]
-    assert captured[0]["kw"]["priority"] is True
+    assert captured == []
 
 
 def test_focus_drops_harness_punt_floor(tmp_path, monkeypatch):
@@ -166,7 +165,7 @@ def test_focus_allows_actionable_harness_speech(tmp_path, monkeypatch):
     daemon._handle_event(_event(kind="final", neutral="Approve the install?"))
 
     assert called is False
-    assert [c["text"] for c in captured] == ["Claude needs your approval."]
+    assert [c["text"] for c in captured] == ["Approve the install?"]
 
 
 def test_focus_caps_actionable_harness_speech(tmp_path, monkeypatch):
@@ -194,4 +193,4 @@ def test_focus_caps_actionable_harness_speech(tmp_path, monkeypatch):
 
     assert called is False
     assert len(captured) == 1
-    assert captured[0]["text"] == "Claude needs your approval."
+    assert captured[0]["text"] == "Approve the install?"

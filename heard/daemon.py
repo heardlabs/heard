@@ -2622,7 +2622,10 @@ class Daemon:
             _log("event_drop", kind=kind, tag=tag, reason="focus_attention_drop")
             return
         if focus_mode and not harness.is_focus_template_event(req):
-            alert_text = harness.focus_alert_text(req)
+            alert_text = harness.focus_prompt_text(req)
+            if not alert_text:
+                _log("event_drop", kind=kind, tag=tag, reason="focus_no_prompt")
+                return
             info = self.router._sessions.get(session_id)  # noqa: SLF001
             history_meta = {
                 "kind": kind,

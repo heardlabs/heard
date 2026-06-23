@@ -1015,9 +1015,9 @@ def test_is_critical_template_event_classifies_correctly():
 
 def test_is_focus_template_event_allows_only_alerts():
     assert harness.is_focus_template_event(_ev(tag="tool_question")) is True
-    assert harness.is_focus_template_event(_ev(tag="tool_post_failure")) is True
+    assert harness.is_focus_template_event(_ev(tag="tool_post_failure")) is False
     assert harness.is_focus_template_event(
-        _ev(tag="tool_post_command_failed")) is True
+        _ev(tag="tool_post_command_failed")) is False
     assert harness.is_focus_template_event(_ev(tag="tool_pre_bash")) is False
     assert harness.is_focus_template_event(_ev(tag="tool_post_bash")) is False
     assert harness.is_focus_template_event({}) is False
@@ -1035,8 +1035,9 @@ def test_is_focus_attention_event_allows_only_actionable_alerts():
     assert harness.is_focus_attention_event(
         _ev(kind="final", neutral="Do you want me to net those refunds instead?")
     ) is True
+    assert harness.is_focus_attention_event(_ev(kind="final", neutral="Tests failed.")) is False
     assert harness.is_focus_attention_event(
-        _ev(kind="final", neutral="Tests failed, and I need you to approve the retry.")
+        _ev(kind="final", neutral="Tests failed. Approve the retry?")
     ) is True
 
     assert harness.is_focus_attention_event(
@@ -1075,18 +1076,19 @@ def test_is_focus_attention_event_allows_only_actionable_alerts():
 
 
 def test_focus_alert_text_is_generic_and_short():
-    assert harness.focus_alert_text(_ev(kind="final", neutral="Approve the install?")) == (
-        "Claude needs your approval."
+    assert harness.focus_prompt_text(_ev(kind="final", neutral="Approve the install?")) == (
+        "Approve the install?"
     )
-    assert harness.focus_alert_text(
+    assert harness.focus_prompt_text(
         _ev(kind="final", neutral="How should I convert Wise's USD/HKD to CAD?")
-    ) == "Claude needs your input."
-    assert harness.focus_alert_text(_ev(kind="final", neutral="Tests failed.")) == (
-        "Claude hit a failure."
-    )
-    assert harness.focus_alert_text(_ev(kind="final", neutral="I can't continue without login.")) == (
-        "Claude is blocked."
-    )
+    ) == "How should I convert Wise's USD/HKD to CAD?"
+    assert harness.focus_prompt_text(_ev(kind="final", neutral="Tests failed.")) == ""
+    assert harness.focus_prompt_text(
+        _ev(kind="final", neutral="March reconciliation is done, your statement matches our data perfectly.")
+    ) == ""
+    assert harness.focus_prompt_text(
+        _ev(kind="final", neutral="Found the issue. Want me to net those refunds instead?")
+    ) == "Want me to net those refunds instead?"
 
 
 def test_fast_path_multi_agent_disables_fast_path():

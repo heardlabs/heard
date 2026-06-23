@@ -266,39 +266,11 @@ def is_critical_template_event(event: dict[str, Any]) -> bool:
 def is_focus_template_event(event: dict[str, Any]) -> bool:
     """True when an event may bypass Focus's quiet gate.
 
-    Focus's fast path is intentionally narrower than normal
-    critical-template routing. It lets through direct questions and
-    failure/blocker alerts, while dropping routine tool lines that
-    would otherwise speak without the harness seeing them.
+    Focus is for user-action prompts, not status alerts. Tool questions
+    already carry the exact text the user needs to answer; failures only
+    speak in Focus when they ask a concrete follow-up question.
     """
-    return is_critical_template_event(event)
-
-
-_FOCUS_ATTENTION_PHRASES: tuple[str, ...] = (
-    "approve",
-    "approval",
-    "blocked",
-    "blocker",
-    "can't continue",
-    "cannot continue",
-    "choose",
-    "confirm",
-    "decision",
-    "failed",
-    "failure",
-    "how do you want",
-    "i need you",
-    "log in",
-    "needs your",
-    "permission",
-    "pick",
-    "stuck",
-    "waiting for you",
-    "waiting on you",
-    "want me to",
-    "what should",
-    "your move",
-)
+    return (event.get("tag") or "").lower() == "tool_question"
 
 
 _FOCUS_DECISION_QUESTION_PHRASES: tuple[str, ...] = (
@@ -315,7 +287,6 @@ _FOCUS_DECISION_QUESTION_PHRASES: tuple[str, ...] = (
     "should i",
     "want me to",
     "what should i",
-    "which",
 )
 
 
@@ -335,60 +306,72 @@ _FOCUS_ROUTINE_QUESTION_PHRASES: tuple[str, ...] = (
 )
 
 
-def is_focus_attention_event(event: dict[str, Any]) -> bool:
-    """True when Focus mode should let an event reach speech.
+_FOCUS_ACTION_REQUEST_PHRASES: tuple[str, ...] = (
+    "approve",
+    "approval",
+    "choose",
+    "confirm",
+    "how do you want",
+    "i need you to",
+    "log in",
+    "needs your",
+    "permission",
+    "pick",
+    "waiting for you",
+    "waiting on you",
+    "want me to",
+    "what should i",
+)
 
-    Focus is alert-only, so the daemon uses this as a deterministic
-    guard before the harness LLM. The model still shapes allowed alerts,
-    but it cannot decide that routine progress is worth narrating.
+
+def _clean_focus_prompt(text: str, *, max_chars: int = 220) -> str:
+    text = " ".join((text or "").split()).strip(" -:")
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0].rstrip(" ,;:")
+
+
+def focus_prompt_text(event: dict[str, Any]) -> str:
+    """Return the exact user-action prompt Focus should speak.
+
+    Empty string means the event is not something the user needs to
+    answer/allow right now.
     """
+    raw = event.get("neutral") or ""
+    text = " ".join(raw.split())
+    if not text:
+        return ""
+    if is_focus_template_event(event):
+        return _clean_focus_prompt(text)
+
+    lowered = text.lower()
+    questions = re.findall(r"[^?]*\?", text)
+    for question in reversed(questions):
+        question = re.split(r"(?<=[.!])\s+", question.strip())[-1]
+        q_lower = question.lower()
+        if any(phrase in q_lower for phrase in _FOCUS_ROUTINE_QUESTION_PHRASES):
+            continue
+        if any(phrase in q_lower for phrase in _FOCUS_DECISION_QUESTION_PHRASES):
+            return _clean_focus_prompt(question)
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    for sentence in sentences:
+        s_lower = sentence.lower()
+        if any(phrase in s_lower for phrase in _FOCUS_ACTION_REQUEST_PHRASES):
+            return _clean_focus_prompt(sentence)
+    if any(phrase in lowered for phrase in _FOCUS_ACTION_REQUEST_PHRASES):
+        return _clean_focus_prompt(text)
+    return ""
+
+
+def is_focus_attention_event(event: dict[str, Any]) -> bool:
+    """True when Focus mode has an exact user-action prompt to speak."""
+    kind = (event.get("kind") or "").lower()
     if is_focus_template_event(event):
         return True
-    kind = (event.get("kind") or "").lower()
     if kind not in {"final", "intermediate"}:
         return False
-    text = " ".join(((event.get("neutral") or "").lower()).split())
-    if not text:
-        return False
-    if "?" in text:
-        if any(phrase in text for phrase in _FOCUS_ROUTINE_QUESTION_PHRASES):
-            return False
-        return any(phrase in text for phrase in _FOCUS_DECISION_QUESTION_PHRASES)
-    return any(phrase in text for phrase in _FOCUS_ATTENTION_PHRASES)
-
-
-def focus_alert_text(event: dict[str, Any]) -> str:
-    """Short deterministic line for Focus mode.
-
-    Focus must not turn alerts into summaries. Once an event clears the
-    attention gate, this helper names only the kind of action needed.
-    """
-    text = " ".join(((event.get("neutral") or "").lower()).split())
-    if not text:
-        return "Needs your attention."
-    if "failed" in text or "failure" in text:
-        return "Claude hit a failure."
-    if any(phrase in text for phrase in ("blocked", "blocker", "stuck", "can't continue", "cannot continue")):
-        return "Claude is blocked."
-    if any(phrase in text for phrase in ("approve", "approval", "permission")):
-        return "Claude needs your approval."
-    if "?" in text or any(
-        phrase in text for phrase in (
-            "choose",
-            "decision",
-            "how do you want",
-            "i need you",
-            "needs your",
-            "pick",
-            "waiting for you",
-            "waiting on you",
-            "want me to",
-            "what should",
-            "your move",
-        )
-    ):
-        return "Claude needs your input."
-    return "Claude needs your attention."
+    return bool(focus_prompt_text(event))
 
 
 def should_use_fast_path(
