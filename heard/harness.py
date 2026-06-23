@@ -286,7 +286,6 @@ _FOCUS_ATTENTION_PHRASES: tuple[str, ...] = (
     "decision",
     "failed",
     "failure",
-    "give me",
     "how do you want",
     "i need you",
     "log in",
@@ -294,12 +293,10 @@ _FOCUS_ATTENTION_PHRASES: tuple[str, ...] = (
     "permission",
     "pick",
     "stuck",
-    "tell me",
     "waiting for you",
     "waiting on you",
     "want me to",
     "what should",
-    "which",
     "your move",
 )
 

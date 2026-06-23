@@ -2819,21 +2819,26 @@ class Daemon:
                     cfg,
                     current_session_id=session_id,
                 )
+                spoken_text = decision.text
+                if focus_mode:
+                    spoken_text = self._final_lead(decision.text, max_chars=140) or decision.text
+
                 _log(
                     "event_speak",
                     kind=kind,
                     tag=tag,
                     persona=persona.name,
-                    chars=len(decision.text),
+                    chars=len(spoken_text),
                     via="harness",
                     scope=decision.scope,
                     altitude=decision.altitude,
                     focused_agent=(decision.focused_agent_id or ""),
+                    focus_capped=focus_mode,
                 )
                 try:
                     from heard import analytics
                     if analytics.sampled():
-                        cl = len(decision.text)
+                        cl = len(spoken_text)
                         if cl < 100:
                             char_bucket = "0-99"
                         elif cl < 200:
@@ -2866,7 +2871,7 @@ class Daemon:
                     "focused_agent": decision.focused_agent_id or "",
                 }
                 self._start_speech(
-                    decision.text,
+                    spoken_text,
                     cfg=cfg,
                     persona=persona,
                     session_id=session_id,

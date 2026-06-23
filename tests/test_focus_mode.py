@@ -159,3 +159,24 @@ def test_focus_allows_actionable_harness_speech(tmp_path, monkeypatch):
     daemon._handle_event(_event(kind="final", neutral="Approve the install?"))
 
     assert [c["text"] for c in captured] == ["Codex needs you to approve the install."]
+
+
+def test_focus_caps_actionable_harness_speech(tmp_path, monkeypatch):
+    daemon, captured = _make_daemon(tmp_path, monkeypatch, {"mode": "focus"})
+    monkeypatch.setattr(
+        "heard.harness.narrate",
+        lambda *a, **kw: harness.HarnessDecision(
+            speak=True,
+            text=(
+                "Codex needs you to approve the install before it can continue. "
+                "This is a deliberately long explanation with implementation details "
+                "that should not be read in Focus mode because Focus is alert-only."
+            ),
+        ),
+    )
+
+    daemon._handle_event(_event(kind="final", neutral="Approve the install?"))
+
+    assert len(captured) == 1
+    assert len(captured[0]["text"]) <= 140
+    assert captured[0]["text"].startswith("Codex needs you to approve")

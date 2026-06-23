@@ -1049,6 +1049,25 @@ def test_is_focus_attention_event_allows_only_actionable_alerts():
         _ev(kind="final", neutral="Want to call those done, or dig into anything else?")
     ) is False
     assert harness.is_focus_attention_event(
+        _ev(
+            kind="final",
+            neutral=(
+                "I've mapped out all your statement overrides — matched each Plaid "
+                "descriptor to what you renamed it. Most I'm certain on. "
+                "Tell me if any are wrong and I'll fix them."
+            ),
+        )
+    ) is False
+    assert harness.is_focus_attention_event(
+        _ev(
+            kind="final",
+            neutral=(
+                "Final message with a structured mapping — needs to hit the headlines "
+                "and show which ones are high confidence."
+            ),
+        )
+    ) is False
+    assert harness.is_focus_attention_event(
         _ev(kind="intermediate", neutral="Reading the auth handler next.")
     ) is False
     assert harness.is_focus_attention_event(_ev(kind="tool_pre", tag="tool_pre_bash")) is False
