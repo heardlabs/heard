@@ -2621,6 +2621,35 @@ class Daemon:
         if focus_mode and not harness.is_focus_attention_event(req):
             _log("event_drop", kind=kind, tag=tag, reason="focus_attention_drop")
             return
+        if focus_mode and not harness.is_focus_template_event(req):
+            alert_text = harness.focus_alert_text(req)
+            info = self.router._sessions.get(session_id)  # noqa: SLF001
+            history_meta = {
+                "kind": kind,
+                "tag": tag,
+                "neutral": neutral,
+                "profile": cfg.get("verbosity", "normal"),
+                "repo_name": getattr(info, "repo_name", "") or "",
+                "cwd": cwd or "",
+                "via": "focus_alert",
+            }
+            _log(
+                "event_speak",
+                kind=kind,
+                tag=tag,
+                persona=persona.name,
+                chars=len(alert_text),
+                via="focus_alert",
+            )
+            self._start_speech(
+                alert_text,
+                cfg=cfg,
+                persona=persona,
+                session_id=session_id,
+                history_meta=history_meta,
+                priority=True,
+            )
+            return
 
         # --- Fast-path gate for routine events (architecture step 6a
         # full). Only relevant when the harness is engaged — without

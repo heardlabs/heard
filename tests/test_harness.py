@@ -1074,6 +1074,21 @@ def test_is_focus_attention_event_allows_only_actionable_alerts():
     assert harness.is_focus_attention_event({}) is False
 
 
+def test_focus_alert_text_is_generic_and_short():
+    assert harness.focus_alert_text(_ev(kind="final", neutral="Approve the install?")) == (
+        "Claude needs your approval."
+    )
+    assert harness.focus_alert_text(
+        _ev(kind="final", neutral="How should I convert Wise's USD/HKD to CAD?")
+    ) == "Claude needs your input."
+    assert harness.focus_alert_text(_ev(kind="final", neutral="Tests failed.")) == (
+        "Claude hit a failure."
+    )
+    assert harness.focus_alert_text(_ev(kind="final", neutral="I can't continue without login.")) == (
+        "Claude is blocked."
+    )
+
+
 def test_fast_path_multi_agent_disables_fast_path():
     """When 2+ agents are active, every routine event is potentially
     salient for cross-agent reasoning. Harness sees all (except

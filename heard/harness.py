@@ -357,6 +357,40 @@ def is_focus_attention_event(event: dict[str, Any]) -> bool:
     return any(phrase in text for phrase in _FOCUS_ATTENTION_PHRASES)
 
 
+def focus_alert_text(event: dict[str, Any]) -> str:
+    """Short deterministic line for Focus mode.
+
+    Focus must not turn alerts into summaries. Once an event clears the
+    attention gate, this helper names only the kind of action needed.
+    """
+    text = " ".join(((event.get("neutral") or "").lower()).split())
+    if not text:
+        return "Needs your attention."
+    if "failed" in text or "failure" in text:
+        return "Claude hit a failure."
+    if any(phrase in text for phrase in ("blocked", "blocker", "stuck", "can't continue", "cannot continue")):
+        return "Claude is blocked."
+    if any(phrase in text for phrase in ("approve", "approval", "permission")):
+        return "Claude needs your approval."
+    if "?" in text or any(
+        phrase in text for phrase in (
+            "choose",
+            "decision",
+            "how do you want",
+            "i need you",
+            "needs your",
+            "pick",
+            "waiting for you",
+            "waiting on you",
+            "want me to",
+            "what should",
+            "your move",
+        )
+    ):
+        return "Claude needs your input."
+    return "Claude needs your attention."
+
+
 def should_use_fast_path(
     event: dict[str, Any],
     *,

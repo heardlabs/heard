@@ -148,35 +148,50 @@ def test_focus_drops_routine_harness_speech(tmp_path, monkeypatch):
 
 def test_focus_allows_actionable_harness_speech(tmp_path, monkeypatch):
     daemon, captured = _make_daemon(tmp_path, monkeypatch, {"mode": "focus"})
-    monkeypatch.setattr(
-        "heard.harness.narrate",
-        lambda *a, **kw: harness.HarnessDecision(
+    called = False
+
+    def narrate(*a, **kw):
+        nonlocal called
+        called = True
+        return harness.HarnessDecision(
             speak=True,
             text="Codex needs you to approve the install.",
-        ),
+        )
+
+    monkeypatch.setattr(
+        "heard.harness.narrate",
+        narrate,
     )
 
     daemon._handle_event(_event(kind="final", neutral="Approve the install?"))
 
-    assert [c["text"] for c in captured] == ["Codex needs you to approve the install."]
+    assert called is False
+    assert [c["text"] for c in captured] == ["Claude needs your approval."]
 
 
 def test_focus_caps_actionable_harness_speech(tmp_path, monkeypatch):
     daemon, captured = _make_daemon(tmp_path, monkeypatch, {"mode": "focus"})
-    monkeypatch.setattr(
-        "heard.harness.narrate",
-        lambda *a, **kw: harness.HarnessDecision(
+    called = False
+
+    def narrate(*a, **kw):
+        nonlocal called
+        called = True
+        return harness.HarnessDecision(
             speak=True,
             text=(
                 "Codex needs you to approve the install before it can continue. "
                 "This is a deliberately long explanation with implementation details "
                 "that should not be read in Focus mode because Focus is alert-only."
             ),
-        ),
+        )
+
+    monkeypatch.setattr(
+        "heard.harness.narrate",
+        narrate,
     )
 
     daemon._handle_event(_event(kind="final", neutral="Approve the install?"))
 
+    assert called is False
     assert len(captured) == 1
-    assert len(captured[0]["text"]) <= 140
-    assert captured[0]["text"].startswith("Codex needs you to approve")
+    assert captured[0]["text"] == "Claude needs your approval."
