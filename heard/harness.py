@@ -263,6 +263,17 @@ def is_critical_template_event(event: dict[str, Any]) -> bool:
     return False
 
 
+def is_focus_template_event(event: dict[str, Any]) -> bool:
+    """True when an event may bypass Focus's quiet gate.
+
+    Focus's fast path is intentionally narrower than normal
+    critical-template routing. It lets through direct questions and
+    failure/blocker alerts, while dropping routine tool lines that
+    would otherwise speak without the harness seeing them.
+    """
+    return is_critical_template_event(event)
+
+
 def should_use_fast_path(
     event: dict[str, Any],
     *,
@@ -1386,7 +1397,7 @@ no commentary outside the response.
 
 # ----- mode addendum ------------------------------------------------------
 #
-# Heard's harness has two listening modes (see config.py "mode"):
+# Heard's harness has three listening modes (see config.py "mode"):
 #
 #   * "copilot"   — default. The listener is AT the screen, reading
 #                   the diff alongside you. Companion-style narration
@@ -1403,12 +1414,15 @@ no commentary outside the response.
 #                   thing, surgical, goal-driven) apply — translated
 #                   from coding to speaking.
 #
+#   * "focus"  — alert-only. The listener does not want narration
+#                   unless something needs their attention: approval,
+#                   a decision, a blocked/failing run, or a prompt that
+#                   is stuck waiting on them.
+#
 # The addendum is appended AFTER the base block so it has the last
-# word on conflicting rules. For Companion this is load-bearing: the
-# base block leans Co-pilot (default-silent on routine, one line per
-# ~10 steps), and Companion OVERRIDES that — eyes-off means audio is
-# the only channel, so it narrates nearly every message Claude emits
-# (the "•" prose + finals), skipping only raw tool mechanism.
+# word on conflicting rules. For Companion and Focus this is
+# load-bearing: Companion expands the base cadence for eyes-off use;
+# Focus narrows it to only user-actionable alerts.
 _HARNESS_COPILOT_ADDENDUM = """\
 CO-PILOT MODE — additional constraints.
 
@@ -1499,6 +1513,35 @@ But everything Claude actually SAYS, you voice.
 """
 
 
+_HARNESS_FOCUS_ADDENDUM = """\
+FOCUS MODE — alert-only constraints.
+
+The listener wants Heard quiet unless something needs attention. They
+may be focused elsewhere and only want audio when a Claude or Codex
+session is blocked, asking for approval, or waiting for a human choice.
+
+Speak ONLY when at least one of these is true:
+
+1. The agent is directly asking the user to decide, approve, choose, or
+   provide missing information.
+2. A tool, build, test, install, permission, or deployment is blocked
+   or failed in a way that needs user intervention.
+3. The app or terminal is waiting on a prompt that will stay stuck until
+   the user answers.
+4. There is a high-priority notification whose value is that the user
+   hears it now, not later.
+
+Stay silent on normal progress, routine tool chatter, successful
+finishes, "done" summaries, FYI updates, status reports, recaps, and
+anything the user can safely read later. In this mode a final message
+is NOT automatically worth speaking; if it does not contain a decision,
+approval, blocker, or action needed from the user, return "(silence)".
+
+When you do speak, be short and direct. Name what needs action and the
+choice or approval needed. Do not narrate the surrounding work.
+"""
+
+
 _THINK_SAY_INSTRUCTION_BLOCK = """\
 TWO-STREAM OUTPUT — this OVERRIDES the OUTPUT FORMAT above.
 
@@ -1551,11 +1594,10 @@ def _build_system_text(
     distillation worker writes real preferences. Empty string keeps
     the system bytes stable.
 
-    `mode` is "copilot" (default) or "companion". In Companion mode
-    the addendum is appended after the base instruction block so its
-    rules override (e.g. "speak less often" beats the base "default
-    to speaking"). Unknown values fall back to Co-pilot — safer than
-    raising at runtime.
+    `mode` is "copilot" (default), "companion", or "focus". The
+    addendum is appended after the base instruction block so its rules
+    override the shared baseline. Unknown values fall back to Co-pilot
+    — safer than raising at runtime.
     """
     parts = [
         persona_mod._SHARED_NARRATION_RULES,
@@ -1568,6 +1610,8 @@ def _build_system_text(
     # co-pilot (the safe, screen-present assumption).
     if mode == "companion":
         parts.append(_HARNESS_COMPANION_ADDENDUM)
+    elif mode == "focus":
+        parts.append(_HARNESS_FOCUS_ADDENDUM)
     else:
         parts.append(_HARNESS_COPILOT_ADDENDUM)
     if think_say:

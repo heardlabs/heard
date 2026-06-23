@@ -101,3 +101,38 @@ def test_duplicate_raw_final_event_is_observed_once(daemon, monkeypatch):
     daemon._handle_event(dict(ev))
 
     assert seen == [ev]
+
+
+def test_delayed_duplicate_final_event_is_still_dropped(daemon, monkeypatch):
+    """Codex Desktop duplicate finals have shown up ~20s apart in the
+    wild. The final/prose duplicate window is intentionally wider than
+    the generic raw-event gate."""
+    import heard.daemon as dmod
+
+    t = [1000.0]
+    monkeypatch.setattr(dmod.time, "monotonic", lambda: t[0])
+
+    assert daemon._is_duplicate_event(
+        "codex-session", "final", "final_long", "Done. Tests pass."
+    ) is False
+    t[0] += daemon._EVENT_DUP_WINDOW_S + 8.0
+    assert daemon._is_duplicate_event(
+        "codex-session", "final", "final_long", "Done. Tests pass."
+    ) is True
+
+
+def test_delayed_duplicate_tool_event_uses_short_window(daemon, monkeypatch):
+    """A real command may repeat after a short pause, so tool events keep
+    the tight raw-event duplicate window."""
+    import heard.daemon as dmod
+
+    t = [1000.0]
+    monkeypatch.setattr(dmod.time, "monotonic", lambda: t[0])
+
+    assert daemon._is_duplicate_event(
+        "codex-session", "tool_pre", "tool_bash_test", "Running tests."
+    ) is False
+    t[0] += daemon._EVENT_DUP_WINDOW_S + 1.0
+    assert daemon._is_duplicate_event(
+        "codex-session", "tool_pre", "tool_bash_test", "Running tests."
+    ) is False

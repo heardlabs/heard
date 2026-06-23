@@ -219,7 +219,7 @@ DEFAULTS: dict[str, Any] = {
     # overrides (save() only writes keys whose values differ from
     # DEFAULTS — so users who set this to False keep their False).
     "harness_enabled": True,
-    # Phase 3 add-on — listening mode for the harness path. Two values:
+    # Phase 3 add-on — listening mode for the harness path. Three values:
     #   "copilot"   — default. Screen-on, daily coding. Compressed
     #                 hooks and signposts; details live in the diff
     #                 the listener can read.
@@ -228,6 +228,8 @@ DEFAULTS: dict[str, Any] = {
     #                 plain English over developer-speak, every turn
     #                 ends with a hook into action. Built on Karpathy's
     #                 "simplicity + surgical + goal-driven" principles.
+    #   "focus"  — alert-only. Stay quiet unless the user needs to
+    #                 decide, approve something, or fix a blocker.
     # Read by harness.py to pick which addendum to layer onto the
     # base instruction block. No effect when harness_enabled is False
     # (v1 path doesn't have a prompt customisation point).

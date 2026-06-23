@@ -245,23 +245,28 @@ class HeardApp(rumps.App):
 
         # Listening mode. Sits ABOVE Verbosity because it answers a
         # bigger question ("what kind of output do I need right now?")
-        # than verbosity ("how much per event?"). Two modes:
+        # than verbosity ("how much per event?"). Three modes:
         #   Co-pilot (default): screen-on, daily coding. Compressed
         #     hooks; details live in the diff you can read.
         #   Companion: eyes-off (driving, cooking). Lean but
         #     substantive — state choices, plain English, hooks into
         #     action. Built on Karpathy's leanness principles, see
         #     harness.py _HARNESS_COMPANION_ADDENDUM.
+        #   Focus: alert-only. Silent unless the user needs to
+        #     approve, decide, or intervene.
         # No effect when the v2 harness is off; it's a harness-prompt
         # concept (v1 path doesn't have the customization point).
         self.mode_menu = rumps.MenuItem("Mode")
+        self._mode_values_by_label = {}
         mode_labels = (
             ("copilot", "Co-pilot — compact narration for screen-on work"),
             ("companion", "Companion — fuller briefings for hands-off moments"),
+            ("focus", "Focus — only alerts when you need to act"),
         )
         for value, label in mode_labels:
             item = rumps.MenuItem(label, callback=self._mk_mode_cb(value))
             self.mode_menu[label] = item
+            self._mode_values_by_label[label] = value
 
         # Verbosity used to live here as two nested submenus (foreground
         # + swarm). Pulled out of the menu bar in favor of Mode as the
@@ -475,10 +480,10 @@ class HeardApp(rumps.App):
                 item.state = 1 if label == closest_label else 0
         # Mode checkmark — unknown values land on Co-pilot.
         active_mode = (cfg.get("mode") or "copilot").strip().lower()
-        if active_mode not in ("copilot", "companion"):
+        if active_mode not in ("copilot", "companion", "focus"):
             active_mode = "copilot"
         for label, item in self.mode_menu.items():
-            value = "companion" if label.startswith("Companion") else "copilot"
+            value = self._mode_values_by_label.get(label, "copilot")
             item.state = 1 if value == active_mode else 0
 
         # Verbosity + swarm checkmark refresh used to live here; both
@@ -864,7 +869,7 @@ class HeardApp(rumps.App):
         return cb
 
     def _mk_mode_cb(self, mode: str):
-        """Mode toggle (Co-pilot ↔ Companion). Writes `mode` to config
+        """Mode toggle. Writes `mode` to config
         and reloads the daemon so the next harness call reads the new
         addendum. No-op (still safe) when harness_enabled is False —
         the value persists for whenever the user flips the harness on."""

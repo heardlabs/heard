@@ -2388,9 +2388,22 @@ class Daemon:
     # burst; short enough that a genuinely new beat 30s later still speaks.
     _TOOL_DUP_WINDOW_S = 25.0
     _EVENT_DUP_WINDOW_S = 10.0
+    # Codex Desktop can write the same final twice through separate
+    # records a little later than the tight raw-event window. Keep this
+    # broader only for prose/finals so real repeated tool commands still
+    # get a chance to narrate.
+    _PROSE_EVENT_DUP_WINDOW_S = 45.0
+    _FINAL_EVENT_DUP_WINDOW_S = 180.0
 
     def _event_signature(self, kind: str, tag: str, text: str) -> str:
         return "\0".join((kind, tag, " ".join((text or "").lower().split())))
+
+    def _event_dup_window_s(self, kind: str) -> float:
+        if kind == "final":
+            return self._FINAL_EVENT_DUP_WINDOW_S
+        if kind == "intermediate":
+            return self._PROSE_EVENT_DUP_WINDOW_S
+        return self._EVENT_DUP_WINDOW_S
 
     def _is_duplicate_event(
         self,
@@ -2405,9 +2418,10 @@ class Daemon:
             return False
         sig = self._event_signature(kind, tag, text)
         now = time.monotonic()
+        window_s = self._event_dup_window_s(kind)
         recent = self._recent_event_signatures[session_id or "default"]
         is_dup = any(
-            s == sig and (now - ts) <= self._EVENT_DUP_WINDOW_S for s, ts in recent
+            s == sig and (now - ts) <= window_s for s, ts in recent
         )
         recent.append((sig, now))
         return is_dup
@@ -2621,6 +2635,10 @@ class Daemon:
                 multi_agent_active=active_count > 1,
                 recent_edit_paths=tuple(self._recent_edit_paths),
             ):
+                focus_mode = (cfg.get("mode") or "copilot").strip().lower() == "focus"
+                if focus_mode and not harness.is_focus_template_event(req):
+                    _log("event_drop", kind=kind, tag=tag, reason="focus_fastpath_drop")
+                    return
                 # Verbosity profile still applies: quiet mode still
                 # mutes trivia, brief mode still digests bursts, etc.
                 if kind == "tool_pre":
@@ -2702,6 +2720,7 @@ class Daemon:
         #   - speak=False       → harness chose silence; suppress
         #   - speak=True        → enqueue harness.text directly
         if harness.is_enabled(cfg):
+            focus_mode = (cfg.get("mode") or "copilot").strip().lower() == "focus"
             # Is this the turn's opener? The first intermediate after a
             # user prompt. Consume the pending flag now so only the first
             # one qualifies; force it to speak (below) so the listener
@@ -2738,7 +2757,7 @@ class Daemon:
                     # through to the floor (short final read as-is, long
                     # final → a clean "that's done" line) rather than
                     # going silent. Mid-stream events may still be skipped.
-                    if kind == "final":
+                    if kind == "final" and not focus_mode:
                         _log("harness_skip_override", kind=kind, tag=tag,
                              reason="final_always_speaks")
                         info = self.router._sessions.get(session_id)  # noqa: SLF001
@@ -2763,7 +2782,7 @@ class Daemon:
                     # turn's immediate "I'm on it." If the brain skipped it,
                     # speak a clean lead of the agent's first line so there's
                     # instant audio at turn start.
-                    if is_opener:
+                    if is_opener and not focus_mode:
                         lead = self._final_lead(neutral, max_chars=160)
                         if lead:
                             _log("harness_skip_override", kind=kind, tag=tag,
@@ -2872,6 +2891,9 @@ class Daemon:
                 })
             except Exception:
                 pass
+            if focus_mode:
+                _log("event_drop", kind=kind, tag=tag, reason="focus_harness_punt")
+                return
             # --- v2 floor — graceful no-LLM fallback. NEVER read a final
             # verbatim; a punted final gets a short canned line, a punted
             # mid-stream blip is dropped, tool-ish events keep their clean

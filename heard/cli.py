@@ -993,6 +993,8 @@ _BOOL_KEYS = (
     "onboarded",
 )
 
+_VALID_MODES = ("copilot", "companion", "focus")
+
 
 def _validate(key: str, value: str) -> object:
     """Coerce + bounds-check a config value. Raises typer.BadParameter
@@ -1017,6 +1019,14 @@ def _validate(key: str, value: str) -> object:
         if v not in _VALID_VERBOSITY:
             raise typer.BadParameter(
                 f"{key} must be one of {', '.join(_VALID_VERBOSITY)}; got {value!r}."
+            )
+        return v
+
+    if key == "mode":
+        v = value.lower()
+        if v not in _VALID_MODES:
+            raise typer.BadParameter(
+                f"mode must be one of {', '.join(_VALID_MODES)}; got {value!r}."
             )
         return v
 

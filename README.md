@@ -62,7 +62,7 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 ## What it does
 
 - **Narrates with judgment, not just transcription.** Heard decides what to say based on context — your recent activity, what tool just ran, whether something is a decision moment or routine progress. Not every tool call gets the same airtime.
-- **Two listening modes you switch between.** **Co-pilot** for screen-on work — short hooks and signposts. **Companion** for eyes-off (driving, cooking, walking) — fuller briefings that name the choice, surface the decision, end with a hook into action.
+- **Three listening modes you switch between.** **Co-pilot** for screen-on work — short hooks and signposts. **Companion** for eyes-off (driving, cooking, walking) — fuller briefings that name the choice and surface the decision. **Focus** for alert-only use — quiet unless something needs your attention.
 - **Multi-agent aware.** Run 3+ agents in parallel; Heard voices the most salient one and quietly summarises the others. Each gets a distinct voice so you can tell them apart by ear.
 - **Four personas, fork-your-own.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator).
 - **Works with any coding CLI.** First-class adapters for Claude Code, Codex CLI, and Codex App; `heard run <command>` wraps anything else.
@@ -88,6 +88,7 @@ Switch from the menu bar → Mode.
 |---|---|---|
 | **Co-pilot** *(default)* | At the screen, coding | Short hooks and signposts. Routine tool churn gets a one-liner; decisions and finals get fuller narration. The details live in the diff you can read. |
 | **Companion** | Hands-off — driving, cooking, walking | Lean but substantive briefings. State the choice, surface the decision, plain English over developer-speak, every turn ends with a hook into action. |
+| **Focus** | Focused elsewhere, but reachable | Alert-only. Speaks for approvals, blockers, failures, and decisions that are waiting on you; routine progress and normal finals stay quiet. |
 
 ## Running multiple agents
 
@@ -136,7 +137,7 @@ macOS 13+ · Claude Code + Codex CLI/App first-class · Cursor and Aider planned
 
 ## Status
 
-v1.0.x — cross-event-judgment narration via the Heard brain (one Haiku call per meaningful event sees your recent context, the active agents, and the current event, then decides what to say). Co-pilot / Companion listening modes, multi-agent salience, automatic ElevenLabs ⇄ Kokoro failover. Used daily by the author. Backward-compatible API surface; deeper knobs may move into preferences over time.
+v1.0.x — cross-event-judgment narration via the Heard brain (one Haiku call per meaningful event sees your recent context, the active agents, and the current event, then decides what to say). Co-pilot / Companion / Focus listening modes, multi-agent salience, automatic ElevenLabs ⇄ Kokoro failover. Used daily by the author. Backward-compatible API surface; deeper knobs may move into preferences over time.
 
 ## License
 

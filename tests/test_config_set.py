@@ -59,6 +59,15 @@ def test_verbosity_must_be_valid():
         cli._validate("verbosity", "meh")
 
 
+def test_mode_must_be_valid():
+    assert cli._validate("mode", "copilot") == "copilot"
+    assert cli._validate("mode", "companion") == "companion"
+    assert cli._validate("mode", "focus") == "focus"
+    assert cli._validate("mode", "Focus") == "focus"
+    with pytest.raises(typer.BadParameter):
+        cli._validate("mode", "noisy")
+
+
 def test_hotkey_pause_passes_through_as_string():
     """hotkey_pause / hotkey_continue are free-form pynput combo
     strings; the validator just rejects negatives where it can and

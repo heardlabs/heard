@@ -2849,10 +2849,10 @@ class _OnboardingController(NSObject):
     def _screen_modes(self) -> NSView:
         v = NSView.alloc().init()
         v.setTranslatesAutoresizingMaskIntoConstraints_(False)
-        title = _wizard_title("Two ways Heard talks")
+        title = _wizard_title("Three ways Heard talks")
         intro = _label(
-            "Heard has two modes you can use — one for when you're at the "
-            "screen, one for when you're away from it.",
+            "Pick the level of presence you want: screen-on help, hands-off "
+            "briefings, or alerts only.",
             size=12, dim=True)
         _low_priority_text(intro, wrap=True)
         # Subtitles are the EXACT menu-bar taglines so they match what the
@@ -2863,11 +2863,14 @@ class _OnboardingController(NSObject):
         companion = self._mode_card(
             "🎧", "Companion", "fuller briefings for hands-off moments",
             "when you're away — driving, workouts, multitasking")
+        focus = self._mode_card(
+            "🎯", "Focus", "only alerts when you need to act",
+            "approvals, blockers, and decisions")
         mock = self._menu_screenshot_card()
         caption = _label("Switch anytime in the menu bar.", size=12, dim=True)
         _low_priority_text(caption, wrap=True)
         stack = _vstack(
-            [title, intro, copilot, companion, caption, mock], spacing=10)
+            [title, intro, copilot, companion, focus, caption, mock], spacing=10)
         v.addSubview_(stack)
         NSLayoutConstraint.activateConstraints_([
             stack.topAnchor().constraintEqualToAnchor_constant_(v.topAnchor(), 12),
@@ -2876,6 +2879,7 @@ class _OnboardingController(NSObject):
             stack.bottomAnchor().constraintLessThanOrEqualToAnchor_(v.bottomAnchor()),
             copilot.widthAnchor().constraintEqualToAnchor_(stack.widthAnchor()),
             companion.widthAnchor().constraintEqualToAnchor_(stack.widthAnchor()),
+            focus.widthAnchor().constraintEqualToAnchor_(stack.widthAnchor()),
             # Container is full-width; the image centers inside it at 78%.
             mock.widthAnchor().constraintEqualToAnchor_(stack.widthAnchor()),
         ])

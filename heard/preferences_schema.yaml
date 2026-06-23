@@ -32,7 +32,7 @@
 #   * Persona identity and voice — hard-core, non-overridable.
 #   * Whether failures + questions are announced — hard-core. Only
 #     their FORMAT is overridable (see error_detail_level, etc.).
-#   * Listening mode (copilot vs companion) — top-level config
+#   * Listening mode (copilot / companion / focus) — top-level config
 #     field for now. At F5 it migrates here as `listening_mode`;
 #     until then mode-specific defaults live in the harness
 #     addendum.
@@ -184,7 +184,7 @@ slots:
 #   hard-core surfaces         ← non-overridable, in code
 #   project preferences        ← local .heard.yaml additions
 #   user preferences           ← cloud-tied per-account
-#   listening mode defaults    ← copilot/companion addendum
+#   listening mode defaults    ← copilot/companion/focus addendum
 #   soft-core defaults         ← values in this file
 #
 # Distilled-from-feedback prefs always carry source metadata:

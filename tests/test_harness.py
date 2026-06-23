@@ -574,11 +574,13 @@ def test_system_text_default_mode_is_copilot():
     block is present; the Companion addendum is NOT."""
     text = harness._build_system_text(_persona())
     assert "COMPANION MODE" not in text
+    assert "FOCUS MODE" not in text
 
 
 def test_system_text_copilot_mode_excludes_companion_addendum():
     text = harness._build_system_text(_persona(), mode="copilot")
     assert "COMPANION MODE" not in text
+    assert "FOCUS MODE" not in text
 
 
 def test_system_text_companion_mode_appends_addendum():
@@ -592,11 +594,21 @@ def test_system_text_companion_mode_appends_addendum():
     assert base_idx < addendum_idx
 
 
+def test_system_text_focus_mode_appends_addendum():
+    text = harness._build_system_text(_persona(), mode="focus")
+    assert "FOCUS MODE" in text
+    assert "COMPANION MODE" not in text
+    base_idx = text.index("SPEAK FOR SIGNAL")
+    addendum_idx = text.index("FOCUS MODE")
+    assert base_idx < addendum_idx
+
+
 def test_system_text_unknown_mode_falls_back_to_copilot():
     """Garbage mode string must not crash and must not enter Companion
     by accident. Co-pilot is the safer default."""
     text = harness._build_system_text(_persona(), mode="bogus-mode")
     assert "COMPANION MODE" not in text
+    assert "FOCUS MODE" not in text
 
 
 def test_system_text_companion_mode_byte_stable():
@@ -604,6 +616,14 @@ def test_system_text_companion_mode_byte_stable():
     identical bytes so the cache prefix holds."""
     a = harness._build_system_text(_persona(), mode="companion")
     b = harness._build_system_text(_persona(), mode="companion")
+    assert a == b
+
+
+def test_system_text_focus_mode_byte_stable():
+    """Cache stability within Focus mode — two calls produce
+    identical bytes so the cache prefix holds."""
+    a = harness._build_system_text(_persona(), mode="focus")
+    b = harness._build_system_text(_persona(), mode="focus")
     assert a == b
 
 
@@ -625,6 +645,27 @@ def test_narrate_reads_mode_from_cfg():
         harness.narrate(event, cfg=cfg, persona=_persona(), agent_states=reg)
 
     assert "COMPANION MODE" in captured["system"]
+
+
+def test_narrate_reads_focus_mode_from_cfg():
+    """End-to-end check: cfg["mode"]=="focus" uses the alert-only
+    addendum."""
+    from unittest.mock import patch
+    reg = AgentStateRegistry()
+    event = _ev(kind="final", neutral="done")
+    cfg = {"harness_enabled": True, "mode": "focus"}
+
+    captured: dict[str, str] = {}
+
+    def _capture(system_text, user_msg, **kwargs):
+        captured["system"] = system_text
+        return "spoken text"
+
+    with patch.object(harness.persona_mod, "call_with_prompt", side_effect=_capture):
+        harness.narrate(event, cfg=cfg, persona=_persona(), agent_states=reg)
+
+    assert "FOCUS MODE" in captured["system"]
+    assert "COMPANION MODE" not in captured["system"]
 
 
 def test_warm_cache_calls_llm_when_enabled():
@@ -672,6 +713,23 @@ def test_warm_cache_uses_current_mode():
     assert "COMPANION MODE" in captured["system"]
 
 
+def test_warm_cache_uses_focus_mode():
+    """Focus mode warming must use the alert-only system bytes."""
+    from unittest.mock import patch
+    cfg = {"harness_enabled": True, "mode": "focus"}
+    captured = {}
+
+    def _capture(system_text, user_msg, **kwargs):
+        captured["system"] = system_text
+        return "ok"
+
+    with patch.object(harness.persona_mod, "call_with_prompt",
+                      side_effect=_capture):
+        harness.warm_cache(cfg=cfg, persona=_persona())
+
+    assert "FOCUS MODE" in captured["system"]
+
+
 def test_warm_cache_swallows_exceptions():
     """Warmup must NEVER crash the daemon — call_with_prompt raising
     is silently absorbed."""
@@ -704,6 +762,7 @@ def test_narrate_default_mode_is_copilot():
         harness.narrate(event, cfg=cfg, persona=_persona(), agent_states=reg)
 
     assert "COMPANION MODE" not in captured["system"]
+    assert "FOCUS MODE" not in captured["system"]
 
 
 def test_user_message_includes_agent_table_and_event():
@@ -952,6 +1011,16 @@ def test_is_critical_template_event_classifies_correctly():
         _ev(tag="tool_post_bash")) is False
     # No tag → not critical (defensive).
     assert harness.is_critical_template_event({}) is False
+
+
+def test_is_focus_template_event_allows_only_alerts():
+    assert harness.is_focus_template_event(_ev(tag="tool_question")) is True
+    assert harness.is_focus_template_event(_ev(tag="tool_post_failure")) is True
+    assert harness.is_focus_template_event(
+        _ev(tag="tool_post_command_failed")) is True
+    assert harness.is_focus_template_event(_ev(tag="tool_pre_bash")) is False
+    assert harness.is_focus_template_event(_ev(tag="tool_post_bash")) is False
+    assert harness.is_focus_template_event({}) is False
 
 
 def test_fast_path_multi_agent_disables_fast_path():
