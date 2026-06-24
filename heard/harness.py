@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import re
+import zlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -324,6 +325,24 @@ _FOCUS_ACTION_REQUEST_PHRASES: tuple[str, ...] = (
 )
 
 
+_FOCUS_PERMISSION_PREFIXES: tuple[str, ...] = (
+    "Sir, need your attention.",
+    "Sir, I need permission:",
+    "Sir, permission needed:",
+    "Sir, when you have a second,",
+    "Sir, I need your approval:",
+)
+
+
+_FOCUS_DECISION_PREFIXES: tuple[str, ...] = (
+    "Sir, need your attention.",
+    "Sir, I need your call:",
+    "Sir, when you have a second,",
+    "Sir, this is waiting on you:",
+    "Sir, I need you to decide:",
+)
+
+
 def _clean_focus_prompt(text: str, *, max_chars: int = 220) -> str:
     text = " ".join((text or "").split()).strip(" -:")
     if len(text) <= max_chars:
@@ -362,6 +381,22 @@ def focus_prompt_text(event: dict[str, Any]) -> str:
     if any(phrase in lowered for phrase in _FOCUS_ACTION_REQUEST_PHRASES):
         return _clean_focus_prompt(text)
     return ""
+
+
+def focus_prompt_speech(event: dict[str, Any], *, persona_name: str = "") -> str:
+    prompt = focus_prompt_text(event)
+    if not prompt:
+        return ""
+    lower = prompt.lower()
+    permission_like = any(
+        phrase in lower
+        for phrase in ("allow", "approve", "approval", "access", "permission")
+    )
+    prefixes = _FOCUS_PERMISSION_PREFIXES if permission_like else _FOCUS_DECISION_PREFIXES
+    session = event.get("session") if isinstance(event.get("session"), dict) else {}
+    seed = f"{prompt}|{session.get('id') or ''}|{persona_name or ''}"
+    prefix = prefixes[zlib.crc32(seed.encode("utf-8")) % len(prefixes)]
+    return f"{prefix} {prompt}".strip()
 
 
 def is_focus_attention_event(event: dict[str, Any]) -> bool:

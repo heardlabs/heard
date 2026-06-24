@@ -130,6 +130,29 @@ def _event_from_function_call(
     elif name == "apply_patch":
         tool_name = "Edit"
         tool_input = {}
+    elif name == "request_permissions":
+        permissions = args.get("permissions") if isinstance(args.get("permissions"), dict) else {}
+        reason = (args.get("reason") or "").strip()
+        labels: list[str] = []
+        network = permissions.get("network") if isinstance(permissions, dict) else None
+        if isinstance(network, dict) and network.get("enabled"):
+            labels.append("network access")
+        fs = permissions.get("file_system") if isinstance(permissions, dict) else None
+        if isinstance(fs, dict):
+            if fs.get("write"):
+                labels.append("file write access")
+            elif fs.get("read"):
+                labels.append("file read access")
+        label = " and ".join(labels) if labels else "permission"
+        question = f"Allow {label}?"
+        text = f"{question} {reason}".strip()
+        return {
+            "kind": "tool_pre",
+            "neutral": text,
+            "tag": "tool_question",
+            "ctx": {"question": question, "reason": reason, "permission": label},
+            "session": _session(meta, path, cwd=str(cwd) if cwd else None),
+        }
     elif name in ("view_image", "read_thread_terminal"):
         return None
     else:

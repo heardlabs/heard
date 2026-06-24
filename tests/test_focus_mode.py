@@ -108,7 +108,9 @@ def test_focus_allows_user_question_fastpath(tmp_path, monkeypatch):
     daemon._handle_event(_event(kind="tool_pre", tag="tool_question",
                                neutral="Approve this change?"))
 
-    assert [c["text"] for c in captured] == ["Approve this change?"]
+    assert len(captured) == 1
+    assert captured[0]["text"].endswith("Approve this change?")
+    assert captured[0]["text"].startswith("Sir, ")
     assert captured[0]["kw"]["priority"] is True
 
 
@@ -165,7 +167,9 @@ def test_focus_allows_actionable_harness_speech(tmp_path, monkeypatch):
     daemon._handle_event(_event(kind="final", neutral="Approve the install?"))
 
     assert called is False
-    assert [c["text"] for c in captured] == ["Approve the install?"]
+    assert len(captured) == 1
+    assert captured[0]["text"].endswith("Approve the install?")
+    assert captured[0]["text"].startswith("Sir, ")
 
 
 def test_focus_caps_actionable_harness_speech(tmp_path, monkeypatch):
@@ -193,4 +197,5 @@ def test_focus_caps_actionable_harness_speech(tmp_path, monkeypatch):
 
     assert called is False
     assert len(captured) == 1
-    assert captured[0]["text"] == "Approve the install?"
+    assert captured[0]["text"].endswith("Approve the install?")
+    assert captured[0]["text"].startswith("Sir, ")

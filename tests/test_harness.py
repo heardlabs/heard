@@ -1075,7 +1075,7 @@ def test_is_focus_attention_event_allows_only_actionable_alerts():
     assert harness.is_focus_attention_event({}) is False
 
 
-def test_focus_alert_text_is_generic_and_short():
+def test_focus_prompt_text_extracts_the_action_prompt():
     assert harness.focus_prompt_text(_ev(kind="final", neutral="Approve the install?")) == (
         "Approve the install?"
     )
@@ -1089,6 +1089,15 @@ def test_focus_alert_text_is_generic_and_short():
     assert harness.focus_prompt_text(
         _ev(kind="final", neutral="Found the issue. Want me to net those refunds instead?")
     ) == "Want me to net those refunds instead?"
+
+
+def test_focus_prompt_speech_uses_bounded_jarvis_phrases():
+    event = _ev(kind="final", neutral="Approve the install?")
+    text = harness.focus_prompt_speech(event, persona_name="jarvis")
+
+    assert text.endswith("Approve the install?")
+    assert text.startswith("Sir, ")
+    assert text.count("Approve the install?") == 1
 
 
 def test_fast_path_multi_agent_disables_fast_path():

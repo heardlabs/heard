@@ -36,6 +36,18 @@ def _exec_call(cmd: str, workdir: str = "/tmp/project") -> dict:
     }
 
 
+def _function_call(name: str, arguments: dict) -> dict:
+    return {
+        "timestamp": "2026-06-22T01:00:01Z",
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": name,
+            "arguments": json.dumps(arguments),
+        },
+    }
+
+
 def _assistant_message(text: str, phase: str = "final") -> dict:
     return {
         "timestamp": "2026-06-22T01:00:02Z",
@@ -63,6 +75,27 @@ def test_event_from_codex_app_exec_command() -> None:
     assert event["session"]["id"] == "session-1"
     assert event["session"]["cwd"] == "/tmp/project"
     assert event["ctx"]["command"] == "rg hooks heard"
+
+
+def test_event_from_codex_app_request_permissions() -> None:
+    path = Path("/tmp/fake-codex-session.jsonl")
+    event = event_from_record(
+        _function_call(
+            "request_permissions",
+            {
+                "permissions": {"network": {"enabled": True}},
+                "reason": "Need localhost access to verify the app.",
+            },
+        ),
+        meta=_meta()["payload"],
+        path=path,
+    )
+
+    assert event is not None
+    assert event["kind"] == "tool_pre"
+    assert event["tag"] == "tool_question"
+    assert event["neutral"] == "Allow network access? Need localhost access to verify the app."
+    assert event["ctx"]["question"] == "Allow network access?"
 
 
 def test_event_from_codex_app_final_message() -> None:

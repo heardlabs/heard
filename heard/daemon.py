@@ -2622,7 +2622,7 @@ class Daemon:
             _log("event_drop", kind=kind, tag=tag, reason="focus_attention_drop")
             return
         if focus_mode and not harness.is_focus_template_event(req):
-            alert_text = harness.focus_prompt_text(req)
+            alert_text = harness.focus_prompt_speech(req, persona_name=persona.name)
             if not alert_text:
                 _log("event_drop", kind=kind, tag=tag, reason="focus_no_prompt")
                 return
@@ -2699,6 +2699,11 @@ class Daemon:
                 if not neutral:
                     _log("event_drop", kind=kind, tag=tag, reason="fastpath_empty_neutral")
                     return
+                spoken_text = (
+                    harness.focus_prompt_speech(req, persona_name=persona.name)
+                    if focus_mode and harness.is_focus_template_event(req)
+                    else neutral
+                )
                 # Consecutive-duplicate suppression. A run of reads /
                 # searches renders the same template line over and over
                 # ("Reading a file." × 6); speak the first, drop the
@@ -2724,7 +2729,7 @@ class Daemon:
                     kind=kind,
                     tag=tag,
                     persona=persona.name,
-                    chars=len(neutral),
+                    chars=len(spoken_text),
                     via="fastpath",
                 )
                 # Track this edit's abs_path so the NEXT edit to the
@@ -2736,7 +2741,7 @@ class Daemon:
                     if edit_path:
                         self._recent_edit_paths.append(edit_path)
                 self._start_speech(
-                    neutral,
+                    spoken_text,
                     cfg=cfg,
                     persona=persona,
                     session_id=session_id,
