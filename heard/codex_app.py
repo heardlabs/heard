@@ -244,9 +244,24 @@ class CodexAppObserver:
         self.initialize_at_eof = initialize_at_eof
         self.log = log or (lambda _msg: None)
         self.offsets = _load_state(self.state_path)
+        if self.initialize_at_eof and self.offsets:
+            self._prime_known_files_at_eof()
         self._meta: dict[str, dict[str, Any]] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def _prime_known_files_at_eof(self) -> None:
+        changed = False
+        for key, offset in list(self.offsets.items()):
+            try:
+                size = Path(key).stat().st_size
+            except OSError:
+                continue
+            if size > offset:
+                self.offsets[key] = size
+                changed = True
+        if changed:
+            _save_state(self.state_path, self.offsets)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():

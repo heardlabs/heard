@@ -163,6 +163,36 @@ def test_observer_starts_new_files_at_eof_then_reads_appends(tmp_path: Path) -> 
     assert events[0]["session"]["cwd"] == str(tmp_path)
 
 
+def test_observer_does_not_replay_known_file_backlog_on_restart(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions"
+    state_path = tmp_path / "state.json"
+    session_path = sessions_dir / "2026" / "06" / "22" / "rollout.jsonl"
+    _append(session_path, _meta(cwd=str(tmp_path)))
+    first_size = session_path.stat().st_size
+    _append(session_path, _assistant_message("Missed while Heard was not running."))
+    state_path.write_text(
+        json.dumps({"offsets": {str(session_path): first_size}}),
+        encoding="utf-8",
+    )
+
+    events: list[dict] = []
+    observer = CodexAppObserver(
+        events.append,
+        sessions_dir=sessions_dir,
+        state_path=state_path,
+        initialize_at_eof=True,
+    )
+
+    assert observer.poll_once() == 0
+    assert events == []
+
+    _append(session_path, _exec_call("find . -maxdepth 1 -type f", workdir=str(tmp_path)))
+
+    assert observer.poll_once() == 1
+    assert len(events) == 1
+    assert events[0]["kind"] == "tool_pre"
+
+
 def test_observer_ignores_non_desktop_sessions(tmp_path: Path) -> None:
     sessions_dir = tmp_path / "sessions"
     session_path = sessions_dir / "2026" / "06" / "22" / "cli.jsonl"
