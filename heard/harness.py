@@ -295,6 +295,7 @@ _FOCUS_ROUTINE_QUESTION_PHRASES: tuple[str, ...] = (
     "anything else",
     "call those done",
     "call this done",
+    "can i help",
     "dig into anything else",
     "move on",
     "ready for whatever comes next",
@@ -304,24 +305,6 @@ _FOCUS_ROUTINE_QUESTION_PHRASES: tuple[str, ...] = (
     "what do you want to do next",
     "what would you like to do next",
     "what's next",
-)
-
-
-_FOCUS_ACTION_REQUEST_PHRASES: tuple[str, ...] = (
-    "approve",
-    "approval",
-    "choose",
-    "confirm",
-    "how do you want",
-    "i need you to",
-    "log in",
-    "needs your",
-    "permission",
-    "pick",
-    "waiting for you",
-    "waiting on you",
-    "want me to",
-    "what should i",
 )
 
 
@@ -363,7 +346,6 @@ def focus_prompt_text(event: dict[str, Any]) -> str:
     if is_focus_template_event(event):
         return _clean_focus_prompt(text)
 
-    lowered = text.lower()
     questions = re.findall(r"[^?]*\?", text)
     for question in reversed(questions):
         question = re.split(r"(?<=[.!])\s+", question.strip())[-1]
@@ -373,13 +355,6 @@ def focus_prompt_text(event: dict[str, Any]) -> str:
         if any(phrase in q_lower for phrase in _FOCUS_DECISION_QUESTION_PHRASES):
             return _clean_focus_prompt(question)
 
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    for sentence in sentences:
-        s_lower = sentence.lower()
-        if any(phrase in s_lower for phrase in _FOCUS_ACTION_REQUEST_PHRASES):
-            return _clean_focus_prompt(sentence)
-    if any(phrase in lowered for phrase in _FOCUS_ACTION_REQUEST_PHRASES):
-        return _clean_focus_prompt(text)
     return ""
 
 

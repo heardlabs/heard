@@ -98,6 +98,33 @@ def test_event_from_codex_app_request_permissions() -> None:
     assert event["ctx"]["question"] == "Allow network access?"
 
 
+def test_event_from_codex_app_escalated_command_approval() -> None:
+    question = (
+        "Do you want me to reorganize the heard-launch-video folder outside "
+        "the current writable workspace without deleting anything?"
+    )
+    event = event_from_record(
+        _function_call(
+            "exec_command",
+            {
+                "cmd": "node - <<'NODE'\nconsole.log('move files')\nNODE",
+                "workdir": "/Users/k31z/operator",
+                "sandbox_permissions": "require_escalated",
+                "justification": question,
+            },
+        ),
+        meta=_meta()["payload"],
+        path=Path("/tmp/fake-codex-session.jsonl"),
+    )
+
+    assert event is not None
+    assert event["kind"] == "tool_pre"
+    assert event["tag"] == "tool_question"
+    assert event["neutral"] == question
+    assert event["ctx"]["question"] == question
+    assert event["session"]["cwd"] == "/Users/k31z/operator"
+
+
 def test_event_from_codex_app_final_message() -> None:
     event = event_from_record(
         _assistant_message("Codex App observer is wired into Heard now."),

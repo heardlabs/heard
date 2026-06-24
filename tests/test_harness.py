@@ -1028,7 +1028,7 @@ def test_is_focus_attention_event_allows_only_actionable_alerts():
     assert harness.is_focus_attention_event(_ev(kind="final", neutral="Approve this?")) is True
     assert harness.is_focus_attention_event(
         _ev(kind="intermediate", neutral="Codex is waiting for you to choose.")
-    ) is True
+    ) is False
     assert harness.is_focus_attention_event(
         _ev(kind="final", neutral="How should I convert Wise's USD/HKD to CAD?")
     ) is True
@@ -1071,6 +1071,24 @@ def test_is_focus_attention_event_allows_only_actionable_alerts():
     assert harness.is_focus_attention_event(
         _ev(kind="intermediate", neutral="Reading the auth handler next.")
     ) is False
+    assert harness.is_focus_attention_event(
+        _ev(kind="intermediate", neutral="Confirmed.")
+    ) is False
+    assert harness.is_focus_attention_event(
+        _ev(kind="intermediate", neutral="Network permission is available now.")
+    ) is False
+    assert harness.is_focus_attention_event(
+        _ev(kind="intermediate", neutral="I'll verify the installed app has the unified permission prompt code.")
+    ) is False
+    assert harness.is_focus_attention_event(
+        _ev(
+            kind="intermediate",
+            neutral=(
+                "Since that folder sits outside the current writable workspace, "
+                "any actual cleanup move may need permission."
+            ),
+        )
+    ) is False
     assert harness.is_focus_attention_event(_ev(kind="tool_pre", tag="tool_pre_bash")) is False
     assert harness.is_focus_attention_event({}) is False
 
@@ -1089,6 +1107,18 @@ def test_focus_prompt_text_extracts_the_action_prompt():
     assert harness.focus_prompt_text(
         _ev(kind="final", neutral="Found the issue. Want me to net those refunds instead?")
     ) == "Want me to net those refunds instead?"
+    assert harness.focus_prompt_text(
+        _ev(
+            kind="final",
+            neutral=(
+                "Do you want me to reorganize the heard-launch-video folder outside "
+                "the current writable workspace without deleting anything?"
+            ),
+        )
+    ) == (
+        "Do you want me to reorganize the heard-launch-video folder outside "
+        "the current writable workspace without deleting anything?"
+    )
 
 
 def test_focus_prompt_speech_uses_bounded_jarvis_phrases():

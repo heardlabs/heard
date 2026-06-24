@@ -121,6 +121,21 @@ def _event_from_function_call(
     tool_name = ""
     tool_input: dict[str, Any] = {}
     cwd = args.get("workdir") or meta.get("cwd")
+    justification = str(args.get("justification") or "").strip()
+    if justification or args.get("sandbox_permissions") == "require_escalated":
+        question = justification or "Allow this action?"
+        return {
+            "kind": "tool_pre",
+            "neutral": question,
+            "tag": "tool_question",
+            "ctx": {
+                "question": question,
+                "reason": justification,
+                "permission": "approval",
+                "tool": name,
+            },
+            "session": _session(meta, path, cwd=str(cwd) if cwd else None),
+        }
     if name == "exec_command":
         tool_name = "Bash"
         tool_input = {
