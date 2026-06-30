@@ -186,6 +186,54 @@ def ensure_trusted(prompt: bool = True) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Action seam: type into the focused app (the OS-level control path)
+# ---------------------------------------------------------------------------
+
+def inject_text(text: str, *, submit: bool = False) -> bool:
+    """Type ``text`` into the FRONTMOST app via synthesized keystrokes,
+    optionally pressing Return to submit.
+
+    This is Heard's OS-level control path: Heard observes agents through one-way
+    hooks and has no channel back into an agent's stdin, so 'driving' an agent
+    means typing into its focused window — the same primitive that powers
+    ambient cursor-typing. Requires Accessibility trust. Best-effort: returns
+    False (no-op) off macOS, when untrusted, on empty text, or on any error —
+    never raises. Never auto-fires; a deliberate caller drives it.
+
+    Uses Quartz CGEvents — consistent with the pyobjc stack the app already
+    ships (the hotkey listener is AppKit/NSEvent-based). Needs
+    pyobjc-framework-Quartz (a declared dependency, bundled by py2app)."""
+    if sys.platform != "darwin" or not text:
+        return False
+    if not is_trusted():
+        _dbg("inject_text_untrusted")
+        return False
+    try:
+        import Quartz  # noqa: PLC0415
+    except Exception as e:  # noqa: BLE001
+        _dbg("inject_text_no_quartz", err=str(e))
+        return False
+    try:
+        # keycode 0 + a set unicode string types arbitrary text regardless of
+        # layout. Chunked because CGEventKeyboardSetUnicodeString caps its
+        # buffer (~20 UTF-16 units) per event on some macOS versions.
+        for i in range(0, len(text), 16):
+            chunk = text[i : i + 16]
+            for down in (True, False):
+                ev = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
+                Quartz.CGEventKeyboardSetUnicodeString(ev, len(chunk), chunk)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+        if submit:
+            for down in (True, False):  # keycode 36 = Return
+                ev = Quartz.CGEventCreateKeyboardEvent(None, 36, down)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+        return True
+    except Exception as e:  # noqa: BLE001
+        _dbg("inject_text_failed", err=str(e))
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Recovery: tccutil reset + relaunch
 # ---------------------------------------------------------------------------
 

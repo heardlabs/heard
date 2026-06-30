@@ -267,6 +267,11 @@ class Daemon:
         # Started in start_hotkey path so the daemon ready-up code
         # has finished by the time the first compression fires.
         self.working_memory = working_memory_mod.WorkingMemoryManager()
+        # Input seam (see ingest_user_utterance): an optional callback invoked
+        # with each recognized spoken utterance. A voice front-end (Heard
+        # Power's hands-free loop) registers it to resolve intent. Core ships
+        # the seam; it stays None — and entirely inert — on OSS-only installs.
+        self._utterance_listener = None  # Callable[[str, str], None] | None
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
@@ -1121,7 +1126,7 @@ class Daemon:
         except Exception:
             pass
 
-    _UPGRADE_URL = "buy.stripe.com/bJecMYdBFfEW2oe5DG77O00"
+    _UPGRADE_URL = "buy.stripe.com/fZu14gapteAS4wm7LO77O09"
 
     def _trial_ended_blurb(self) -> str:
         """Accurate, actionable trial-ended message. Branches on what
@@ -1567,22 +1572,37 @@ class Daemon:
                             kind="cloud_cap_fallback_local",
                         )
                     else:
+                        # Cap-hit → the NEXT tier up (no hardcoded char counts —
+                        # they drift from the server caps). trial → Pro,
+                        # pro → Pro+, top tiers → BYOK only.
                         plan = (self.cfg.get("heard_plan") or "").strip().lower()
                         if plan == "trial":
                             notify.notify(
                                 "Heard daily limit reached",
-                                "Trial cap (100K chars/day). Paste an ElevenLabs "
-                                "key in Settings → Keys to keep going, or upgrade "
-                                "to Pro for 200K/day: buy.stripe.com/bJecMYdBFfEW2oe5DG77O00",
+                                "You've used today's trial voice. Upgrade to Pro "
+                                "for more every day: "
+                                "buy.stripe.com/fZu14gapteAS4wm7LO77O09 — or add "
+                                "your own ElevenLabs key in Settings → Keys. "
+                                "Cloud voice returns at UTC midnight.",
                                 kind="cloud_daily_cap_trial",
+                            )
+                        elif plan == "pro":
+                            notify.notify(
+                                "Heard daily limit reached",
+                                "You've used today's Pro voice. Upgrade to Pro+ "
+                                "for more every day: "
+                                "buy.stripe.com/6oUfZabtxboG6Eugik77O0a — or add "
+                                "your own ElevenLabs key in Settings → Keys. "
+                                "Cloud voice returns at UTC midnight.",
+                                kind="cloud_daily_cap_pro",
                             )
                         else:
                             notify.notify(
                                 "Heard daily limit reached",
-                                "Pro cap (200K chars/day). Paste an ElevenLabs key "
-                                "in Settings → Keys to keep going; cloud voices "
-                                "return at UTC midnight.",
-                                kind="cloud_daily_cap_pro",
+                                "You've used today's cloud voice. Add your own "
+                                "ElevenLabs key in Settings → Keys to keep going; "
+                                "cloud voice returns at UTC midnight.",
+                                kind="cloud_daily_cap_top",
                             )
                 elif e.status == 401:
                     # 3B: server distinguishes device_revoked (this Mac
@@ -1955,6 +1975,25 @@ class Daemon:
         text = (text or "").strip()
         if not text:
             return
+        # Second exit (PROBE): push every utterance the brain emits to the
+        # phone as a Telegram voice note. Tapped HERE — before the mute /
+        # mic guards — so the phone is an INDEPENDENT exit: the Mac
+        # speakers can be paused (you've left the room) and you still hear
+        # Jarvis on your walk. Gated only by ~/.heard_telegram_probe;
+        # fully isolated (own thread, swallows all errors) so it can never
+        # break narration. See heard/telegram_probe.py.
+        try:
+            from heard import telegram_probe
+            if telegram_probe.is_armed():
+                _cfg = cfg or self.cfg
+                _persona = persona or self.persona
+                _voice = voice_override or self._voice(_cfg, _persona)
+                telegram_probe.send_async(
+                    text, self.tts, _voice,
+                    float(_cfg.get("speed", 1.0)), _cfg.get("lang", "en"),
+                )
+        except Exception:
+            pass
         # "Pause Heard" — indefinite mute. Don't even queue; the mute
         # command already cleared whatever was in flight.
         if bool(self.cfg.get("muted")):
@@ -2511,6 +2550,50 @@ class Daemon:
         if kind == "intermediate":
             return ""
         return neutral
+
+    def register_utterance_listener(self, callback) -> None:
+        """Register a callback invoked with (text, session_id) for each
+        recognized spoken utterance ingested via ingest_user_utterance. A voice
+        front-end (Heard Power's hands-free loop) uses this to resolve intent +
+        drive the agent. Optional — None means no front-end (plain OSS)."""
+        self._utterance_listener = callback
+
+    def ingest_user_utterance(
+        self, text: str, *, session_id: str = "voice", cwd: str | None = None
+    ) -> None:
+        """Input seam: bring a recognized spoken utterance INTO the daemon as
+        CONTEXT (the brain + working memory observe it, so narration knows what
+        the user just said) and hand it to any registered utterance listener.
+
+        Deliberately does NOT narrate it — the user's own words are context and
+        intent, never something to speak back. Generic by design: a CLI `heard
+        utterance`, a voice front-end, or a phone remote can all feed it."""
+        text = (text or "").strip()
+        if not text:
+            return
+        event = {
+            "kind": "user_utterance",
+            "neutral": text,
+            "tag": "user_voice",
+            "session": {"id": session_id, "cwd": cwd},
+        }
+        # Context only — observe into the scoreboard + working memory; this path
+        # NEVER touches the speech queue.
+        try:
+            self.agent_states.observe(event)
+        except Exception:
+            pass
+        try:
+            self.working_memory.observe(event)
+        except Exception:
+            pass
+        _log("user_utterance", session=session_id, chars=len(text))
+        cb = self._utterance_listener
+        if cb is not None:
+            try:
+                cb(text, session_id)
+            except Exception as e:
+                self._record_error("utterance_listener", str(e))
 
     def _handle_event(self, req: dict) -> None:
         kind = req.get("kind") or ""
@@ -3149,6 +3232,25 @@ class Daemon:
         if cmd == "event":
             self._handle_event(req)
             return None
+        if cmd == "utterance":
+            # Input seam (see ingest_user_utterance). Fire-and-forget: the
+            # daemon observes the utterance as context + hands it to any
+            # registered voice front-end. Request: {"cmd":"utterance",
+            # "text":"...", "session_id":"...", "cwd":"..."}.
+            self.ingest_user_utterance(
+                req.get("text") or "",
+                session_id=req.get("session_id") or "voice",
+                cwd=req.get("cwd"),
+            )
+            return None
+        if cmd == "inject":
+            # Action seam (see accessibility.inject_text). Types text into the
+            # frontmost app via Accessibility; optional Return submits. Request:
+            # {"cmd":"inject","text":"...","submit":true}. Response: {"ok":bool}.
+            ok = accessibility.inject_text(
+                req.get("text") or "", submit=bool(req.get("submit", False))
+            )
+            return json.dumps({"ok": ok}).encode("utf-8")
         if cmd == "ask":
             # Layer 4 Q&A — answer a question about recent agent work
             # in a project, using the per-project memory log.
@@ -3355,9 +3457,67 @@ class Daemon:
                 self._account_usage = data
                 self._account_usage_at = _time.time()
                 self._sync_plan_from_me(data)
+                self._maybe_announce_friend_joined(data)
         except (_urlerr.HTTPError, _urlerr.URLError, TimeoutError, OSError, ValueError):
             # Stay quiet; menu bar shows the previous value (or nothing).
             return
+
+    def _set_friends_announced(self, n: int) -> None:
+        self.cfg["heard_friends_announced"] = n
+        try:
+            config.set_value("heard_friends_announced", n)
+        except Exception as e:
+            _log("friends_announced_persist_failed", err=str(e))
+
+    def _maybe_announce_friend_joined(self, data: dict) -> None:
+        """#15 — diff /v1/me `friends_activated` across polls; on an increase,
+        speak + notify once that an invited friend joined (free month earned
+        for both). The FIRST poll just records the baseline so we never
+        announce pre-existing activations on a fresh daemon start."""
+        try:
+            new_count = int(data.get("friends_activated") or 0)
+        except (TypeError, ValueError):
+            return
+        last = self.cfg.get("heard_friends_announced")
+        if last is None:
+            self._set_friends_announced(new_count)
+            return
+        try:
+            last_n = int(last)
+        except (TypeError, ValueError):
+            last_n = 0
+        if new_count <= last_n:
+            return
+        self._set_friends_announced(new_count)
+        try:
+            notify.notify(
+                "A friend joined Heard",
+                "Someone you invited just started using Heard — you've both "
+                "earned a free month of Pro.",
+                kind="referral_friend_joined",
+            )
+        except Exception:
+            pass
+        self._enqueue_announcement(
+            "Good news. A friend you invited just started using Heard, "
+            "so you've both earned a free month of Pro.",
+            event="referral_announce",
+        )
+
+    def _enqueue_announcement(self, text: str, *, event: str) -> None:
+        """Enqueue a one-off spoken line NOT tied to an agent event (the
+        referral announcement, #15). Speaks in the current persona's voice
+        through the normal speech worker, so it honors mute + plays in order."""
+        hmeta = {"event": event, "persona": self.persona.name if self.persona else ""}
+        item = (text, self.cfg, self.persona, None, None, hmeta)
+        with self._queue_cv:
+            self._queue.append(item)
+            if self._speech_worker is None or not self._speech_worker.is_alive():
+                self._speech_worker = threading.Thread(
+                    target=self._drain_queue, daemon=True
+                )
+                self._speech_worker.start()
+            self._queue_cv.notify()
 
     def _start_account_usage_poll(self) -> None:
         """Kick off a 5-minute /v1/me refresh thread. First fetch fires

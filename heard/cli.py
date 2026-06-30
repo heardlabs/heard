@@ -38,6 +38,27 @@ def say(text: str) -> None:
 
 
 @app.command(hidden=True)
+def utterance(text: str, session_id: str = "voice") -> None:
+    """[Diagnostic] Feed TEXT into the daemon's input seam as a spoken
+    utterance — observed as context + handed to any voice front-end, never
+    narrated. Tests the Heard Power input path."""
+    client.send({"cmd": "utterance", "text": text, "session_id": session_id})
+
+
+@app.command(hidden=True)
+def inject(
+    text: str,
+    submit: bool = typer.Option(False, "--submit", help="Press Return after typing."),
+) -> None:
+    """[Diagnostic] Type TEXT into the FRONTMOST app via the action seam
+    (Accessibility); optionally press Return. Tests the Heard Power control
+    path. Requires Accessibility permission."""
+    resp = client.request({"cmd": "inject", "text": text, "submit": submit})
+    typer.echo("injected" if resp.get("ok")
+               else "failed (untrusted, no daemon, or non-macOS)")
+
+
+@app.command(hidden=True)
 def voices(
     all_: bool = typer.Option(
         False,

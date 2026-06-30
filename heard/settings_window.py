@@ -1374,7 +1374,7 @@ class SettingsController(NSObject):
 
     def onUpgradeClicked_(self, _sender) -> None:
         import urllib.parse
-        url = "https://buy.stripe.com/bJecMYdBFfEW2oe5DG77O00"
+        url = "https://buy.stripe.com/fZu14gapteAS4wm7LO77O09"
         email = (config.load().get("heard_email") or "").strip()
         if email:
             # client_reference_id (un-editable) keys the webhook upgrade to
