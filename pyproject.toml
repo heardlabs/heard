@@ -51,6 +51,12 @@ dependencies = [
     # app / ambient cursor-typing). pyobjc-core has the bridge but not the
     # Quartz/CoreGraphics framework, so declare it explicitly.
     "pyobjc-framework-Quartz>=10.0",
+    # AXIsProcessTrustedWithOptions for the Accessibility trust check
+    # (accessibility.py). Imported but previously UNDECLARED — the release only
+    # got it transitively; without it is_trusted() throws on import and silently
+    # returns False, so AX features (hotkeys, action seam) never work. Declare
+    # it so every build has it.
+    "pyobjc-framework-ApplicationServices>=10.0",
     # Pulled in transitively by kokoro-onnx. Pinned <1.26 because
     # onnxruntime 1.26.0 dropped the macOS arm64 cp312 wheel (only
     # cp311 / cp313 / cp314 ship for Mac on that release), and our
