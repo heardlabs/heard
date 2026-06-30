@@ -203,8 +203,10 @@ def inject_text(text: str, *, submit: bool = False) -> bool:
     Uses Quartz CGEvents — consistent with the pyobjc stack the app already
     ships (the hotkey listener is AppKit/NSEvent-based). Needs
     pyobjc-framework-Quartz (a declared dependency, bundled by py2app)."""
-    if sys.platform != "darwin" or not text:
+    if sys.platform != "darwin":
         return False
+    if not text and not submit:
+        return False  # empty text + submit = press Return only (a "proceed" command)
     if not is_trusted():
         _dbg("inject_text_untrusted")
         return False
