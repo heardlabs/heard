@@ -328,6 +328,14 @@ class HeardApp(rumps.App):
             "Report a problem…", callback=self.on_report_problem
         )
 
+        # "Invite a friend…" — opens the Rewards page (heard.dev/dashboard/
+        # rewards) where the user copies their invite link + a ready-made
+        # message. Each friend who starts using Heard earns both a free month
+        # of Pro. Web handles auth if they're not signed in.
+        self.invite_item = rumps.MenuItem(
+            "Invite friends for a free month", callback=self.on_invite
+        )
+
         options_menu = rumps.MenuItem("Options")
         options_menu["Auto-silence on call"] = self.auto_silence_item
         options_menu["API keys"] = self.api_keys_menu
@@ -369,6 +377,7 @@ class HeardApp(rumps.App):
             self.account_item,
             self.upgrade_item,
             self.usage_item,
+            self.invite_item,
             self.version_item,
             None,
             self.pause_item,
@@ -1022,7 +1031,7 @@ class HeardApp(rumps.App):
 
     # Stripe Payment Link for Pro. Pre-fills the user's email so they
     # don't retype it. Mirrored in vercel.json:/pro and in the dashboard.
-    _UPGRADE_URL = "https://buy.stripe.com/bJecMYdBFfEW2oe5DG77O00"
+    _UPGRADE_URL = "https://buy.stripe.com/fZu14gapteAS4wm7LO77O09"
 
     def on_manage_subscription(self, _sender) -> None:
         """Open the heard.dev account dashboard for a pro user. Pro
@@ -1112,18 +1121,13 @@ class HeardApp(rumps.App):
             # visually; rumps doesn't expose a clean hide. We also
             # reset to a sensible default in case the user later
             # downgrades and we need to re-show the upgrade CTA.
-            try:
-                self.upgrade_item.hidden = True
-            except Exception:
-                self.upgrade_item.title = ""
-                self.upgrade_item.set_callback(None)
+            self.upgrade_item.title = ""
+            self.upgrade_item.set_callback(None)
+            self._set_item_hidden(self.upgrade_item, True)
             return
         # Make sure the row is visible again for non-pro plans (in case
         # we hid it on a prior refresh when the user was pro).
-        try:
-            self.upgrade_item.hidden = False
-        except Exception:
-            pass
+        self._set_item_hidden(self.upgrade_item, False)
         if plan == "expired":
             self.upgrade_item.title = "Trial expired — Upgrade to Pro"
             self.upgrade_item.set_callback(self.on_upgrade)
@@ -1175,6 +1179,19 @@ class HeardApp(rumps.App):
         return f"trial ({days_left} days left)"
 
     @staticmethod
+    def _set_item_hidden(item, hidden: bool) -> None:
+        """Hide/show a menu item natively so it reserves no row. rumps 0.4
+        exposes `.hidden`; fall back to the underlying NSMenuItem if a build
+        ever lacks it. A hidden item collapses cleanly (no blank gap)."""
+        try:
+            item.hidden = bool(hidden)
+        except Exception:
+            try:
+                item._menuitem.setHidden_(bool(hidden))
+            except Exception:
+                pass
+
+    @staticmethod
     def _fmt_chars(n: int) -> str:
         try:
             v = int(n)
@@ -1194,9 +1211,13 @@ class HeardApp(rumps.App):
         'today' for trial, 'this month' for pro."""
         usage = status.get("account_usage") if isinstance(status, dict) else None
         token = (cfg.get("heard_token") or "").strip()
+        # An empty title still renders as a blank, space-reserving row, so
+        # hide the item natively whenever there's nothing to show (no token /
+        # no snapshot yet / expired) instead of leaving a gap in the menu.
         if not token or not isinstance(usage, dict):
             self.usage_item.title = ""
             self.usage_item.set_callback(None)
+            self._set_item_hidden(self.usage_item, True)
             return
         plan = (usage.get("plan") or "").strip()
         # Maintainer override — team accounts have an effectively-
@@ -1206,11 +1227,14 @@ class HeardApp(rumps.App):
         if usage.get("is_maintainer"):
             self.usage_item.title = "Team · unlimited"
             self.usage_item.set_callback(None)
+            self._set_item_hidden(self.usage_item, False)
             return
         if plan == "expired":
             self.usage_item.title = ""
             self.usage_item.set_callback(None)
+            self._set_item_hidden(self.usage_item, True)
             return
+        self._set_item_hidden(self.usage_item, False)
         used = usage.get("usage_today_chars") or 0
         cap = usage.get("daily_cap") or 0
         window = "this month" if plan == "pro" else "today"
@@ -1360,6 +1384,11 @@ class HeardApp(rumps.App):
 
     def on_github(self, _sender) -> None:
         webbrowser.open("https://github.com/heardlabs/heard")
+
+    def on_invite(self, _sender) -> None:
+        """Open the Rewards page — copy your invite link / message there. Each
+        friend who starts using Heard earns you both a free month of Pro."""
+        webbrowser.open("https://heard.dev/dashboard/rewards")
 
     def on_update_clicked(self, _sender) -> None:
         """Run the in-app install pipeline: download the release zip,

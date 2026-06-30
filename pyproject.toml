@@ -47,6 +47,10 @@ dependencies = [
     # heard.key_window fails on a fresh CI runner.
     "pyobjc-framework-Cocoa>=10.0",
     "pyobjc-framework-WebKit>=10.0",
+    # CGEvent keystroke synthesis for the action seam (typing into the focused
+    # app / ambient cursor-typing). pyobjc-core has the bridge but not the
+    # Quartz/CoreGraphics framework, so declare it explicitly.
+    "pyobjc-framework-Quartz>=10.0",
     # Pulled in transitively by kokoro-onnx. Pinned <1.26 because
     # onnxruntime 1.26.0 dropped the macOS arm64 cp312 wheel (only
     # cp311 / cp313 / cp314 ship for Mac on that release), and our

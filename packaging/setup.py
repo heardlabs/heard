@@ -130,7 +130,9 @@ OPTIONS = {
         "idna",
         "urllib3",
     ],
-    "includes": ["pkg_resources"],
+    # Quartz is imported lazily (inside accessibility.inject_text), so force it
+    # in — py2app's static scan can miss in-function imports of frameworks.
+    "includes": ["pkg_resources", "Quartz"],
     "excludes": [
         "tkinter",
         "matplotlib",
