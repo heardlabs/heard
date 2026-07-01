@@ -1,19 +1,24 @@
 """Hold-to-talk visual indicator — a small floating "listening" HUD shown while
 the trigger key is held.
 
-Complements the audio cue with a visual signal so you can *see* it's capturing.
-A borderless, click-through, all-spaces window near the bottom of the screen.
+Complements the audio cue with a visual signal so you can *see* it's capturing:
+a frosted-glass pill with a softly pulsing red dot, near the bottom of the
+screen. Borderless, click-through, shows on all spaces, never steals focus.
 Built once and reused. Main-thread only (the hotkey handler runs there); AppKit
 is imported lazily so importing this module on a CLI path pulls nothing.
+
+Future upgrade: live mic-level bars (needs the Power serve to stream input levels
+to the daemon — a cross-process pipe we don't have yet). The pulse stands in.
 """
 
 from __future__ import annotations
 
 _win = None  # the HUD window, built once and reused
+_dot = None  # the pulsing dot view
 
 
 def _ensure():
-    global _win
+    global _win, _dot
     if _win is not None:
         return _win
     try:
@@ -21,18 +26,21 @@ def _ensure():
             NSBackingStoreBuffered,
             NSColor,
             NSFont,
-            NSForegroundColorAttributeName,
             NSMakeRect,
-            NSMutableAttributedString,
-            NSTextAlignmentCenter,
+            NSTextAlignmentLeft,
             NSTextField,
+            NSView,
+            NSVisualEffectBlendingModeBehindWindow,
+            NSVisualEffectMaterialHUDWindow,
+            NSVisualEffectStateActive,
+            NSVisualEffectView,
             NSWindow,
             NSWindowStyleMaskBorderless,
         )
     except Exception:
         return None
 
-    w, h = 156.0, 44.0
+    w, h = 150.0, 46.0
     win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
         NSMakeRect(0, 0, w, h), NSWindowStyleMaskBorderless,
         NSBackingStoreBuffered, False)
@@ -41,33 +49,58 @@ def _ensure():
     win.setLevel_(25)  # above normal windows (status-bar level)
     win.setIgnoresMouseEvents_(True)  # click-through
     win.setHidesOnDeactivate_(False)
-    # All spaces + don't steal focus.
+    win.setHasShadow_(True)
     win.setCollectionBehavior_((1 << 0) | (1 << 4))  # CanJoinAllSpaces | Stationary
 
-    content = win.contentView()
-    content.setWantsLayer_(True)
-    layer = content.layer()
-    layer.setCornerRadius_(12.0)
-    layer.setBackgroundColor_(
-        NSColor.colorWithCalibratedWhite_alpha_(0.0, 0.82).CGColor())
+    # Frosted-glass background, rounded.
+    glass = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+    glass.setMaterial_(NSVisualEffectMaterialHUDWindow)
+    glass.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+    glass.setState_(NSVisualEffectStateActive)
+    glass.setWantsLayer_(True)
+    glass.layer().setCornerRadius_(13.0)
+    glass.layer().setMasksToBounds_(True)
+    win.setContentView_(glass)
 
-    label = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 11, w, 22))
+    # Pulsing red dot.
+    dot = NSView.alloc().initWithFrame_(NSMakeRect(20.0, h / 2 - 5.0, 10.0, 10.0))
+    dot.setWantsLayer_(True)
+    dot.layer().setBackgroundColor_(NSColor.systemRedColor().CGColor())
+    dot.layer().setCornerRadius_(5.0)
+    glass.addSubview_(dot)
+
+    label = NSTextField.alloc().initWithFrame_(NSMakeRect(40.0, h / 2 - 11.0, w - 48.0, 22.0))
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
     label.setSelectable_(False)
-    label.setAlignment_(NSTextAlignmentCenter)
-    label.setFont_(NSFont.systemFontOfSize_(15.0))
-    s = NSMutableAttributedString.alloc().initWithString_("●  Listening")
-    s.addAttribute_value_range_(
-        NSForegroundColorAttributeName, NSColor.systemRedColor(), (0, 1))
-    s.addAttribute_value_range_(
-        NSForegroundColorAttributeName, NSColor.whiteColor(), (1, s.length() - 1))
-    label.setAttributedStringValue_(s)
-    content.addSubview_(label)
+    label.setAlignment_(NSTextAlignmentLeft)
+    label.setStringValue_("Listening")
+    label.setTextColor_(NSColor.whiteColor())
+    label.setFont_(NSFont.systemFontOfSize_weight_(15.0, 0.23))  # medium
+    glass.addSubview_(label)
 
-    _win = win
+    _win, _dot = win, dot
     return win
+
+
+def _pulse(on: bool) -> None:
+    if _dot is None:
+        return
+    try:
+        if on:
+            from Quartz import CABasicAnimation  # noqa: PLC0415
+            a = CABasicAnimation.animationWithKeyPath_("opacity")
+            a.setFromValue_(1.0)
+            a.setToValue_(0.28)
+            a.setDuration_(0.6)
+            a.setAutoreverses_(True)
+            a.setRepeatCount_(1e9)
+            _dot.layer().addAnimation_forKey_(a, "pulse")
+        else:
+            _dot.layer().removeAnimationForKey_("pulse")
+    except Exception:
+        pass
 
 
 def show() -> None:
@@ -80,6 +113,7 @@ def show() -> None:
         scr = NSScreen.mainScreen().frame()
         fw = win.frame().size.width
         win.setFrameOrigin_(((scr.size.width - fw) / 2.0, 120.0))
+        _pulse(True)
         win.orderFrontRegardless()
     except Exception:
         pass
@@ -88,6 +122,7 @@ def show() -> None:
 def hide() -> None:
     if _win is not None:
         try:
+            _pulse(False)
             _win.orderOut_(None)
         except Exception:
             pass
