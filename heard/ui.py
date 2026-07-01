@@ -413,9 +413,9 @@ class HeardApp(rumps.App):
             # still constructed above so their refresh() paths stay valid —
             # they're just no longer surfaced here (same orphan pattern as
             # options_menu).
+            self.voice_menu,
             self.mode_menu,
             self.speed_menu,
-            self.voice_menu,
             None,
             self.report_problem_item,
             self.settings_item,
