@@ -1820,9 +1820,14 @@ class Daemon:
             if speed > max_native and max_native > 0:
                 afplay_rate = min(speed / max_native, 2.0)  # afplay -r upper bound
                 afplay_args = ["afplay", "-r", f"{afplay_rate:.3f}", str(path)]
+            # Half-duplex: tell the Power voice service to stop listening while
+            # we speak, so ambient input doesn't transcribe Heard's own voice
+            # (echo). Best-effort; no-op unless in ambient mode.
+            self._voice_suppress("pause")
             with self._lock:
                 if cancel.is_set():
                     path.unlink(missing_ok=True)
+                    self._voice_suppress("resume")
                     return
                 self._current_proc = subprocess.Popen(
                     afplay_args,
@@ -1832,6 +1837,7 @@ class Daemon:
                 )
                 proc = self._current_proc
             proc.wait()
+            self._voice_suppress("resume")
             killed_by_us = cancel.is_set()
             return_code = proc.returncode
             with self._lock:
@@ -1848,6 +1854,24 @@ class Daemon:
                 self._record_implicit_feedback(
                     "afplay_nonzero", kind="defect", defect_category="cut_off",
                 )
+
+    def _voice_suppress(self, action: str) -> None:
+        """Pause/resume the Power voice service around narration so ambient
+        input doesn't capture Heard's own speech (echo). Best-effort; only in
+        ambient mode — the service carries a short echo tail on resume."""
+        if self.cfg.get("voice_mode") != "ambient":
+            return
+        sock_path = (self.cfg.get("push_to_talk_socket")
+                     or os.path.expanduser("~/.heard_power.sock"))
+        try:
+            import socket as _socket
+            s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(sock_path)
+            s.sendall(action.encode())
+            s.close()
+        except Exception:
+            pass
 
     # Window (seconds) within which a user reaction (pause hotkey, mic
     # activation) is treated as correlated with the most-recent
