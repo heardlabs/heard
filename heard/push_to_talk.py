@@ -20,6 +20,15 @@ from typing import Any
 RIGHT_COMMAND_KEYCODE = 54  # held alone types nothing; safe for push-to-talk
 
 
+def _indicator(action: str) -> None:
+    """Show/hide the 'listening' HUD. Best-effort — never let UI break the key."""
+    try:
+        from heard import ptt_indicator  # noqa: PLC0415
+        (ptt_indicator.show if action == "show" else ptt_indicator.hide)()
+    except Exception:
+        pass
+
+
 def _poke(sock_path: str, cmd: str) -> None:
     """Fire-and-forget a control message to the voice service. Silent if it's
     not running (holding the key with no service is a harmless no-op)."""
@@ -61,9 +70,11 @@ def start(sock_path: str, keycode: int = RIGHT_COMMAND_KEYCODE) -> Any:
             is_down = bool(event.modifierFlags() & flag)
             if is_down and not state["down"]:
                 state["down"] = True
+                _indicator("show")  # visual "listening" HUD while held
                 _poke(sock_path, "start")
             elif not is_down and state["down"]:
                 state["down"] = False
+                _indicator("hide")
                 _poke(sock_path, "stop")
         except Exception:
             pass
