@@ -109,10 +109,9 @@ def show() -> None:
     if win is None:
         return
     try:
-        from AppKit import NSScreen  # noqa: PLC0415
-        scr = NSScreen.mainScreen().frame()
-        fw = win.frame().size.width
-        win.setFrameOrigin_(((scr.size.width - fw) / 2.0, 120.0))
+        win.center()  # AppKit centers on the active screen (multi-display safe)
+        f = win.frame()
+        win.setFrameOrigin_((f.origin.x, 160.0))  # keep centered x, sit near bottom
         _pulse(True)
         win.orderFrontRegardless()
     except Exception:
