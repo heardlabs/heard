@@ -74,6 +74,12 @@ DEFAULTS: dict[str, Any] = {
     # key monitoring unless the user opts in. Socket "" → ~/.heard_power.sock.
     "push_to_talk": False,
     "push_to_talk_socket": "",
+    # Heard Power voice input. voice_mode is the menu-facing control:
+    #   off | ptt (hold-to-talk) | ambient (always listening).
+    # push_to_talk (the daemon hotkey gate) is kept in sync with mode == ptt.
+    "voice_mode": "off",
+    "voice_cleanup": True,          # LLM tidy pass on dictated text
+    "voice_input_unlocked": False,  # dev/test escape hatch for the Power menu
     # Empty by default; the persona layer falls back to env vars
     # (ANTHROPIC_API_KEY / OPENAI_API_KEY) if these are unset, then to
     # template mode if neither is available. Stored plain-text under the

@@ -281,12 +281,29 @@ class HeardApp(rumps.App):
             "Auto-silence on call",
             callback=self.on_toggle_auto_silence,
         )
-        # Hold-to-talk (Heard Power voice input): hold Right ⌘ to dictate at the
-        # cursor. Off unless enabled; needs the Power voice service running.
-        self.ptt_item = rumps.MenuItem(
-            "Hold to talk (Right ⌘)",
-            callback=self.on_toggle_ptt,
-        )
+        # Voice input (Heard Power) — plan-gated. Power users get the full
+        # submenu (mode radios + clean-up); everyone else sees a clickable
+        # upgrade teaser. voice_input_unlocked is a dev/test escape hatch.
+        _powered = (_plan == "power") or bool(config.load().get("voice_input_unlocked"))
+        self._voice_mode_items: dict = {}
+        self.voice_cleanup_item = None
+        if _powered:
+            self.voice_menu = rumps.MenuItem("Voice input")
+            for label, mode in (
+                ("Off", "off"),
+                ("Push to talk (hold ⌘)", "ptt"),
+                ("Hands-free (always on)", "ambient"),
+            ):
+                item = rumps.MenuItem(label, callback=self._mk_voice_mode_cb(mode))
+                self.voice_menu[label] = item
+                self._voice_mode_items[mode] = item
+            self.voice_menu["_vsep"] = rumps.separator
+            self.voice_cleanup_item = rumps.MenuItem(
+                "Clean up text", callback=self.on_toggle_voice_cleanup)
+            self.voice_menu["Clean up text"] = self.voice_cleanup_item
+        else:
+            self.voice_menu = rumps.MenuItem(
+                "Voice input — upgrade to Power", callback=self.on_upgrade)
 
         # API-keys submenu — top row shows the *active* voice path the
         # daemon picked (cloud / BYOK ElevenLabs / Kokoro / none), then
@@ -344,7 +361,6 @@ class HeardApp(rumps.App):
 
         options_menu = rumps.MenuItem("Options")
         options_menu["Auto-silence on call"] = self.auto_silence_item
-        options_menu["Hold to talk (Right ⌘)"] = self.ptt_item
         options_menu["API keys"] = self.api_keys_menu
         options_menu[self._download_voice_key] = self.download_voice_item
         options_menu["Open config file"] = rumps.MenuItem("Open config file", callback=self.on_open_config)
@@ -399,6 +415,7 @@ class HeardApp(rumps.App):
             # options_menu).
             self.mode_menu,
             self.speed_menu,
+            self.voice_menu,
             None,
             self.report_problem_item,
             self.settings_item,
@@ -506,7 +523,12 @@ class HeardApp(rumps.App):
         # submenus were pulled in the Mode-replaces-Verbosity cleanup.
         # Settings → Voice has its own popup + refresh path.
         self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
-        self.ptt_item.state = 1 if cfg.get("push_to_talk") else 0
+        # Voice input mode radios + clean-up (only present on the Power submenu).
+        _mode = cfg.get("voice_mode", "off")
+        for _m, _it in self._voice_mode_items.items():
+            _it.state = 1 if _m == _mode else 0
+        if self.voice_cleanup_item is not None:
+            self.voice_cleanup_item.state = 1 if cfg.get("voice_cleanup", True) else 0
         self._refresh_offline_voice_items()
 
         # Two explicit menu items, one per action — the inactive one
@@ -913,15 +935,23 @@ class HeardApp(rumps.App):
             pass
         self.refresh(None)
 
-    def on_toggle_ptt(self, _sender) -> None:
-        """Toggle hold-to-talk (Heard Power voice input). Flips push_to_talk +
-        reloads so the daemon starts/stops the global Right-⌘ monitor live."""
+    def _mk_voice_mode_cb(self, mode: str):
+        """Radio callback for the Voice input submenu. Sets voice_mode and keeps
+        the daemon's hotkey gate (push_to_talk) in sync — hotkey only in ptt
+        mode — then reloads so the monitor starts/stops live."""
+        def _cb(_sender) -> None:
+            config.set_value("voice_mode", mode)
+            config.set_value("push_to_talk", mode == "ptt")
+            try:
+                client.send({"cmd": "reload"})
+            except Exception:
+                pass
+            self.refresh(None)
+        return _cb
+
+    def on_toggle_voice_cleanup(self, _sender) -> None:
         cfg = config.load()
-        config.set_value("push_to_talk", not cfg.get("push_to_talk"))
-        try:
-            client.send({"cmd": "reload"})
-        except Exception:
-            pass
+        config.set_value("voice_cleanup", not cfg.get("voice_cleanup", True))
         self.refresh(None)
 
     def on_open_config(self, _sender) -> None:
