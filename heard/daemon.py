@@ -43,6 +43,7 @@ from heard import (
     agent_state as agent_state_mod,
 )
 from heard import multi_agent as multi_agent_mod
+from heard import push_to_talk
 from heard import persona as persona_mod
 from heard import (
     working_memory as working_memory_mod,
@@ -272,6 +273,7 @@ class Daemon:
         # Power's hands-free loop) registers it to resolve intent. Core ships
         # the seam; it stays None — and entirely inert — on OSS-only installs.
         self._utterance_listener = None  # Callable[[str, str], None] | None
+        self._ptt_monitor = None  # hold-to-talk NSEvent monitor (kept alive)
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
@@ -943,6 +945,14 @@ class Daemon:
         if cont:
             bindings[cont] = self._continue_hotkey
         self._hotkey_listener = hotkey.start(bindings)
+        # Hold-to-talk: a voice front-end (Heard Power) runs a socket service;
+        # this pokes it "start"/"stop" on the trigger key down/up so you dictate
+        # into your focused app. Off unless `push_to_talk` is set. Keep the
+        # monitor ref alive or NSEvent GCs it.
+        if self.cfg.get("push_to_talk"):
+            sock = (self.cfg.get("push_to_talk_socket")
+                    or os.path.expanduser("~/.heard_power.sock"))
+            self._ptt_monitor = push_to_talk.start(sock)
 
     def _start_audio_monitor(self) -> None:
         """Start the mic-capture watcher (CoreAudio polling) so Heard
