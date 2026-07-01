@@ -69,6 +69,11 @@ DEFAULTS: dict[str, Any] = {
     # any common system shortcut, and the same for Shift+Opt+,.
     "hotkey_pause": "<shift>+<alt>+.",
     "hotkey_continue": "<shift>+<alt>+,",
+    # Hold-to-talk: when true, the daemon runs a global hold-Right-⌘ monitor that
+    # pokes a voice front-end's socket (Heard Power). OFF by default — no global
+    # key monitoring unless the user opts in. Socket "" → ~/.heard_power.sock.
+    "push_to_talk": False,
+    "push_to_talk_socket": "",
     # Empty by default; the persona layer falls back to env vars
     # (ANTHROPIC_API_KEY / OPENAI_API_KEY) if these are unset, then to
     # template mode if neither is available. Stored plain-text under the
