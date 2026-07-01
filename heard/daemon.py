@@ -949,6 +949,14 @@ class Daemon:
         # this pokes it "start"/"stop" on the trigger key down/up so you dictate
         # into your focused app. Off unless `push_to_talk` is set. Keep the
         # monitor ref alive or NSEvent GCs it.
+        # Stop any prior monitor first so a reload/toggle doesn't stack two.
+        if self._ptt_monitor is not None:
+            try:
+                from AppKit import NSEvent  # noqa: PLC0415
+                NSEvent.removeMonitor_(self._ptt_monitor)
+            except Exception:
+                pass
+            self._ptt_monitor = None
         if self.cfg.get("push_to_talk"):
             sock = (self.cfg.get("push_to_talk_socket")
                     or os.path.expanduser("~/.heard_power.sock"))
@@ -1270,6 +1278,8 @@ class Daemon:
             cfg.get("hotkey_pause", hotkey.DEFAULT_PAUSE_BINDING),
             cfg.get("hotkey_continue", hotkey.DEFAULT_CONTINUE_BINDING),
             bool(cfg.get("hotkey_enabled", True)),
+            bool(cfg.get("push_to_talk")),
+            cfg.get("push_to_talk_socket", ""),
         )
 
     def _reload_config(self) -> None:

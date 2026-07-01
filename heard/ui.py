@@ -281,6 +281,12 @@ class HeardApp(rumps.App):
             "Auto-silence on call",
             callback=self.on_toggle_auto_silence,
         )
+        # Hold-to-talk (Heard Power voice input): hold Right ⌘ to dictate at the
+        # cursor. Off unless enabled; needs the Power voice service running.
+        self.ptt_item = rumps.MenuItem(
+            "Hold to talk (Right ⌘)",
+            callback=self.on_toggle_ptt,
+        )
 
         # API-keys submenu — top row shows the *active* voice path the
         # daemon picked (cloud / BYOK ElevenLabs / Kokoro / none), then
@@ -338,6 +344,7 @@ class HeardApp(rumps.App):
 
         options_menu = rumps.MenuItem("Options")
         options_menu["Auto-silence on call"] = self.auto_silence_item
+        options_menu["Hold to talk (Right ⌘)"] = self.ptt_item
         options_menu["API keys"] = self.api_keys_menu
         options_menu[self._download_voice_key] = self.download_voice_item
         options_menu["Open config file"] = rumps.MenuItem("Open config file", callback=self.on_open_config)
@@ -499,6 +506,7 @@ class HeardApp(rumps.App):
         # submenus were pulled in the Mode-replaces-Verbosity cleanup.
         # Settings → Voice has its own popup + refresh path.
         self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
+        self.ptt_item.state = 1 if cfg.get("push_to_talk") else 0
         self._refresh_offline_voice_items()
 
         # Two explicit menu items, one per action — the inactive one
@@ -899,6 +907,17 @@ class HeardApp(rumps.App):
         cfg = config.load()
         current = cfg.get("auto_silence_on_mic", True)
         config.set_value("auto_silence_on_mic", not current)
+        try:
+            client.send({"cmd": "reload"})
+        except Exception:
+            pass
+        self.refresh(None)
+
+    def on_toggle_ptt(self, _sender) -> None:
+        """Toggle hold-to-talk (Heard Power voice input). Flips push_to_talk +
+        reloads so the daemon starts/stops the global Right-⌘ monitor live."""
+        cfg = config.load()
+        config.set_value("push_to_talk", not cfg.get("push_to_talk"))
         try:
             client.send({"cmd": "reload"})
         except Exception:
