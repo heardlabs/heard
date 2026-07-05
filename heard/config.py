@@ -97,7 +97,7 @@ DEFAULTS: dict[str, Any] = {
     # Plan for the active heard_token, mirrored locally so the menu
     # bar can render "Trial · 12 days left" without polling the proxy
     # on every refresh. The daemon refreshes this on token validation.
-    # Values: "trial" | "pro" | "expired" | "" (unknown / never signed up)
+    # Values: "trial" | "pro" | "pro_plus" | "power" | "expired" | "" (unknown / never signed up)
     "heard_plan": "",
     # Epoch ms when the trial expires. Used by the menu bar countdown
     # and the day-31 silent downgrade. Ignored when plan == "pro".

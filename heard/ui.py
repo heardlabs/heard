@@ -47,12 +47,9 @@ _HOTKEY_GLYPHS = {
 
 
 def _cap_reached_label(plan: str) -> str:
-    """Managed cap-reached banner, worded to the plan. Trial caps are
-    DAILY (reset tomorrow); Pro caps are MONTHLY (reset next month). The
-    DB tracks both in one `daily_chars_used` column, so the server's
-    reason is the same — only the user-facing wording must differ."""
-    if (plan or "").strip().lower() == "pro":
-        return "Monthly cloud limit reached — resets next month"
+    """Managed cap-reached banner. All plans (trial/pro/pro_plus/power)
+    now reset DAILY at UTC midnight — see nextResetForPlan in the API —
+    so the wording is the same for everyone: back tomorrow."""
     return "Daily cloud limit reached — back tomorrow"
 
 

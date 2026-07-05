@@ -1091,7 +1091,7 @@ class Daemon:
         Upgrade to Pro'. The 5-minute /v1/me poll already had the truth;
         it just never wrote it back. Now it does."""
         server_plan = (me.get("plan") or "").strip().lower()
-        if server_plan not in ("trial", "pro", "expired"):
+        if server_plan not in ("trial", "pro", "pro_plus", "power", "expired"):
             return
         changed = False
         if server_plan != (self.cfg.get("heard_plan") or "").strip().lower():

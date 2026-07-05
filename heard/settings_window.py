@@ -1158,7 +1158,7 @@ class SettingsController(NSObject):
             r["signin"].setTitle_("Switch")
             r["signout_row"].setHidden_(False)
             r["manage_row"].setHidden_(False)
-            r["upgrade"].setHidden_(plan == "pro")
+            r["upgrade"].setHidden_(plan in ("pro", "pro_plus", "power"))
         else:
             r["email"].setStringValue_("Not signed in")
             r["plan"].setStringValue_("Sign in to use cloud voices and Pro features.")
@@ -1990,6 +1990,10 @@ def _format_plan_line(plan: str, cfg: dict) -> str:
     plan = (plan or "").strip().lower()
     if plan == "pro":
         return "Plan: Pro"
+    if plan == "pro_plus":
+        return "Plan: Pro+"
+    if plan == "power":
+        return "Plan: Power"
     if plan == "expired":
         return "Trial expired — add keys or upgrade."
     if plan == "trial":
@@ -2291,6 +2295,10 @@ def _plan_badge(cfg: dict):
     plan = (cfg.get("heard_plan") or "trial").strip().lower()
     if plan == "pro":
         return "PRO", _GREEN_BG, _GREEN, "Managed voices unlocked"
+    if plan == "pro_plus":
+        return "PRO+", _GREEN_BG, _GREEN, "Managed voices unlocked"
+    if plan == "power":
+        return "POWER", _GREEN_BG, _GREEN, "Hands-free unlocked"
     if plan in ("expired", "trial_expired"):
         return "EXPIRED", _WARN_BG, _WARN, "Upgrade for managed voices"
     exp_ms = 0
@@ -3007,6 +3015,10 @@ class _OnboardingController(NSObject):
         plan = (cfg.get("heard_plan") or "trial").strip().lower()
         if plan == "pro":
             return "Pro — managed voices unlocked."
+        if plan == "pro_plus":
+            return "Pro+ — managed voices unlocked."
+        if plan == "power":
+            return "Power — hands-free unlocked."
         if plan in ("expired", "trial_expired"):
             return "Trial expired — upgrade for managed voices."
         exp_ms = 0
