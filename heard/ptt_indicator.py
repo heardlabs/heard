@@ -62,14 +62,10 @@ def _ensure():
     glass.layer().setMasksToBounds_(True)
     win.setContentView_(glass)
 
-    # Pulsing red dot.
-    dot = NSView.alloc().initWithFrame_(NSMakeRect(20.0, h / 2 - 5.0, 10.0, 10.0))
-    dot.setWantsLayer_(True)
-    dot.layer().setBackgroundColor_(NSColor.systemRedColor().CGColor())
-    dot.layer().setCornerRadius_(5.0)
-    glass.addSubview_(dot)
-
-    label = NSTextField.alloc().initWithFrame_(NSMakeRect(40.0, h / 2 - 11.0, w - 48.0, 22.0))
+    # Build the label first, measure it, then center the dot + label as a group
+    # inside the pill (was left-packed at fixed x's, which looked off-center).
+    dot_d, gap = 10.0, 8.0
+    label = NSTextField.alloc().initWithFrame_(NSMakeRect(0.0, 0.0, w, 22.0))
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
@@ -78,6 +74,19 @@ def _ensure():
     label.setStringValue_("Listening")
     label.setTextColor_(NSColor.whiteColor())
     label.setFont_(NSFont.systemFontOfSize_weight_(15.0, 0.23))  # medium
+    label.sizeToFit()
+    lw = label.frame().size.width
+    lh = label.frame().size.height
+
+    x0 = (w - (dot_d + gap + lw)) / 2.0  # left edge of the centered group
+    dot = NSView.alloc().initWithFrame_(
+        NSMakeRect(x0, h / 2 - dot_d / 2, dot_d, dot_d))
+    dot.setWantsLayer_(True)
+    dot.layer().setBackgroundColor_(NSColor.systemRedColor().CGColor())
+    dot.layer().setCornerRadius_(dot_d / 2)
+    glass.addSubview_(dot)
+
+    label.setFrameOrigin_((x0 + dot_d + gap, h / 2 - lh / 2))
     glass.addSubview_(label)
 
     _win, _dot = win, dot
@@ -122,7 +131,7 @@ def show() -> None:
             wf = win.frame().size
             win.setFrameOrigin_((
                 f.origin.x + (f.size.width - wf.width) / 2.0,  # horizontally centered
-                f.origin.y + 120.0,  # bottom-center (y=0 is the bottom; clears the dock)
+                f.origin.y + 44.0,  # near the very bottom (y=0 is the bottom edge)
             ))
         _pulse(True)
         win.orderFrontRegardless()
