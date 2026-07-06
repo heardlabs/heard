@@ -998,7 +998,10 @@ class Daemon:
             if self._voice_service is None or self._voice_service.cmd != cmd:
                 if self._voice_service is not None:
                     self._voice_service.stop()
-                self._voice_service = voice_service_mod.VoiceServiceSupervisor(cmd, log=_log)
+                self._voice_service = voice_service_mod.VoiceServiceSupervisor(
+                    cmd, log=_log,
+                    log_path=str(config.CONFIG_DIR / "voice_service.log"),
+                )
             self._voice_service.sync(should_run)
         except Exception as e:
             _log("voice_service_sync_failed", err=str(e))

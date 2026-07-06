@@ -141,7 +141,11 @@ OPTIONS = {
     # Quartz (action seam) + ApplicationServices (trust check) are imported
     # lazily inside functions, so force them in — py2app's static scan can miss
     # in-function imports of frameworks.
-    "includes": ["pkg_resources", "Quartz", "ApplicationServices"],
+    # Extra stdlib/modules a downstream build needs but the OSS app's static
+    # scan won't see (e.g. a private build that injects an extra package after
+    # py2app runs). Comma-separated in PY2APP_EXTRA_INCLUDES; empty for OSS.
+    "includes": ["pkg_resources", "Quartz", "ApplicationServices"]
+    + [m.strip() for m in os.environ.get("PY2APP_EXTRA_INCLUDES", "").split(",") if m.strip()],
     "excludes": [
         "tkinter",
         "matplotlib",

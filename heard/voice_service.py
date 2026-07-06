@@ -47,10 +47,19 @@ class VoiceServiceSupervisor:
     exits unexpectedly while it is supposed to be running.
     """
 
-    def __init__(self, cmd: str, log: Callable[..., None] | None = None) -> None:
+    def __init__(
+        self,
+        cmd: str,
+        log: Callable[..., None] | None = None,
+        log_path: str | None = None,
+    ) -> None:
         self.cmd = (cmd or "").strip()
         self._argv = shlex.split(self.cmd) if self.cmd else []
         self._log = log or (lambda *a, **k: None)
+        # File the child's stdout/stderr are appended to — without this the
+        # service's output (incl. a startup traceback) is lost, so a crash-loop
+        # is invisible. None → inherit the daemon's fds.
+        self._log_path = log_path
         self._lock = threading.RLock()
         self._proc: subprocess.Popen | None = None
         self._want_running = False
@@ -91,7 +100,15 @@ class VoiceServiceSupervisor:
 
     def _spawn(self) -> None:
         try:
-            self._proc = subprocess.Popen(self._argv)
+            out = None
+            if self._log_path:
+                try:
+                    out = open(self._log_path, "ab", buffering=0)  # noqa: SIM115
+                except Exception:
+                    out = None
+            self._proc = subprocess.Popen(self._argv, stdout=out, stderr=out)
+            if out is not None:
+                out.close()  # the child keeps its own dup of the fd
             self._last_spawn = time.monotonic()
             self._log("voice_service_started", pid=self._proc.pid, cmd=self.cmd)
         except Exception as e:
