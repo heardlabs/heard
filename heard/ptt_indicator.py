@@ -30,6 +30,10 @@ def _ensure():
             NSTextAlignmentLeft,
             NSTextField,
             NSView,
+            NSVisualEffectBlendingModeBehindWindow,
+            NSVisualEffectMaterialHUDWindow,
+            NSVisualEffectStateActive,
+            NSVisualEffectView,
             NSWindow,
             NSWindowStyleMaskBorderless,
         )
@@ -45,16 +49,18 @@ def _ensure():
     win.setLevel_(25)  # above normal windows (status-bar level)
     win.setIgnoresMouseEvents_(True)  # click-through
     win.setHidesOnDeactivate_(False)
-    win.setHasShadow_(False)  # no drop shadow — it read as a dark border
+    win.setHasShadow_(True)  # soft shadow gives the dark pill definition
+    win.setAlphaValue_(0.9)  # slightly translucent → reads as glass, not a chip
     win.setCollectionBehavior_((1 << 0) | (1 << 4))  # CanJoinAllSpaces | Stationary
 
-    # Solid WHITE pill. macOS's HUD vibrancy material renders dark in dark mode
-    # (reads as a grey chip), so we use a plain layer with a flat white fill:
-    # pill-shaped (corner radius = half the height → semicircle ends), no shadow,
-    # no border. Text sits on top in near-black.
-    pill = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+    # Dark frosted-glass pill (HUD vibrancy material) — stays visible on both
+    # light and dark backgrounds, unlike a white pill. Pill-shaped: corner radius
+    # = half the height → semicircle ends.
+    pill = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+    pill.setMaterial_(NSVisualEffectMaterialHUDWindow)
+    pill.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+    pill.setState_(NSVisualEffectStateActive)
     pill.setWantsLayer_(True)
-    pill.layer().setBackgroundColor_(NSColor.whiteColor().CGColor())
     pill.layer().setCornerRadius_(h / 2.0)
     pill.layer().setMasksToBounds_(True)
     win.setContentView_(pill)
@@ -69,7 +75,7 @@ def _ensure():
     label.setSelectable_(False)
     label.setAlignment_(NSTextAlignmentLeft)
     label.setStringValue_("Listening")
-    label.setTextColor_(NSColor.colorWithWhite_alpha_(0.12, 1.0))  # near-black on white
+    label.setTextColor_(NSColor.whiteColor())
     label.setFont_(NSFont.systemFontOfSize_weight_(15.0, 0.23))  # medium
     label.sizeToFit()
     lw = label.frame().size.width
