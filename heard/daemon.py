@@ -976,6 +976,12 @@ class Daemon:
         and never touches narration. No-op on OSS-only installs (empty cmd)."""
         try:
             cmd = (self.cfg.get("voice_service_cmd") or "").strip()
+            # `{python}` → this process's interpreter. The private notarized
+            # build sets voice_service_cmd to "{python} -m heard_power serve" so
+            # the daemon runs the app's OWN bundled Python; OSS stays generic
+            # (it substitutes a placeholder, it doesn't know the module name).
+            if cmd:
+                cmd = cmd.replace("{python}", sys.executable)
             plan = (self.cfg.get("heard_plan") or "").strip().lower()
             powered = plan == "power" or bool(self.cfg.get("voice_input_unlocked"))
             mode = (self.cfg.get("voice_mode") or "off").strip().lower()
@@ -1034,6 +1040,12 @@ class Daemon:
         front door rather than queue up behind a 5-second call. If a
         release timer was pending (user briefly let go between Wispr
         phrases), cancel it so the suppression stays continuous."""
+        # Hands-free (ambient) voice input holds the mic continuously — that's
+        # OUR OWN dictation service, not a call, so don't auto-silence (it would
+        # mute Heard for the whole session). Echo is handled separately: the
+        # daemon pauses input while narrating (_voice_suppress).
+        if self.cfg.get("voice_mode") == "ambient":
+            return
         if self._mic_release_timer is not None:
             self._mic_release_timer.cancel()
             self._mic_release_timer = None
