@@ -121,8 +121,8 @@ def show() -> None:
             f = scr.frame()
             wf = win.frame().size
             win.setFrameOrigin_((
-                f.origin.x + (f.size.width - wf.width) / 2.0,
-                f.origin.y + (f.size.height - wf.height) / 2.0,  # dead center
+                f.origin.x + (f.size.width - wf.width) / 2.0,  # horizontally centered
+                f.origin.y + 120.0,  # bottom-center (y=0 is the bottom; clears the dock)
             ))
         _pulse(True)
         win.orderFrontRegardless()
