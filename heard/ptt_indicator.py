@@ -50,15 +50,19 @@ def _ensure():
     win.setIgnoresMouseEvents_(True)  # click-through
     win.setHidesOnDeactivate_(False)
     win.setHasShadow_(True)
+    # See-through glass — let more of the background through than the solid HUD
+    # panel does, so it reads as translucent glass, not a dark chip.
+    win.setAlphaValue_(0.8)
     win.setCollectionBehavior_((1 << 0) | (1 << 4))  # CanJoinAllSpaces | Stationary
 
-    # Frosted-glass background, rounded.
+    # Frosted-glass background, pill-shaped (corner radius = half the height, so
+    # the short ends are full semicircles).
     glass = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
     glass.setMaterial_(NSVisualEffectMaterialHUDWindow)
     glass.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
     glass.setState_(NSVisualEffectStateActive)
     glass.setWantsLayer_(True)
-    glass.layer().setCornerRadius_(13.0)
+    glass.layer().setCornerRadius_(h / 2.0)
     glass.layer().setMasksToBounds_(True)
     win.setContentView_(glass)
 
