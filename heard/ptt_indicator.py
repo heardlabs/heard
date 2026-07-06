@@ -45,18 +45,16 @@ def _ensure():
     win.setLevel_(25)  # above normal windows (status-bar level)
     win.setIgnoresMouseEvents_(True)  # click-through
     win.setHidesOnDeactivate_(False)
-    win.setHasShadow_(True)
+    win.setHasShadow_(False)  # no drop shadow — it read as a dark border
     win.setCollectionBehavior_((1 << 0) | (1 << 4))  # CanJoinAllSpaces | Stationary
 
-    # Translucent WHITE pill. macOS's HUD vibrancy material renders dark in dark
-    # mode (reads as a solid grey chip, not glass), so we use a plain layer with
-    # a see-through white fill instead: pill-shaped (corner radius = half the
-    # height → semicircle ends), ~88% white so the background shows through a
-    # touch for a light-glass feel. Text sits on top at full opacity.
+    # Solid WHITE pill. macOS's HUD vibrancy material renders dark in dark mode
+    # (reads as a grey chip), so we use a plain layer with a flat white fill:
+    # pill-shaped (corner radius = half the height → semicircle ends), no shadow,
+    # no border. Text sits on top in near-black.
     pill = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
     pill.setWantsLayer_(True)
-    pill.layer().setBackgroundColor_(
-        NSColor.colorWithWhite_alpha_(1.0, 0.88).CGColor())
+    pill.layer().setBackgroundColor_(NSColor.whiteColor().CGColor())
     pill.layer().setCornerRadius_(h / 2.0)
     pill.layer().setMasksToBounds_(True)
     win.setContentView_(pill)
