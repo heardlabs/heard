@@ -3223,6 +3223,20 @@ class Daemon:
         if cmd == "stop":
             self._cancel_only()
             return None
+        if cmd == "voice_hold":
+            # Power hands-free: the user started actually speaking — yield the
+            # floor. Cancel current narration (barge-in) and defer new narration
+            # until they finish, so Jarvis doesn't talk over them. Reuses the
+            # existing mic-active deferral; driven by the voice service's real
+            # speech detection (the audio-monitor path is gated off in ambient).
+            self._cancel_only()
+            self._mic_active = True
+            return None
+        if cmd == "voice_release":
+            # User stopped — resume; replay whatever was held while they spoke.
+            self._mic_active = False
+            self._flush_deferred_while_mic()
+            return None
         if cmd == "mute":
             self._do_mute(source=req.get("source") or "socket")
             return None
