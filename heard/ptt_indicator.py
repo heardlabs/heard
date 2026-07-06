@@ -30,10 +30,6 @@ def _ensure():
             NSTextAlignmentLeft,
             NSTextField,
             NSView,
-            NSVisualEffectBlendingModeBehindWindow,
-            NSVisualEffectMaterialHUDWindow,
-            NSVisualEffectStateActive,
-            NSVisualEffectView,
             NSWindow,
             NSWindowStyleMaskBorderless,
         )
@@ -50,21 +46,20 @@ def _ensure():
     win.setIgnoresMouseEvents_(True)  # click-through
     win.setHidesOnDeactivate_(False)
     win.setHasShadow_(True)
-    # See-through glass — let more of the background through than the solid HUD
-    # panel does, so it reads as translucent glass, not a dark chip.
-    win.setAlphaValue_(0.8)
     win.setCollectionBehavior_((1 << 0) | (1 << 4))  # CanJoinAllSpaces | Stationary
 
-    # Frosted-glass background, pill-shaped (corner radius = half the height, so
-    # the short ends are full semicircles).
-    glass = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
-    glass.setMaterial_(NSVisualEffectMaterialHUDWindow)
-    glass.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
-    glass.setState_(NSVisualEffectStateActive)
-    glass.setWantsLayer_(True)
-    glass.layer().setCornerRadius_(h / 2.0)
-    glass.layer().setMasksToBounds_(True)
-    win.setContentView_(glass)
+    # Translucent WHITE pill. macOS's HUD vibrancy material renders dark in dark
+    # mode (reads as a solid grey chip, not glass), so we use a plain layer with
+    # a see-through white fill instead: pill-shaped (corner radius = half the
+    # height → semicircle ends), ~88% white so the background shows through a
+    # touch for a light-glass feel. Text sits on top at full opacity.
+    pill = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+    pill.setWantsLayer_(True)
+    pill.layer().setBackgroundColor_(
+        NSColor.colorWithWhite_alpha_(1.0, 0.88).CGColor())
+    pill.layer().setCornerRadius_(h / 2.0)
+    pill.layer().setMasksToBounds_(True)
+    win.setContentView_(pill)
 
     # Build the label first, measure it, then center the dot + label as a group
     # inside the pill (was left-packed at fixed x's, which looked off-center).
@@ -76,7 +71,7 @@ def _ensure():
     label.setSelectable_(False)
     label.setAlignment_(NSTextAlignmentLeft)
     label.setStringValue_("Listening")
-    label.setTextColor_(NSColor.whiteColor())
+    label.setTextColor_(NSColor.colorWithWhite_alpha_(0.12, 1.0))  # near-black on white
     label.setFont_(NSFont.systemFontOfSize_weight_(15.0, 0.23))  # medium
     label.sizeToFit()
     lw = label.frame().size.width
@@ -88,10 +83,10 @@ def _ensure():
     dot.setWantsLayer_(True)
     dot.layer().setBackgroundColor_(NSColor.systemRedColor().CGColor())
     dot.layer().setCornerRadius_(dot_d / 2)
-    glass.addSubview_(dot)
+    pill.addSubview_(dot)
 
     label.setFrameOrigin_((x0 + dot_d + gap, h / 2 - lh / 2))
-    glass.addSubview_(label)
+    pill.addSubview_(label)
 
     _win, _dot = win, dot
     return win
