@@ -109,9 +109,21 @@ def show() -> None:
     if win is None:
         return
     try:
-        win.center()  # AppKit centers on the active screen (multi-display safe)
-        f = win.frame()
-        win.setFrameOrigin_((f.origin.x, 160.0))  # keep centered x, sit near bottom
+        from AppKit import NSScreen  # noqa: PLC0415
+        screens = NSScreen.screens() or []
+        # Pin to the PRIMARY display (menu-bar screen, origin 0,0) every time, so
+        # the HUD sits in one consistent spot instead of following the active
+        # window between monitors.
+        scr = next((s for s in screens
+                    if s.frame().origin.x == 0 and s.frame().origin.y == 0),
+                   screens[0] if screens else None)
+        if scr is not None:
+            f = scr.frame()
+            wf = win.frame().size
+            win.setFrameOrigin_((
+                f.origin.x + (f.size.width - wf.width) / 2.0,
+                f.origin.y + (f.size.height - wf.height) / 2.0,  # dead center
+            ))
         _pulse(True)
         win.orderFrontRegardless()
     except Exception:
