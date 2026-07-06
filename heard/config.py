@@ -86,6 +86,11 @@ DEFAULTS: dict[str, Any] = {
     # pure-OSS build has no Power. The private notarized build sets this to the
     # bundled `python -m heard_power serve`. See voice_service.py.
     "voice_service_cmd": "",
+    # Update feed the in-app updater polls. Empty → the public GitHub releases
+    # feed (OSS default). The private notarized Power build sets this to its own
+    # gated appcast (same JSON shape) so an OSS release never reverts a Power
+    # user to the non-Power build. See updater.py.
+    "update_feed_url": "",
     # Empty by default; the persona layer falls back to env vars
     # (ANTHROPIC_API_KEY / OPENAI_API_KEY) if these are unset, then to
     # template mode if neither is available. Stored plain-text under the

@@ -757,6 +757,7 @@ class Daemon:
             current_version=updater.resolved_current_version(),
             on_update=_on_update,
             enabled=lambda: bool(self.cfg.get("update_check_enabled", True)),
+            feed_url=(self.cfg.get("update_feed_url") or None),
         )
 
     def _start_codex_app_observer(self) -> None:

@@ -201,13 +201,17 @@ def mark_notified(version: str) -> None:
     _save_state(state)
 
 
-def _fetch_latest_release(current_version: str) -> dict | None:
+def _fetch_latest_release(current_version: str, url: str | None = None) -> dict | None:
     """GET the latest release. Returns parsed JSON dict or None on any
     failure (network, timeout, non-200, malformed JSON). User-Agent
     carries the running version for politeness — GitHub may rate-limit
-    requests with no UA."""
+    requests with no UA.
+
+    `url` overrides the default public GitHub feed — the private notarized
+    Power build points this at its own gated appcast (same JSON shape) so an
+    OSS release can never "update" a Power user back to the non-Power build."""
     req = urllib.request.Request(
-        _RELEASE_URL,
+        url or _RELEASE_URL,
         headers={
             "User-Agent": f"Heard/{current_version}",
             "Accept": "application/vnd.github+json",
@@ -222,7 +226,7 @@ def _fetch_latest_release(current_version: str) -> dict | None:
         return None
 
 
-def check_for_update(current_version: str) -> UpdateInfo | None:
+def check_for_update(current_version: str, feed_url: str | None = None) -> UpdateInfo | None:
     """Hit GitHub once, return an `UpdateInfo` if a strictly newer
     stable release exists AND we haven't already notified for it.
     Records the check timestamp regardless. Never raises.
@@ -239,7 +243,7 @@ def check_for_update(current_version: str) -> UpdateInfo | None:
         # fork). Don't second-guess — just don't nag.
         return None
 
-    payload = _fetch_latest_release(current_version)
+    payload = _fetch_latest_release(current_version, feed_url)
     _mark_checked()
     if not payload:
         return None
@@ -307,6 +311,7 @@ def start_periodic_check(
     enabled: Callable[[], bool] = lambda: True,
     interval_s: float = _DEFAULT_INTERVAL_S,
     initial_delay_s: float = 30.0,
+    feed_url: str | None = None,
 ) -> threading.Thread:
     """Launch a daemon thread that polls every `interval_s`. The first
     poll runs after `initial_delay_s` so daemon startup isn't blocked
@@ -323,7 +328,7 @@ def start_periodic_check(
         while True:
             try:
                 if enabled():
-                    info = check_for_update(current_version)
+                    info = check_for_update(current_version, feed_url)
                     if info is not None:
                         try:
                             on_update(info)
