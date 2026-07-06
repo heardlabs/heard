@@ -80,6 +80,12 @@ DEFAULTS: dict[str, Any] = {
     "voice_mode": "off",
     "voice_cleanup": True,          # LLM tidy pass on dictated text
     "voice_input_unlocked": False,  # dev/test escape hatch for the Power menu
+    # Command the daemon supervises as the voice-input service (Heard Power's
+    # `serve`). OPEN-CORE SEAM: OSS never imports heard_power — it runs whatever
+    # this names as a subprocess and pokes its socket. Empty by default, so a
+    # pure-OSS build has no Power. The private notarized build sets this to the
+    # bundled `python -m heard_power serve`. See voice_service.py.
+    "voice_service_cmd": "",
     # Empty by default; the persona layer falls back to env vars
     # (ANTHROPIC_API_KEY / OPENAI_API_KEY) if these are unset, then to
     # template mode if neither is available. Stored plain-text under the

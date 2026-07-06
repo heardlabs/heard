@@ -87,6 +87,14 @@ OPTIONS = {
         "LSUIElement": True,
         "NSHumanReadableCopyright": "Copyright © heardhq",
         "NSAppleEventsUsageDescription": "Heard needs to detect your global silence hotkey.",
+        # Heard Power's voice-input service runs as a child of this signed app,
+        # so it inherits this bundle's microphone TCC identity — which is what
+        # lets macOS actually prompt for the mic (a bare launchd/venv process
+        # can't). Harmless on non-Power installs: nothing requests the mic.
+        "NSMicrophoneUsageDescription": (
+            "Heard Power transcribes your voice locally, on-device, for "
+            "hands-free dictation. Audio never leaves your Mac."
+        ),
         "LSMinimumSystemVersion": "13.0",
         # heard:// custom URL scheme — used by the web sign-in handoff
         # (heard.dev/app-auth bounces the browser to heard://auth?code=…

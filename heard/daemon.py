@@ -36,6 +36,7 @@ from heard import (
     hotkey,
     notify,
     project_memory,
+    push_to_talk,
     updater,
     verbosity,
 )
@@ -43,8 +44,8 @@ from heard import (
     agent_state as agent_state_mod,
 )
 from heard import multi_agent as multi_agent_mod
-from heard import push_to_talk
 from heard import persona as persona_mod
+from heard import voice_service as voice_service_mod
 from heard import (
     working_memory as working_memory_mod,
 )
@@ -274,6 +275,10 @@ class Daemon:
         # the seam; it stays None — and entirely inert — on OSS-only installs.
         self._utterance_listener = None  # Callable[[str, str], None] | None
         self._ptt_monitor = None  # hold-to-talk NSEvent monitor (kept alive)
+        # Supervises Heard Power's voice-input `serve` subprocess (open-core
+        # seam — see voice_service.py). None + inert on OSS-only installs where
+        # voice_service_cmd is empty. Created lazily in _sync_voice_service.
+        self._voice_service = None
         self.persona = persona_mod.load(self.cfg.get("persona", "raw"), config_dir=config.CONFIG_DIR)
         self._lock = threading.Lock()
         self._current_proc: subprocess.Popen | None = None
@@ -961,6 +966,35 @@ class Daemon:
             sock = (self.cfg.get("push_to_talk_socket")
                     or os.path.expanduser("~/.heard_power.sock"))
             self._ptt_monitor = push_to_talk.start(sock)
+        self._sync_voice_service()
+
+    def _sync_voice_service(self) -> None:
+        """Start/stop Heard Power's voice-input service to match the current
+        gate: `voice_service_cmd` set AND the account is Power (or the
+        `voice_input_unlocked` dev escape) AND `voice_mode != off`. Best-effort
+        — the open-core seam is a subprocess, so any failure here is contained
+        and never touches narration. No-op on OSS-only installs (empty cmd)."""
+        try:
+            cmd = (self.cfg.get("voice_service_cmd") or "").strip()
+            plan = (self.cfg.get("heard_plan") or "").strip().lower()
+            powered = plan == "power" or bool(self.cfg.get("voice_input_unlocked"))
+            mode = (self.cfg.get("voice_mode") or "off").strip().lower()
+            should_run = bool(cmd) and powered and mode != "off"
+
+            if not cmd:
+                # No service configured (pure-OSS build) — tear down if we had one.
+                if self._voice_service is not None:
+                    self._voice_service.stop()
+                    self._voice_service = None
+                return
+            # (Re)create the supervisor if the command changed.
+            if self._voice_service is None or self._voice_service.cmd != cmd:
+                if self._voice_service is not None:
+                    self._voice_service.stop()
+                self._voice_service = voice_service_mod.VoiceServiceSupervisor(cmd, log=_log)
+            self._voice_service.sync(should_run)
+        except Exception as e:
+            _log("voice_service_sync_failed", err=str(e))
 
     def _start_audio_monitor(self) -> None:
         """Start the mic-capture watcher (CoreAudio polling) so Heard
@@ -1361,6 +1395,11 @@ class Daemon:
         # line on this reload rather than waiting for the next daemon
         # restart. (_maybe_greet is idempotent via cfg["greeted"].)
         self._maybe_greet()
+        # A reload is where a plan flip (server poll: trial→power), a
+        # voice_mode change, or a voice_service_cmd change surfaces — none of
+        # which touch the hotkey signature above, so sync the voice service
+        # here too. Idempotent.
+        self._sync_voice_service()
 
     def _voice(self, cfg: dict | None = None, persona: persona_mod.Persona | None = None) -> str:
         cfg = cfg or self.cfg
@@ -3602,6 +3641,11 @@ class Daemon:
         def shutdown(*_):
             try:
                 self.working_memory.stop()
+            except Exception:
+                pass
+            try:
+                if self._voice_service is not None:
+                    self._voice_service.stop()
             except Exception:
                 pass
             try:
