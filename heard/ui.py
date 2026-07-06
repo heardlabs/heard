@@ -283,7 +283,6 @@ class HeardApp(rumps.App):
         # upgrade teaser. voice_input_unlocked is a dev/test escape hatch.
         _powered = (_plan == "power") or bool(config.load().get("voice_input_unlocked"))
         self._voice_mode_items: dict = {}
-        self.voice_cleanup_item = None
         if _powered:
             self.voice_menu = rumps.MenuItem("Voice input")
             for label, mode in (
@@ -294,10 +293,6 @@ class HeardApp(rumps.App):
                 item = rumps.MenuItem(label, callback=self._mk_voice_mode_cb(mode))
                 self.voice_menu[label] = item
                 self._voice_mode_items[mode] = item
-            self.voice_menu["_vsep"] = rumps.separator
-            self.voice_cleanup_item = rumps.MenuItem(
-                "Clean up text", callback=self.on_toggle_voice_cleanup)
-            self.voice_menu["Clean up text"] = self.voice_cleanup_item
         else:
             self.voice_menu = rumps.MenuItem(
                 "Voice input — upgrade to Power", callback=self.on_upgrade)
@@ -520,12 +515,11 @@ class HeardApp(rumps.App):
         # submenus were pulled in the Mode-replaces-Verbosity cleanup.
         # Settings → Voice has its own popup + refresh path.
         self.auto_silence_item.state = 1 if cfg.get("auto_silence_on_mic", True) else 0
-        # Voice input mode radios + clean-up (only present on the Power submenu).
+        # Voice input mode radios (only present on the Power submenu). Cleanup is
+        # always on — not a user choice — so there's no toggle to reflect.
         _mode = cfg.get("voice_mode", "off")
         for _m, _it in self._voice_mode_items.items():
             _it.state = 1 if _m == _mode else 0
-        if self.voice_cleanup_item is not None:
-            self.voice_cleanup_item.state = 1 if cfg.get("voice_cleanup", True) else 0
         self._refresh_offline_voice_items()
 
         # Two explicit menu items, one per action — the inactive one
@@ -945,11 +939,6 @@ class HeardApp(rumps.App):
                 pass
             self.refresh(None)
         return _cb
-
-    def on_toggle_voice_cleanup(self, _sender) -> None:
-        cfg = config.load()
-        config.set_value("voice_cleanup", not cfg.get("voice_cleanup", True))
-        self.refresh(None)
 
     def on_open_config(self, _sender) -> None:
         import subprocess

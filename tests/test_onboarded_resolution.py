@@ -13,8 +13,9 @@ from __future__ import annotations
 from heard.ui import _cap_reached_label, _resolve_onboarded
 
 
-def test_cap_label_pro_is_monthly():
-    assert _cap_reached_label("pro") == "Monthly cloud limit reached — resets next month"
+def test_cap_label_pro_is_daily():
+    # All plans reset DAILY now (see _cap_reached_label) — pro included.
+    assert _cap_reached_label("pro") == "Daily cloud limit reached — back tomorrow"
 
 
 def test_cap_label_trial_is_daily():
