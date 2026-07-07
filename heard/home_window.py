@@ -17,6 +17,7 @@ CLI path doesn't pull WebKit.
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,7 @@ def _current_state() -> dict[str, Any]:
         import time
 
         trial_left = max(0, int((exp - time.time() * 1000) // 86_400_000))
-    return {
+    state: dict[str, Any] = {
         "signedIn": signed_in,
         "email": cfg.get("heard_email") or "",
         "plan": plan,
@@ -70,7 +71,137 @@ def _current_state() -> dict[str, Any]:
         "voice": cfg.get("voice") or None,
         "whisperOn": (cfg.get("voice_mode") or "off") != "off",
         "phonePaired": bool(cfg.get("phone_paired")),
+        # Legacy onboarded flag — existing set-up users land on Home, not the
+        # new onboarding. onboarded_plan tracks the *new* flow for the upgrade
+        # delta; this covers everyone who set up before the new flow shipped.
+        "onboarded": bool(cfg.get("onboarded")),
     }
+    # Home (Mission Control / Transcript) data — only when the window is in Home
+    # mode (signed in + set up), so onboarding doesn't pay the status socket
+    # round-trip. Best-effort; the page falls back to a sample if absent.
+    setup_done = (cfg.get("onboarded_plan") or "") == plan or bool(cfg.get("onboarded"))
+    if signed_in and setup_done and plan != "free":
+        try:
+            state["home"] = _home_data()
+        except Exception:
+            pass
+    return state
+
+
+_PROJ_COLORS = ["#b25b41", "#4a7da0", "#937c2e", "#a8505f", "#6f77c4", "#4c9a6a"]
+
+
+def _proj_color(name: str) -> str:
+    if not name:
+        return "#6f6f6f"
+    return _PROJ_COLORS[sum(map(ord, name)) % len(_PROJ_COLORS)]
+
+
+def _fmt_ts(ts: Any) -> str:
+    try:
+        from datetime import datetime
+
+        dt = (
+            datetime.strptime(str(ts), "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=UTC)
+            .astimezone()
+        )
+        return dt.strftime("%H:%M")
+    except Exception:
+        return ""
+
+
+def _read_history_tail(n: int = 400) -> list[dict]:
+    import json as _json
+
+    p = config.DATA_DIR / "history.jsonl"
+    if not p.exists():
+        return []
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()[-n:]
+    except Exception:
+        return []
+    out = []
+    for ln in lines:
+        try:
+            out.append(_json.loads(ln))
+        except Exception:
+            pass
+    return out
+
+
+def _home_data() -> dict:
+    """Lean-real Mission Control / Transcript data from the running daemon +
+    history.jsonl — real projects, status, recent lines, now-narrating, today.
+    NO fabricated progress bars or approve/review (those need agent control)."""
+    import time
+
+    recs = _read_history_tail(400)
+    spoken = [r for r in recs if (r.get("spoken") or r.get("neutral"))]
+
+    def _text(r):
+        return (r.get("spoken") or r.get("neutral") or "").strip()
+
+    out: dict = {}
+    if spoken:
+        last = spoken[-1]
+        out["now"] = {
+            "voice": (last.get("persona") or "Heard").title(),
+            "line": _text(last)[:220],
+        }
+
+    today0 = time.strftime("%Y-%m-%d", time.gmtime())  # ts is UTC ISO
+    today = [r for r in spoken if str(r.get("ts", "")).startswith(today0)]
+    secs = int(sum(len(_text(r)) for r in today) / 14)  # ~14 chars/sec estimate
+    hh, mm = secs // 3600, (secs % 3600) // 60
+    out["today"] = {
+        "value": (f"{hh}h {mm}m" if hh else f"{mm}m") or "0m",
+        "sub": f"narrated · {len(today)} events",
+    }
+
+    out["transcript"] = [
+        [_fmt_ts(r.get("ts")), r.get("repo_name") or "", _proj_color(r.get("repo_name") or ""), _text(r)[:160]]
+        for r in spoken[-14:][::-1]
+    ]
+
+    # Projects from the live daemon status — grouped by repo (matches history),
+    # displayed by area label when set.
+    try:
+        from heard import client
+
+        st = client.get_status() or {}
+    except Exception:
+        st = {}
+    agents = st.get("agent_states") or []
+    speaking = bool(st.get("speaking"))
+    speaking_repo = spoken[-1].get("repo_name") if (speaking and spoken) else None
+
+    groups: dict = {}
+    for a in agents:
+        repo = a.get("repo_name") or "?"
+        g = groups.setdefault(repo, {"agents": [], "area": a.get("area")})
+        g["agents"].append(a)
+
+    projects = []
+    for repo, g in groups.items():
+        ags = g["agents"]
+        if any((a.get("error_count") or 0) > 0 or a.get("salience_hint") == "blocked" for a in ags):
+            status = "blocked"
+        elif speaking_repo == repo:
+            status = "speaking"
+        elif any(a.get("current_tool") for a in ags):
+            status = "building"
+        elif any(a.get("salience_hint") == "active-decision" for a in ags):
+            status = "await"
+        else:
+            status = "building"
+        lines = [[_fmt_ts(r.get("ts")), _text(r)[:80]] for r in spoken if r.get("repo_name") == repo][-2:]
+        projects.append(
+            {"name": g["area"] or repo, "agents": len(ags), "status": status, "lines": lines}
+        )
+    if projects:
+        out["projects"] = projects
+    return out
 
 
 def _agent_connected() -> bool:

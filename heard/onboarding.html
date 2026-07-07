@@ -239,9 +239,10 @@ let current = null;
 let navHome = 'mission';
 function homeMode(){
   if(new URLSearchParams(location.search).get('view')==='home') return true;
-  // Once signed in and onboarding is complete for this plan, the window IS the
-  // Home. Native sets onboarded_plan when the user finishes setup.
-  return S.signedIn && S.onboardedPlan===S.plan;
+  // Once signed in and set up, the window IS the Home. onboardedPlan tracks the
+  // new flow (for the Pro->Power delta); S.onboarded covers existing users who
+  // set up before the new onboarding shipped.
+  return S.signedIn && (S.onboardedPlan===S.plan || S.onboarded);
 }
 function render(){
   if(homeMode()){
@@ -303,10 +304,15 @@ const HOME_SAMPLE = {
 };
 const PILL = {speaking:'SPEAKING',building:'BUILDING',await:'AWAITING YOU',blocked:'BLOCKED'};
 function renderHome(){
-  const H = Object.assign({}, HOME_SAMPLE, S.home||{});
+  // In the app S.home is REAL (daemon + history). Only use the design sample
+  // when it's absent (browser preview) — never show fake projects to the user.
+  const H = S.home || HOME_SAMPLE;
+  const today = H.today || {value:'0m', sub:'narrated · 0 events'};
+  const projects = H.projects || [];
+  const transcript = H.transcript || [];
   document.getElementById('h-title').textContent = 'Heard — ' + ({mission:'Mission Control',transcript:'Transcript',settings:'Settings'}[navHome]);
-  document.getElementById('h-today-big').textContent = H.today.value;
-  document.getElementById('h-today-sub').textContent = H.today.sub;
+  document.getElementById('h-today-big').textContent = today.value;
+  document.getElementById('h-today-sub').textContent = today.sub;
   // nav
   document.querySelectorAll('#h-nav a').forEach(a=>{
     a.classList.toggle('on', a.dataset.v===navHome);
@@ -315,22 +321,29 @@ function renderHome(){
   document.querySelectorAll('.h-view').forEach(v=>v.classList.remove('on'));
   document.getElementById('v-'+navHome).classList.add('on');
 
+  const empty = (msg,sub)=>`<div style="padding:80px 24px;text-align:center"><div style="font-family:var(--serif);font-size:24px;color:var(--ink-2)">${msg}</div><div style="margin-top:8px;font-size:13px;color:var(--ink-3)">${sub}</div></div>`;
+
   // Mission Control
   const wv = [40,75,100,60,85].map(h=>`<i style="height:${h}%"></i>`).join('');
+  const now = H.now;
   document.getElementById('v-mission').innerHTML = `
-    <div class="now"><div class="o"></div>
-      <div style="flex:1;min-width:0"><div class="k">Now narrating · ${H.now.voice}</div><div class="q">"${H.now.line}"</div></div>
-      <div class="wv">${wv}</div></div>
-    <div class="cards">${H.projects.map(p=>`
-      <div class="pcard"><div class="top"><span class="nm">${p.name}</span><span class="ag">${p.agents} agents</span>
-        <span class="pill ${p.status}"><span class="d"></span>${PILL[p.status]}</span></div>
-        ${p.lines.map(l=>`<div class="ln"><span class="t">${l[0]}</span>&nbsp;${l[1]}</div>`).join('')}
-        ${p.acts?`<div class="pacts"><a class="p">Approve</a><a class="g">Review</a></div>`:`<div class="pbar"><i style="width:${p.progress||0}%"></i></div>`}
-      </div>`).join('')}</div>`;
+    ${now?`<div class="now"><div class="o"></div>
+      <div style="flex:1;min-width:0"><div class="k">Now narrating · ${now.voice}</div><div class="q">"${now.line}"</div></div>
+      <div class="wv">${wv}</div></div>`:''}
+    ${projects.length
+      ? `<div class="cards">${projects.map(p=>`
+          <div class="pcard"><div class="top"><span class="nm">${p.name}</span><span class="ag">${p.agents} agents</span>
+            <span class="pill ${p.status}"><span class="d"></span>${PILL[p.status]}</span></div>
+            ${(p.lines||[]).map(l=>`<div class="ln"><span class="t">${l[0]}</span>&nbsp;${l[1]}</div>`).join('')}
+            ${p.acts?`<div class="pacts"><a class="p">Approve</a><a class="g">Review</a></div>`:(p.progress!=null?`<div class="pbar"><i style="width:${p.progress}%"></i></div>`:'')}
+          </div>`).join('')}</div>`
+      : empty('No agents working right now', 'Mission Control lights up when your agents are running.')}`;
 
   // Transcript
   document.getElementById('v-transcript').innerHTML = `<div class="h-pad"><div class="h-h">Transcript</div>
-    ${H.transcript.map(t=>`<div class="tr"><span class="tt">${t[0]}</span><div style="flex:1"><div class="proj" style="color:${t[2]}">${t[1]}</div><div class="say">"${t[3]}"</div></div></div>`).join('')}</div>`;
+    ${transcript.length
+      ? transcript.map(t=>`<div class="tr"><span class="tt">${t[0]}</span><div style="flex:1"><div class="proj" style="color:${t[2]}">${t[1]}</div><div class="say">"${t[3]}"</div></div></div>`).join('')
+      : empty('Nothing yet today', 'Your narration history shows up here.')}</div>`;
 
   // Settings — quick surface; the full controls come next
   document.getElementById('v-settings').innerHTML = `<div class="h-pad"><div class="h-h">Settings</div>
