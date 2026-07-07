@@ -203,6 +203,12 @@ DEFAULTS: dict[str, Any] = {
     # the daemon respawn on the next agent event. Only "Resume Heard"
     # (menu or hotkey) clears it — there's no auto-timeout.
     "muted": False,
+    # Narration-out seam (opt-in). When True, the daemon tees each synthesised
+    # utterance's audio + text to $CONFIG_DIR/narration-out/ so an external
+    # renderer (Heard Power's phone stream) can reuse it instead of
+    # re-synthesising. Generic + inert when False (default) — off changes
+    # nothing for OSS-only installs.
+    "narration_spool": False,
     # Codex integration preference. CLI hooks are still stored in
     # ~/.codex/hooks.json, but Codex Desktop narration tails session
     # logs directly, so "enabled" must not depend solely on the hook

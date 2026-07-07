@@ -1838,6 +1838,11 @@ class Daemon:
             synth_ms = int((time.monotonic() - t0) * 1000)
             _log("synth_ok", backend=type(self.tts).__name__, ms=synth_ms, chars=len(chunk))
             self._last_error = None  # successful synth clears the badge
+            # Narration-out seam (opt-in via cfg["narration_spool"]): tee the
+            # audio we just synthesised so an external renderer can reuse it
+            # instead of re-synthesising. Best-effort — never affects playback.
+            if cfg.get("narration_spool"):
+                self._spool_narration(path, chunk)
             # Tier 1 "user actually used Heard today" signal. Fires once
             # per local day per install, regardless of TTS backend
             # (managed / BYOK / Kokoro), regardless of product_analytics
@@ -1944,6 +1949,33 @@ class Daemon:
             s.close()
         except Exception:
             pass
+
+    def _spool_narration(self, src: Path, text: str) -> None:
+        """Narration-out seam (generic; gated by cfg['narration_spool']). Tee the
+        just-synthesised audio + its text to $CONFIG_DIR/narration-out/ so an
+        external renderer (Heard Power's phone stream) can reuse it instead of
+        re-synthesising. Files are seq-named (<seq>.<ext> audio, then <seq>.txt
+        as the ready-marker written LAST). Bounded to the most recent
+        SPOOL_KEEP pairs. Best-effort — any failure is swallowed so it can
+        never affect playback."""
+        try:
+            spool = config.CONFIG_DIR / "narration-out"
+            spool.mkdir(parents=True, exist_ok=True)
+            self._spool_seq = getattr(self, "_spool_seq", 0) + 1
+            seq = self._spool_seq
+            ext = src.suffix or ".mp3"
+            (spool / f"{seq:012d}{ext}").write_bytes(src.read_bytes())
+            # text written last: its presence signals the pair is complete.
+            (spool / f"{seq:012d}.txt").write_text(text, encoding="utf-8")
+            # Bound storage: keep only the most recent SPOOL_KEEP audio pairs.
+            auds = sorted(spool.glob(f"*{ext}"))
+            for old in auds[:-self.SPOOL_KEEP]:
+                old.unlink(missing_ok=True)
+                old.with_suffix(".txt").unlink(missing_ok=True)
+        except Exception as exc:
+            _log("spool_failed", err=repr(exc)[:80])
+
+    SPOOL_KEEP: int = 60  # narration-out audio pairs retained (external renderer consumes + deletes)
 
     # Window (seconds) within which a user reaction (pause hotkey, mic
     # activation) is treated as correlated with the most-recent
