@@ -288,6 +288,8 @@ function render(){
   const el=stage.querySelector('.screen'); if(el) el.classList.add('show');
   // Focus the mic-test field so push-to-talk dictation types into it.
   const mi=stage.querySelector('#mic-in'); if(mi) setTimeout(()=>mi.focus(), 60);
+  // The original onboarding's "Hi, I'm Jarvis" hello — play once on welcome.
+  if(active==='welcome' && !window.__greeted){ window.__greeted=true; setTimeout(()=>bridge('greet'), 550); }
 }
 // Voice preview: poke native to synth + play a sample in that voice.
 function previewVoice(btn, voice){
@@ -421,7 +423,7 @@ const SCREENS = {
       <h1 class="hero">${hero}</h1>
       <p class="lede">${lede}</p>
       <div class="spacer"></div>
-      <div class="row"><button class="btn btn-primary" onclick="next()">Begin setup</button></div>
+      <div class="row"><button class="btn btn-primary" onclick="next()">Begin setup</button><button class="btn btn-ghost" onclick="bridge('greet')">🔊 Say hello</button></div>
       <div class="orb"></div>
     </section>`;
   },

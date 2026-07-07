@@ -231,6 +231,13 @@ def _agent_connected() -> bool:
 _VOICE_MP3 = {"aria": "calm", "friday": "friday", "jarvis": "jarvis", "atlas": "narrator"}
 
 
+def _greet_voice() -> str:
+    """Persona for the welcome hello — the picked voice if it's a card,
+    else Jarvis (the original onboarding's 'Hi, I'm Jarvis')."""
+    v = (config.load().get("voice") or "").lower()
+    return v if v in _VOICE_MP3 else "jarvis"
+
+
 def _play_voice_sample(voice_name: str) -> None:
     """Play the persona's sample straight from the website's MP3s (afplay)."""
     try:
@@ -491,6 +498,16 @@ def _build_controller_class():
                 threading.Thread(
                     target=_play_voice_sample, args=(voice,), daemon=True
                 ).start()
+
+        def _act_greet(self, body):
+            # The "Hi, I'm Jarvis" welcome hello — play the persona's intro in
+            # the picked voice, defaulting to Jarvis on the welcome screen.
+            import threading
+
+            voice = (body.get("voice") or "").strip() or _greet_voice()
+            threading.Thread(
+                target=_play_voice_sample, args=(voice,), daemon=True
+            ).start()
 
         def _act_enable_whisper(self, body):
             try:
