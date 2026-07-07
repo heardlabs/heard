@@ -218,6 +218,50 @@ def _agent_connected() -> bool:
     return False
 
 
+def _build_tts(cfg):
+    """Same selection order as the daemon (minus Kokoro) — for voice previews."""
+    key = (cfg.get("elevenlabs_api_key") or "").strip()
+    if key:
+        from heard.tts.elevenlabs import ElevenLabsTTS
+
+        return ElevenLabsTTS(api_key=key)
+    token = (cfg.get("heard_token") or "").strip()
+    plan = (cfg.get("heard_plan") or "").strip().lower()
+    if token and plan != "expired":
+        from heard.tts.managed import ManagedTTS
+
+        return ManagedTTS(
+            token=token,
+            base_url=cfg.get("heard_api_base") or "https://api.heard.dev",
+        )
+    return None
+
+
+def _play_voice_sample(voice_name: str) -> None:
+    """Synth a one-line sample in the persona's real voice + play it (afplay)."""
+    try:
+        import subprocess
+        import tempfile
+
+        from heard import persona as _persona
+
+        cfg = config.load()
+        try:
+            tts_voice = _persona.load(voice_name).voice or voice_name
+        except Exception:
+            tts_voice = voice_name
+        tts = _build_tts(cfg)
+        if tts is None:
+            _log_bridge("todo", "preview_voice:no_tts")
+            return
+        line = f"Hi, I'm {voice_name.capitalize()}. This is how I'll narrate your agents."
+        path = Path(tempfile.mktemp(suffix=getattr(tts, "AUDIO_EXT", ".mp3")))
+        tts.synth_to_file(line, tts_voice, 1.0, "en", path)
+        subprocess.run(["afplay", str(path)], check=False)
+    except Exception as e:
+        _log_bridge_error("preview_voice", e)
+
+
 def _mic_granted() -> bool:
     # Real TCC mic authorization (3 == AVAuthorizationStatusAuthorized). Falls
     # back to "voice_mode on" if AVFoundation isn't available on this build.
@@ -399,8 +443,18 @@ def _build_controller_class():
                 from heard.adapters import claude_code
 
                 claude_code.install()
+                self._push_state()
             except Exception as e:
                 _log_bridge_error("connect_agent", e)
+
+        def _act_connect_codex(self, body):
+            try:
+                from heard.adapters import codex
+
+                codex.install()
+                self._push_state()
+            except Exception as e:
+                _log_bridge_error("connect_codex", e)
 
         def _act_open_voice_picker(self, body):
             try:
@@ -435,7 +489,13 @@ def _build_controller_class():
                     _log_bridge_error("set_mode", e)
 
         def _act_preview_voice(self, body):
-            _log_bridge("todo", "preview_voice:" + str(body.get("voice")))
+            voice = (body.get("voice") or "").strip()
+            if voice:
+                import threading
+
+                threading.Thread(
+                    target=_play_voice_sample, args=(voice,), daemon=True
+                ).start()
 
         def _act_enable_whisper(self, body):
             try:

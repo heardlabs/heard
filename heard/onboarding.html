@@ -26,6 +26,7 @@
     --mono:'JetBrains Mono',ui-monospace,monospace;
     --orb:radial-gradient(circle at 34% 28%,oklch(86% .1 45),oklch(73% .12 36) 42%,oklch(70% .1 266) 76%,oklch(58% .09 282));
   }
+  @keyframes wf{0%,100%{transform:scaleY(.28)}50%{transform:scaleY(1)}}
   @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
   @keyframes fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   *{box-sizing:border-box;}
@@ -88,7 +89,10 @@
   .vcard{border:1px solid var(--line);border-radius:13px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;background:var(--card);position:relative;transition:border-color .15s;}
   .vcard:hover{border-color:#cfc8bd;}
   .vcard.sel{border:1.5px solid var(--ink);}
-  .vcard .av{width:48px;height:48px;border-radius:50%;}
+  .vcard .av{width:48px;height:48px;border-radius:50%;position:relative;}
+  .vplay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;border:none;background:rgba(11,11,12,.5);color:#fff;font-size:9px;cursor:pointer;display:grid;place-items:center;padding-left:2px;opacity:.9;transition:opacity .15s,transform .1s;}
+  .vcard:hover .vplay{opacity:1;transform:translate(-50%,-50%) scale(1.08);}
+  .vplay.playing{background:var(--terra);opacity:1;}
   .vcard .nm{font:500 13px var(--sans);color:var(--ink);}
   .vcard .ta{font:400 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
   .vcard .ck{position:absolute;top:9px;right:10px;width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;}
@@ -284,6 +288,13 @@ function render(){
   // Focus the mic-test field so push-to-talk dictation types into it.
   const mi=stage.querySelector('#mic-in'); if(mi) setTimeout(()=>mi.focus(), 60);
 }
+// Voice preview: poke native to synth + play a sample in that voice.
+function previewVoice(btn, voice){
+  document.querySelectorAll('.vplay.playing').forEach(b=>b.classList.remove('playing'));
+  btn.classList.add('playing'); btn.textContent='♪';
+  bridge('preview_voice',{voice});
+  setTimeout(()=>{ btn.classList.remove('playing'); btn.textContent='▶'; }, 3500);
+}
 // Mic test: compare the dictation to the target. Close enough → snap the field
 // to the clean sentence + green ✓ (hides STT imperfection). Way off → red warn.
 const MIC_TARGET = "Ship the payments migration, then run the tests.";
@@ -311,8 +322,9 @@ function micEval(v){
 // field stays focused so the serve's transcription types into it.
 window.__micListening = function(on){
   const lbl=document.getElementById('mic-lbl'); if(lbl) lbl.style.visibility=on?'visible':'hidden';
-  const ring=document.getElementById('mic-ring'); if(ring) ring.style.display=on?'block':'none';
-  const ball=document.getElementById('mic-ball'); if(ball) ball.style.animationPlayState=on?'running':'paused';
+  const wave=document.getElementById('mic-wave');
+  if(wave){ wave.style.opacity=on?'1':'.35';
+    wave.querySelectorAll('.wf-bar').forEach(b=>b.style.animationPlayState=on?'running':'paused'); }
   if(on){ const i=document.getElementById('mic-in'); if(i) i.focus(); }
 };
 function next(){
@@ -426,9 +438,30 @@ const SCREENS = {
       <div class="spacer"></div>
     </section>`;
   },
-  connect(){ return SCREENS._act('Connect your tools','Connect your agents',
-    'Heard listens to Claude Code, Codex, or any CLI agent. Connect the ones you use.',
-    'Connect', "bridge('connect_agent')", S.agentConnected, 'Connected'); },
+  connect(){ const done=S.agentConnected; return `<section class="screen">
+      <div class="eyebrow">Connect your tools</div>
+      <h1 class="hero" style="font-size:44px">Connect your tools.</h1>
+      <p class="lede" style="max-width:440px">Heard narrates your agents wherever they run. Connect at least one now — you can add more later.</p>
+      <div style="display:flex;flex-direction:column;gap:11px;margin-top:20px;max-width:500px">
+        <div style="background:#fff;border:1px solid #ececec;border-radius:13px;padding:14px 16px;display:flex;align-items:center;gap:13px">
+          <div style="width:36px;height:36px;border-radius:9px;flex:0 0 auto;background:#cc785c;display:flex;align-items:center;justify-content:center;color:#f3ece2;font-size:18px">✳</div>
+          <div style="flex:1"><div style="font:600 14px var(--sans);color:var(--ink)">Claude Code</div><div style="font:400 11.5px var(--sans);color:#8a8a8a">Anthropic · terminal &amp; IDE</div></div>
+          ${done?`<span class="done-note">✓ Connected</span>`:`<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="bridge('connect_agent')">Connect</button>`}
+        </div>
+        <div style="background:#fff;border:1px solid #ececec;border-radius:13px;padding:14px 16px;display:flex;align-items:center;gap:13px">
+          <div style="width:36px;height:36px;border-radius:9px;flex:0 0 auto;background:#0b0b0c;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px">✦</div>
+          <div style="flex:1"><div style="font:600 14px var(--sans);color:var(--ink)">Codex</div><div style="font:400 11.5px var(--sans);color:#8a8a8a">OpenAI · CLI</div></div>
+          <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="bridge('connect_codex')">Connect</button>
+        </div>
+        <div style="background:#faf9f7;border:1px solid #f0eeea;border-radius:13px;padding:14px 16px;display:flex;align-items:center;gap:13px;opacity:.72">
+          <div style="width:36px;height:36px;border-radius:9px;flex:0 0 auto;background:#e6e2dc;display:flex;align-items:center;justify-content:center;color:#8a8580;font-size:15px">▸</div>
+          <div style="flex:1"><div style="font:600 14px var(--sans);color:#6F6F6F">Cursor</div><div style="font:400 11.5px var(--sans);color:#a3a3a3">Editor integration</div></div>
+          <span style="font:500 10.5px var(--mono);letter-spacing:.05em;text-transform:uppercase;color:#a3a3a3;border:1px solid #e2ddd8;padding:6px 11px;border-radius:999px">Coming soon</span>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <div class="row"><button class="btn btn-primary" onclick="next()">Save &amp; continue</button><button class="btn btn-ghost" onclick="next()">Skip for now</button></div>
+    </section>`; },
   mode(){ return `<section class="screen">
       <div class="eyebrow">Choose your mode</div>
       <h1 class="hero" style="font-size:56px">How should Heard show up?</h1>
@@ -447,11 +480,11 @@ const SCREENS = {
     return `<section class="screen">
       <div class="eyebrow">${S.plan==='power'?'Choose a cloud voice':'Choose your voice'}</div>
       <h1 class="hero" style="font-size:56px">Choose your voice.</h1>
-      <p class="lede">Cloud voices are included with your plan. Tap to preview and pick the one that sounds like you.</p>
+      <p class="lede">Cloud voices are included with your plan. Tap ▶ on a voice to hear it, then pick the one that sounds like you.</p>
       <div class="vcards">${voices.map(v=>`
         <div class="vcard ${S.voice===v[0]?'sel':''}" onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});render()">
           <div class="ck">✓</div>
-          <div class="av" style="background:radial-gradient(circle at 50% 50%,${v[3]})"></div>
+          <div class="av" style="background:radial-gradient(circle at 50% 50%,${v[3]})"><button class="vplay" title="Preview ${v[1]}" onclick="event.stopPropagation();previewVoice(this,'${v[0]}')">▶</button></div>
           <div class="nm">${v[1]}</div><div class="ta">${v[2]}</div>
         </div>`).join('')}</div>
       <div class="spacer"></div>
@@ -463,21 +496,30 @@ const SCREENS = {
   // Heard Whisper: first enable it (design's "Speak, don't type"), then the
   // read-aloud mic test folds in so they feel it work before moving on.
   whisper(){
-    if(!S.whisperOn) return SCREENS._act('Heard Whisper','Speak, don’t type.',
-      'Dictate prompts by voice — hold <span class="kbd">Right ⌘</span> and just talk. Heard Whisper turns speech into precise prompts on-device. No window, no typing.',
-      'Enable Heard Whisper', "bridge('enable_whisper')", false, '', true, 'Maybe later', 'next()');
+    const on = S.whisperOn;
+    const bars = [['#cf7d64','38%',''],['#c07a95','78%','.1s'],['#8c93d6','100%','.2s'],['#a98bb4','56%','.3s'],['#cf7d64','84%','.15s']]
+      .map(([c,h,d])=>`<div class="wf-bar" style="width:3px;height:${h};border-radius:3px;background:${c};transform-origin:center;animation:wf 1s ease-in-out infinite ${d};animation-play-state:paused"></div>`).join('');
     return `<section class="screen">
       <div class="eyebrow">Heard Whisper</div>
-      <h1 class="hero" style="font-size:46px">Hold <span class="kbd" style="font-size:20px">Right ⌘</span> and talk.</h1>
-      <div class="listen-wrap" style="margin-top:14px"><div class="rr" id="mic-ring" style="display:none"></div><div class="listen" id="mic-ball" style="animation-play-state:paused"></div></div>
-      <div class="listen-lbl" id="mic-lbl" style="visibility:hidden">LISTENING</div>
-      <div style="max-width:560px;margin-top:20px;padding:13px 18px;border:1px solid var(--line);border-radius:12px;background:var(--card);font-family:var(--serif);font-size:20px;line-height:1.3;color:var(--ink)">Read aloud: “Ship the payments migration, then run the tests.”</div>
-      <input class="field" id="mic-in" style="max-width:560px;margin-top:12px" placeholder="…your words will appear here" oninput="micHeard(this.value)">
-      <div id="mic-ok" class="done-note" style="margin-top:10px;opacity:0;transition:opacity .3s">✓ Heard you clearly — Heard Whisper is working.</div>
+      <h1 class="hero" style="font-size:40px">Speak, don’t type.</h1>
+      <p class="lede" style="max-width:440px;margin-top:14px">Dictate prompts by voice — hold <span class="kbd">Right ⌘</span> and just talk.${on?' Read the line below to try it.':''}</p>
+      ${on?`<div style="max-width:470px;margin-top:14px;font:400 13px/1.5 var(--sans);color:var(--ink-2)">Read aloud: <span style="font-family:var(--serif);font-style:italic;font-size:17px;color:var(--ink)">“Ship the payments migration, then run the tests.”</span></div>`:''}
+      <!-- design's voice-input card -->
+      <div style="margin-top:16px;background:#fff;border:1px solid #ece7e2;border-radius:15px;box-shadow:0 14px 30px -20px rgba(20,20,40,.3);padding:15px 17px;max-width:470px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:34px;height:34px;border-radius:50%;flex:0 0 auto;background:#cf5b3c;display:flex;align-items:center;justify-content:center"><div style="position:relative;width:10px;height:14px;border:1.7px solid #fff;border-radius:5px"><div style="position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:1.7px;height:3.5px;background:#fff"></div></div></div>
+          <div id="mic-wave" style="display:flex;align-items:center;gap:2.5px;height:22px;flex:1;opacity:.35">${bars}</div>
+          <span id="mic-lbl" style="font:500 10px var(--mono);color:#8a8a8a;visibility:hidden">LISTENING</span>
+        </div>
+        <div style="margin-top:12px;padding-top:11px;border-top:1px solid #f2efeb;font-family:var(--serif);font-style:italic;font-size:17px;line-height:1.4;color:var(--ink);min-height:24px">“<input id="mic-in" ${on?'':'disabled'} oninput="micHeard(this.value)" placeholder="your words appear here…" style="border:none;outline:none;background:transparent;font-family:var(--serif);font-style:italic;font-size:17px;color:var(--ink);width:calc(100% - 22px)">”</div>
+        <div id="mic-ok" style="margin-top:8px;font:500 12px var(--sans);opacity:0;transition:opacity .3s;color:var(--ok)">✓ Heard you clearly.</div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:8px;margin-top:14px;font:400 12px/1.45 var(--sans);color:#8a8a8a;max-width:440px"><span style="font-size:14px">🎧</span>Heard works best with headphones, so it doesn’t mistake its own voice for yours.</div>
       <div class="spacer"></div>
       <div class="row">
-        <button class="btn btn-primary" onclick="next()">Continue</button>
-        <button class="btn btn-ghost" onclick="next()">Skip for now</button>
+        ${on
+          ? `<button class="btn btn-primary" onclick="next()">Continue</button><button class="btn btn-ghost" onclick="next()">Skip for now</button>`
+          : `<button class="btn btn-primary" onclick="bridge('enable_whisper')">Enable Heard Whisper</button><button class="btn btn-ghost" onclick="next()">Maybe later</button>`}
       </div>
     </section>`;
   },
