@@ -90,9 +90,10 @@
   .vcard:hover{border-color:#cfc8bd;}
   .vcard.sel{border:1.5px solid var(--ink);}
   .vcard .av{width:48px;height:48px;border-radius:50%;position:relative;}
-  .vplay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;border:none;background:rgba(11,11,12,.5);color:#fff;font-size:9px;cursor:pointer;display:grid;place-items:center;padding-left:2px;opacity:.9;transition:opacity .15s,transform .1s;}
-  .vcard:hover .vplay{opacity:1;transform:translate(-50%,-50%) scale(1.08);}
-  .vplay.playing{background:var(--terra);opacity:1;}
+  .vpreview{margin-top:6px;border:1px solid var(--line);background:#fff;color:var(--ink-2);font:500 10.5px var(--sans);cursor:pointer;padding:4px 11px;border-radius:999px;display:inline-flex;align-items:center;gap:5px;transition:all .12s;}
+  .vpreview:hover{border-color:var(--terra);color:var(--terra);}
+  .vpreview .tri{font-size:8px;}
+  .vpreview.playing{border-color:var(--terra);color:var(--terra);background:rgba(178,91,65,.06);}
   .vcard .nm{font:500 13px var(--sans);color:var(--ink);}
   .vcard .ta{font:400 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
   .vcard .ck{position:absolute;top:9px;right:10px;width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;}
@@ -290,10 +291,10 @@ function render(){
 }
 // Voice preview: poke native to synth + play a sample in that voice.
 function previewVoice(btn, voice){
-  document.querySelectorAll('.vplay.playing').forEach(b=>b.classList.remove('playing'));
-  btn.classList.add('playing'); btn.textContent='♪';
+  document.querySelectorAll('.vpreview.playing').forEach(b=>{b.classList.remove('playing');b.innerHTML='<span class="tri">▶</span> Preview';});
+  btn.classList.add('playing'); btn.innerHTML='<span class="tri">♪</span> Playing';
   bridge('preview_voice',{voice});
-  setTimeout(()=>{ btn.classList.remove('playing'); btn.textContent='▶'; }, 3500);
+  setTimeout(()=>{ btn.classList.remove('playing'); btn.innerHTML='<span class="tri">▶</span> Preview'; }, 3500);
 }
 // Mic test: compare the dictation to the target. Close enough → snap the field
 // to the clean sentence + green ✓ (hides STT imperfection). Way off → red warn.
@@ -477,20 +478,24 @@ const SCREENS = {
       ['jarvis','Jarvis','Butler','oklch(86% .08 80),oklch(70% .1 72)'],
       ['atlas','Atlas','Cinematic','oklch(82% .07 150),oklch(64% .08 152)'],
     ];
+    // Only reflect a pick among these 4 cards — a pre-existing custom voice
+    // (e.g. "george") isn't one of them, so don't claim it's selected here.
+    const pick = voices.find(v=>v[0]===S.voice); const pname = pick ? pick[1] : null;
     return `<section class="screen">
       <div class="eyebrow">${S.plan==='power'?'Choose a cloud voice':'Choose your voice'}</div>
       <h1 class="hero" style="font-size:56px">Choose your voice.</h1>
-      <p class="lede">Cloud voices are included with your plan. Tap ▶ on a voice to hear it, then pick the one that sounds like you.</p>
+      <p class="lede">Cloud voices are included with your plan. Hit Preview to hear each, then pick the one that sounds like you.</p>
       <div class="vcards">${voices.map(v=>`
         <div class="vcard ${S.voice===v[0]?'sel':''}" onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});render()">
           <div class="ck">✓</div>
-          <div class="av" style="background:radial-gradient(circle at 50% 50%,${v[3]})"><button class="vplay" title="Preview ${v[1]}" onclick="event.stopPropagation();previewVoice(this,'${v[0]}')">▶</button></div>
+          <div class="av" style="background:radial-gradient(circle at 50% 50%,${v[3]})"></div>
           <div class="nm">${v[1]}</div><div class="ta">${v[2]}</div>
+          <button class="vpreview" onclick="event.stopPropagation();previewVoice(this,'${v[0]}')"><span class="tri">▶</span> Preview</button>
         </div>`).join('')}</div>
       <div class="spacer"></div>
       <div class="row">
-        ${S.voice?`<button class="btn btn-primary" onclick="next()">Continue</button><span class="done-note">✓ ${S.voice}</span>`
-                 :`<button class="btn btn-ghost" onclick="next()">Skip for now</button>`}
+        <button class="btn btn-primary" onclick="next()">Continue</button>
+        ${pname?`<span class="done-note">✓ ${pname}</span>`:''}
       </div>
     </section>`; },
   // Heard Whisper: first enable it (design's "Speak, don't type"), then the
@@ -525,14 +530,11 @@ const SCREENS = {
   },
   phone(){ return `<section class="screen">
       <div class="eyebrow">Pair mobile</div>
-      <h1 class="hero" style="font-size:56px">Now take it anywhere.</h1>
-      <p class="lede">The loop follows you out the door. Scan with Heard Mobile to pair — or do it later from the menu bar.</p>
-      <div class="qr">${S.pairCode?'▚▞▚▞▚<br>▞▚▞▚▞<br>▚▞▚▞▚':'Scan to pair'}</div>
+      <h1 class="hero" style="font-size:52px">Now take it anywhere.</h1>
+      <p class="lede" style="max-width:480px">The loop doesn’t stop at your desk. When you’re ready to step away, just say <span style="font-family:var(--serif);font-style:italic;color:var(--terra)">“pair”</span> — Heard hands off to your phone, so you keep hearing your agents and can reply by voice, anywhere. You can set up Heard Mobile any time from the menu bar.</p>
+      <div class="orb sm" style="margin-top:12px"></div>
       <div class="spacer"></div>
-      <div class="row">
-        ${S.phonePaired?`<button class="btn btn-primary" onclick="next()">Done</button><span class="done-note">✓ Mobile paired</span>`
-          :`<button class="btn btn-primary" onclick="bridge('pair_phone')">Show pairing code</button><button class="btn btn-ghost" onclick="next()">I’ll pair later</button>`}
-      </div>
+      <div class="row"><button class="btn btn-primary" onclick="next()">Pair later</button></div>
     </section>`; },
 
   // Completion (both flows end here). Closing marks onboarded → Mission Control.

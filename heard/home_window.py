@@ -218,46 +218,22 @@ def _agent_connected() -> bool:
     return False
 
 
-def _build_tts(cfg):
-    """Same selection order as the daemon (minus Kokoro) — for voice previews."""
-    key = (cfg.get("elevenlabs_api_key") or "").strip()
-    if key:
-        from heard.tts.elevenlabs import ElevenLabsTTS
-
-        return ElevenLabsTTS(api_key=key)
-    token = (cfg.get("heard_token") or "").strip()
-    plan = (cfg.get("heard_plan") or "").strip().lower()
-    if token and plan != "expired":
-        from heard.tts.managed import ManagedTTS
-
-        return ManagedTTS(
-            token=token,
-            base_url=cfg.get("heard_api_base") or "https://api.heard.dev",
-        )
-    return None
+# Persona → the website's sample file (served at heard.dev/audio/intro_<key>.mp3).
+_VOICE_MP3 = {"aria": "calm", "friday": "friday", "jarvis": "jarvis", "atlas": "narrator"}
 
 
 def _play_voice_sample(voice_name: str) -> None:
-    """Synth a one-line sample in the persona's real voice + play it (afplay)."""
+    """Play the persona's sample straight from the website's MP3s (afplay)."""
     try:
         import subprocess
         import tempfile
+        import urllib.request
 
-        from heard import persona as _persona
-
-        cfg = config.load()
-        try:
-            tts_voice = _persona.load(voice_name).voice or voice_name
-        except Exception:
-            tts_voice = voice_name
-        tts = _build_tts(cfg)
-        if tts is None:
-            _log_bridge("todo", "preview_voice:no_tts")
-            return
-        line = f"Hi, I'm {voice_name.capitalize()}. This is how I'll narrate your agents."
-        path = Path(tempfile.mktemp(suffix=getattr(tts, "AUDIO_EXT", ".mp3")))
-        tts.synth_to_file(line, tts_voice, 1.0, "en", path)
-        subprocess.run(["afplay", str(path)], check=False)
+        key = _VOICE_MP3.get(voice_name.lower(), "calm")
+        url = f"https://heard.dev/audio/intro_{key}.mp3"
+        path = tempfile.mktemp(suffix=".mp3")
+        urllib.request.urlretrieve(url, path)  # noqa: S310 (fixed https host)
+        subprocess.run(["afplay", path], check=False)
     except Exception as e:
         _log_bridge_error("preview_voice", e)
 
