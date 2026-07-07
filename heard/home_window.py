@@ -238,10 +238,25 @@ def _greet_voice() -> str:
     return v if v in _VOICE_MP3 else "jarvis"
 
 
+_preview_proc = None  # last afplay, so a new preview stops the previous one
+
+
+def _play_file(path) -> None:
+    """Play an audio file, stopping any preview already playing (no overlap)."""
+    global _preview_proc
+    import subprocess
+
+    try:
+        if _preview_proc is not None and _preview_proc.poll() is None:
+            _preview_proc.terminate()
+    except Exception:
+        pass
+    _preview_proc = subprocess.Popen(["afplay", str(path)])
+
+
 def _play_voice_sample(voice_name: str) -> None:
     """Play the persona's sample straight from the website's MP3s (afplay)."""
     try:
-        import subprocess
         import tempfile
         import urllib.request
 
@@ -256,9 +271,56 @@ def _play_voice_sample(voice_name: str) -> None:
         path = tempfile.mktemp(suffix=".mp3")
         with open(path, "wb") as f:
             f.write(data)
-        subprocess.run(["afplay", path], check=False)
+        _play_file(path)
     except Exception as e:
         _log_bridge_error("preview_voice", e)
+
+
+def _build_tts(cfg):
+    """Same TTS selection as the daemon (minus Kokoro) — for the greeting."""
+    key = (cfg.get("elevenlabs_api_key") or "").strip()
+    if key:
+        from heard.tts.elevenlabs import ElevenLabsTTS
+
+        return ElevenLabsTTS(api_key=key)
+    token = (cfg.get("heard_token") or "").strip()
+    plan = (cfg.get("heard_plan") or "").strip().lower()
+    if token and plan != "expired":
+        from heard.tts.managed import ManagedTTS
+
+        return ManagedTTS(
+            token=token,
+            base_url=cfg.get("heard_api_base") or "https://api.heard.dev",
+        )
+    return None
+
+
+def _speak_greeting(voice_name: str) -> None:
+    """The original welcome hello — synth 'Hi, I'm <persona>. I'm up in your
+    menu bar…' in the persona's real voice (matches the first-launch greeting)."""
+    try:
+        import tempfile
+
+        from heard import persona as _persona
+
+        cfg = config.load()
+        try:
+            tts_voice = _persona.load(voice_name).voice or voice_name
+        except Exception:
+            tts_voice = voice_name
+        tts = _build_tts(cfg)
+        if tts is None:
+            return
+        name = voice_name.capitalize()
+        line = (
+            f"Hi, I'm {name}. I'm up in your menu bar at the top of your screen. "
+            "Look for my icon, and let's get you set up."
+        )
+        path = Path(tempfile.mktemp(suffix=getattr(tts, "AUDIO_EXT", ".mp3")))
+        tts.synth_to_file(line, tts_voice, 1.0, "en", path)
+        _play_file(path)
+    except Exception as e:
+        _log_bridge_error("greet", e)
 
 
 def _mic_granted() -> bool:
@@ -406,6 +468,9 @@ def _build_controller_class():
                     "window.__heard&&window.__heard.goto&&window.__heard.goto("
                     f"{json.dumps(self._pending_start)});"
                 )
+                # One-shot: consume it, or every later push (after any bridge
+                # click) would snap the user back to this start screen.
+                self._pending_start = None
             self._web.evaluateJavaScript_completionHandler_(js, None)
 
         # WKNavigationDelegate — push state once the page is ready
@@ -500,13 +565,13 @@ def _build_controller_class():
                 ).start()
 
         def _act_greet(self, body):
-            # The "Hi, I'm Jarvis" welcome hello — play the persona's intro in
-            # the picked voice, defaulting to Jarvis on the welcome screen.
+            # The original "Hi, I'm Jarvis. I'm up in your menu bar…" hello,
+            # synthed in the picked voice (Jarvis by default on welcome).
             import threading
 
             voice = (body.get("voice") or "").strip() or _greet_voice()
             threading.Thread(
-                target=_play_voice_sample, args=(voice,), daemon=True
+                target=_speak_greeting, args=(voice,), daemon=True
             ).start()
 
         def _act_enable_whisper(self, body):

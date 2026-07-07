@@ -331,15 +331,14 @@ window.__micListening = function(on){
   if(on){ const i=document.getElementById('mic-in'); if(i) i.focus(); }
 };
 function next(){
-  // Advance to the next not-done task after the current one. (The old version
-  // reset to welcome every time — every Continue button looked dead.)
+  // Step to the NEXT screen in sequence — even already-completed ones — so the
+  // user always walks the whole list (and can click through fast). Don't skip.
   const tasks = flow();
-  const activeId = current || (tasks.find(t=>!t.done())||tasks[0]).id;
+  const activeId = current || tasks[0].id;
   const idx = tasks.findIndex(t=>t.id===activeId);
-  const rest = tasks.slice(idx+1);
-  const nextT = rest.find(t=>!t.done()) || rest[0];
+  const nextT = tasks[idx+1];
   if(nextT){ current=nextT.id; render(); }
-  else { bridge('close'); }   // finished the last step → close marks onboarded → Home
+  else { bridge('close'); }   // past the last step → close marks onboarded → Home
 }
 
 // ------------------------------------------------------------------ HOME
