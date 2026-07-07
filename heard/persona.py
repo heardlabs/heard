@@ -92,6 +92,16 @@ Rules that apply regardless of persona:
 - Lists of commits, PRs, errors, files: state how many and what they share —
   never enumerate them. "Eight commits, mostly multi-agent fixes" beats any
   bullet list.
+- But tell that kind of list apart from bullets that ARE the substance. When a
+  response uses bullets or numbered points to carry distinct findings,
+  decisions, or results — not a homogeneous pile of files or commits — do NOT
+  flatten it to one vague takeaway, and do NOT skip the points. Brief it the way
+  a manager reports to a senior partner: every point that matters gets
+  addressed, weighted by importance, woven into a few connected spoken
+  sentences. Cover the whole picture without reading the detail under each
+  point. The listener should come away knowing every important thing that was
+  said — three real points spoken in a breath beats one point that drops the
+  other two, and beats reading all three out flat.
 - Numbers always: line counts, test counts, sizes, durations.
 - Drop adverbs, but NOT pronouns. Speak in the first person — "I" /
   "we" — you're a collaborator giving an update, not a status feed.
@@ -112,6 +122,14 @@ Rules that apply regardless of persona:
   "ran the tests, all green", "fetched and parsed"). Present tense for
   in-flight, past tense for done — it's the difference between a
   collaborator and a status report.
+- Naming WHICH agent when several are active: each agent in the snapshot
+  carries a project and, when known, a finer area label (shown as
+  "repo/area", e.g. "heard/analytics", or a chosen name like "Heard
+  analytics"). Disambiguate concurrent agents by that AREA, not just the
+  project: "on Heard's analytics side", "over on the frontend", "the mobile
+  build". When several agents share one project the bare project name ("On
+  Heard") is ambiguous, so lead with the area. If an agent has no area, fall
+  back to the project. A solo agent gets no location tag at all.
 """
 
 
@@ -354,6 +372,29 @@ def _anthropic_key() -> str:
     return cfg_key or env
 
 
+def _brain_model() -> str:
+    """EXPERIMENT hook — override the narration-brain model on the BYOK
+    path only. Empty/unset → the default Haiku checkpoint (`HAIKU_MODEL`).
+
+    Set to `claude-sonnet-5` to A/B the proprietary Power-brain model on
+    your own machine. BYOK bypasses the managed proxy, so this ships
+    nothing and changes nothing for other users — the free/managed path
+    stays on Haiku. Config `brain_model` wins over env `HEARD_BRAIN_MODEL`.
+
+    Toggle for the packaged .app (env vars don't reach it):
+        heard config set brain_model claude-sonnet-5   # on
+        heard config set brain_model ""                # back to Haiku
+    """
+    env = (os.environ.get("HEARD_BRAIN_MODEL") or "").strip()
+    try:
+        from heard import config as _config
+
+        cfg_v = (_config.load().get("brain_model") or "").strip()
+    except Exception:
+        cfg_v = ""
+    return cfg_v or env or HAIKU_MODEL
+
+
 def _openai_key() -> str:
     """Resolve the OpenAI API key. Same env-vs-config precedence as
     `_anthropic_key()`. Empty string when nothing is set."""
@@ -477,8 +518,9 @@ def call_with_prompt(
         client = _get_client()
         if client is not None:
             try:
-                msg = client.messages.create(
-                    model=HAIKU_MODEL,
+                brain_model = _brain_model()
+                create_kwargs: dict = dict(
+                    model=brain_model,
                     max_tokens=max_tokens,
                     system=[
                         {
@@ -490,6 +532,14 @@ def call_with_prompt(
                     messages=[{"role": "user", "content": user_msg}],
                     timeout=timeout_s,
                 )
+                # Non-Haiku brains (Sonnet 5 / Opus / Fable) default adaptive
+                # thinking ON when `thinking` is omitted — that adds a multi-
+                # second pause before EVERY narration, which is unusable for an
+                # ambient voice. Force it off. Haiku takes no thinking param, so
+                # the default path stays byte-identical (prompt cache intact).
+                if brain_model != HAIKU_MODEL:
+                    create_kwargs["thinking"] = {"type": "disabled"}
+                msg = client.messages.create(**create_kwargs)
                 _log_haiku_cache_usage(msg, path=f"{log_path_label}:byok")
                 parts = [
                     b.text

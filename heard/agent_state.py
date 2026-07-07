@@ -81,6 +81,12 @@ class AgentState:
     id: str  # session_id
     cwd: str | None = None
     repo_name: str | None = None
+    # Human feature/area label from the agent's `.heard.yaml` `label:` (resolved
+    # once when cwd is first seen). Lets the brain disambiguate concurrent agents
+    # in the same repo by feature ("Heard analytics" vs "the frontend"). None
+    # when unset — `resolved_area()` then derives one from touched files.
+    # LOCAL / narration only; never enters an analytics payload.
+    label: str | None = None
     started_at: float = field(default_factory=time.monotonic)
     last_event_at: float = field(default_factory=time.monotonic)
     last_event_wall: float = field(default_factory=time.time)
@@ -109,6 +115,28 @@ class AgentState:
     salience_hint: str = "routine"        # active-decision | routine | blocked
 
     # --- helpers ---
+    def _derived_area(self) -> str | None:
+        """Fallback area when no `.heard.yaml` label is set: the dominant
+        immediate-parent directory of touched files ("components", "analytics").
+        Heuristic — a stable label beats it, but it degrades gracefully to
+        SOMETHING finer than the repo name with zero config."""
+        if not self.files_touched:
+            return None
+        dirs: dict[str, int] = {}
+        for p in self.files_touched:
+            parent = os.path.basename(os.path.dirname(p.rstrip("/")))
+            if parent:
+                dirs[parent] = dirs.get(parent, 0) + 1
+        if not dirs:
+            return None
+        return max(dirs, key=lambda k: dirs[k])
+
+    def resolved_area(self) -> str | None:
+        """Feature/area label finer than the repo: the explicit `.heard.yaml`
+        `label:` if set, else the dominant touched directory. None when neither
+        is available — the brain then disambiguates by `repo_name` alone."""
+        return self.label or self._derived_area()
+
     def idle_seconds(self, now: float | None = None) -> float:
         now = time.monotonic() if now is None else now
         return max(0.0, now - self.last_event_at)
@@ -122,6 +150,7 @@ class AgentState:
             "id": self.id,
             "cwd": self.cwd,
             "repo_name": self.repo_name,
+            "area": self.resolved_area(),
             "current_tool": self.current_tool,
             "last_tool": self.last_tool,
             "last_tool_duration_s": self.last_tool_duration_s,
@@ -258,6 +287,14 @@ class AgentStateRegistry:
             if cwd and not state.cwd:
                 state.cwd = cwd
                 state.repo_name = _repo_name_from_cwd(cwd)
+                # Resolve the `.heard.yaml` feature label once, at the cwd we
+                # first see for this agent. Cheap (one file walk); local-only.
+                try:
+                    from heard import config as _config
+
+                    state.label = _config.project_label(cwd) or None
+                except Exception:
+                    state.label = None
 
             tool_name = _tool_name_from_tag(tag)
 

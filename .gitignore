@@ -37,3 +37,6 @@ daemon.pid
 # private maintainer notes — see CLAUDE.local.md for the discipline
 .local/
 *.local.md
+
+# Local per-repo narration label (user-specific, never committed)
+.heard.yaml
