@@ -254,6 +254,7 @@ def _build_controller_class():
         NSAppearance,
         NSBackingStoreBuffered,
         NSColor,
+        NSEvent,
         NSWindow,
         NSWindowStyleMaskClosable,
         NSWindowStyleMaskMiniaturizable,
@@ -271,6 +272,7 @@ def _build_controller_class():
             self._window = None
             self._web = None
             self._pending_start = None
+            self._key_monitor = None
             return self
 
         def present_(self, start):
@@ -319,9 +321,37 @@ def _build_controller_class():
 
             self._window = win
             self._web = web
+
+            # Local Right-⌘ monitor: the global hold-to-talk hotkey only sees
+            # keys aimed at OTHER apps, so it never fires while this window is
+            # focused. Drive the serve directly here (record on down, transcribe
+            # + type at the cursor on up) so the mic test's "Hold Right ⌘" works,
+            # and reflect the real listening state in the UI.
+            def _keys(event):
+                try:
+                    if event.keyCode() == 54:  # Right Command
+                        down = bool(int(event.modifierFlags()) & (1 << 20))  # cmd flag
+                        _poke_power("start" if down else "stop")
+                        self._set_listening(down)
+                except Exception:
+                    pass
+                return event
+
+            self._key_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+                1 << 12, _keys  # NSEventMaskFlagsChanged
+            )
+
             url = NSURL.fileURLWithPath_(str(_HTML))
             base = NSURL.fileURLWithPath_(str(_HTML.parent))
             web.loadFileURL_allowingReadAccessToURL_(url, base)
+
+        def _set_listening(self, on):
+            if self._web is not None:
+                self._web.evaluateJavaScript_completionHandler_(
+                    "window.__micListening&&window.__micListening(%s)"
+                    % ("true" if on else "false"),
+                    None,
+                )
 
         # native → web
         def _push_state(self):

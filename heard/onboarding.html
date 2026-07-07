@@ -284,6 +284,15 @@ function render(){
 }
 // Mic test: as dictated words land in the field, confirm we heard them.
 function micHeard(v){ const ok=document.getElementById('mic-ok'); if(ok) ok.style.opacity=(v&&v.trim())?'1':'0'; }
+// Native calls this on the REAL Right-⌘ down/up (local key monitor) so the
+// LISTENING label + orb pulse only show while actually listening, and the
+// field stays focused so the serve's transcription types into it.
+window.__micListening = function(on){
+  const lbl=document.getElementById('mic-lbl'); if(lbl) lbl.style.visibility=on?'visible':'hidden';
+  const ring=document.getElementById('mic-ring'); if(ring) ring.style.display=on?'block':'none';
+  const ball=document.getElementById('mic-ball'); if(ball) ball.style.animationPlayState=on?'running':'paused';
+  if(on){ const i=document.getElementById('mic-in'); if(i) i.focus(); }
+};
 function next(){
   // Advance to the next not-done task after the current one. (The old version
   // reset to welcome every time — every Continue button looked dead.)
@@ -435,8 +444,8 @@ const SCREENS = {
   mictest(){ return `<section class="screen">
       <div class="eyebrow">Mic &amp; talk-back</div>
       <h1 class="hero" style="font-size:46px">Hold <span class="kbd" style="font-size:20px">Right ⌘</span> and talk.</h1>
-      <div class="listen-wrap" style="margin-top:14px"><div class="rr"></div><div class="listen"></div></div>
-      <div class="listen-lbl">LISTENING</div>
+      <div class="listen-wrap" style="margin-top:14px"><div class="rr" id="mic-ring" style="display:none"></div><div class="listen" id="mic-ball" style="animation-play-state:paused"></div></div>
+      <div class="listen-lbl" id="mic-lbl" style="visibility:hidden">LISTENING</div>
       <div style="max-width:560px;margin-top:20px;padding:13px 18px;border:1px solid var(--line);border-radius:12px;background:var(--card);font-family:var(--serif);font-size:20px;line-height:1.3;color:var(--ink)">Read aloud: “Ship the payments migration, then run the tests.”</div>
       <input class="field" id="mic-in" style="max-width:560px;margin-top:12px" placeholder="…your words will appear here" oninput="micHeard(this.value)">
       <div id="mic-ok" class="done-note" style="margin-top:10px;opacity:0;transition:opacity .3s">✓ Heard you clearly — Heard Whisper is working.</div>
