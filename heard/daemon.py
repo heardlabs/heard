@@ -3328,6 +3328,20 @@ class Daemon:
         if cmd == "reload":
             self._reload_config()
             return None
+        if cmd == "open_home":
+            # Open the persistent Heard window. WKWebView + NSWindow must be
+            # touched only on the MAIN thread; this handler runs on the socket
+            # thread, so hop via AppHelper.callAfter.
+            try:
+                from PyObjCTools import AppHelper
+
+                from heard import home_window
+
+                start = req.get("start")
+                AppHelper.callAfter(lambda: home_window.show_home(start))
+            except Exception as e:
+                self._log(f"ev=open_home_error err={e!r}")
+            return None
         if cmd == "refresh_account":
             # Menu fires this when the user clicks Upgrade — poll /v1/me
             # now + fast for a window so the plan flips to pro within

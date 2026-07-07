@@ -153,6 +153,7 @@ class HeardApp(rumps.App):
         # Account row at the top of the menu — shows email + plan when
         # the user is signed in, or "Sign in to Heard…" when not. Title
         # and callback are rebuilt every refresh from config state.
+        self.home_item = rumps.MenuItem("Open Heard…", callback=self.on_open_home)
         self.account_item = rumps.MenuItem("Sign in to Heard…", callback=self.on_signin)
 
         # rumps keys menu items by the title at insertion time, so we
@@ -398,6 +399,7 @@ class HeardApp(rumps.App):
         # the version line — then a separator and the actions.
         self.menu = [
             self.status_item,
+            self.home_item,
             self.account_item,
             self.upgrade_item,
             self.usage_item,
@@ -1024,8 +1026,8 @@ class HeardApp(rumps.App):
         → Connect an agent → Grant Accessibility). It flips
         ``onboarded=true`` when the user finishes or skips."""
         try:
-            from heard import settings_window
-            settings_window.show_onboarding()
+            from heard import home_window
+            home_window.show_home()
         except Exception as e:
             print(f"onboarding unavailable: {e}", file=sys.stderr)
         try:
@@ -1033,6 +1035,15 @@ class HeardApp(rumps.App):
         except Exception:
             pass
         self.refresh(None)
+
+    def on_open_home(self, _sender) -> None:
+        """Open the persistent Heard window (onboarding on first run, Home
+        once set up). Re-openable anytime — that's the whole point."""
+        try:
+            from heard import home_window
+            home_window.show_home()
+        except Exception as e:
+            print(f"home window unavailable: {e}", file=sys.stderr)
 
     def on_open_settings(self, _sender) -> None:
         """Open the Settings panel from the menu bar. Same window the

@@ -78,6 +78,12 @@ DEFAULTS: dict[str, Any] = {
     #   off | ptt (hold-to-talk) | ambient (always listening).
     # push_to_talk (the daemon hotkey gate) is kept in sync with mode == ptt.
     "voice_mode": "off",
+    # EXPERIMENT — override the narration-brain model on the BYOK path only
+    # (needs anthropic_api_key set). Empty → default Haiku checkpoint. Set to
+    # "claude-sonnet-5" to A/B the proprietary Power-brain model locally; BYOK
+    # bypasses the managed proxy so nothing ships and the free path stays Haiku.
+    # See persona._brain_model(). Toggle: heard config set brain_model claude-sonnet-5
+    "brain_model": "",
     "voice_cleanup": True,          # LLM tidy pass on dictated text
     "voice_input_unlocked": False,  # dev/test escape hatch for the Power menu
     # Command the daemon supervises as the voice-input service (Heard Power's
@@ -197,6 +203,11 @@ DEFAULTS: dict[str, Any] = {
     # Set to True after the user finishes the welcome flow (or skips it),
     # so we never re-prompt them.
     "onboarded": False,
+    # Plan the user last completed onboarding for — lets the persistent Heard
+    # window detect a Pro→Power upgrade and show only the new Power beats.
+    "onboarded_plan": "",
+    # Set once Heard Mobile is paired (Power). Drives the onboarding checklist.
+    "phone_paired": False,
     # Indefinite "Pause Heard": when true, the daemon drops every
     # event and the hook subprocess short-circuits without spawning
     # the daemon, so a paused Heard stays silent even if Quit makes
@@ -360,6 +371,31 @@ def load(cwd: str | Path | None = None) -> dict[str, Any]:
     if proj is not None:
         cfg.update(_read_yaml(proj))
     return cfg
+
+
+def project_label(cwd: str | Path | None) -> str:
+    """Human label for the sub-project / feature area an agent is working in,
+    read from the nearest `.heard.yaml` `label:` key (walking up from `cwd`).
+
+    Empty when unset — callers fall back to a derived area or the repo name.
+    Lets a listener tell concurrent agents in the SAME project apart by
+    feature ("On Heard analytics…" vs "…the frontend"), not just by repo.
+    Drop one line per area, e.g. `.heard.yaml` → `label: Heard analytics`;
+    a feature subfolder's `.heard.yaml` overrides the repo root's.
+
+    Reads ONLY the project file (not global config) so a stray global `label`
+    can't leak in. This is a spoken narration nickname + local-only: it is
+    NEVER sent to analytics — same distillation rule as project paths / file
+    names (see analytics.py). Keep it out of any `capture()` payload.
+    """
+    proj = find_project_config(cwd)
+    if proj is None:
+        return ""
+    try:
+        data = _read_yaml(proj)
+    except Exception:
+        return ""
+    return str(data.get("label") or "").strip()
 
 
 def save(cfg: dict[str, Any]) -> None:

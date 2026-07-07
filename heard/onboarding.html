@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heard</title>
+<!--
+  Heard — persistent onboarding / home window (rendered in a native WKWebView,
+  NOT a browser). Onboarding is a re-openable task checklist; each task reflects
+  real app state pushed in from native via window.__heard.setState(...). Actions
+  call window.webkit.messageHandlers.heard.postMessage({action, ...}).
+
+  Visual layer ported from Claude Design project f8da9b96, direction 2a (Pro) +
+  2b (Power): Instrument Serif hero, oklch terracotta→periwinkle orb, ambient
+  glows, "Set up X" rail with a progress bar. The native window uses a
+  transparent titlebar (see home_window.py) so this chrome shows through.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#efece7; --card:#faf8f5; --ink:#0b0b0c; --ink-2:#6f6f6f; --ink-3:#a49f98;
+    --line:#e4e0d9; --terra:#b25b41; --peri:#8c93d6; --peri-hi:#6f77c4; --ok:#4c9a6a;
+    --serif:'Instrument Serif',Georgia,serif; --sans:'Inter',-apple-system,system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+    --orb:radial-gradient(circle at 34% 28%,oklch(86% .1 45),oklch(73% .12 36) 42%,oklch(70% .1 266) 76%,oklch(58% .09 282));
+  }
+  @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  @keyframes fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{font-family:var(--sans);color:var(--ink);background:var(--paper);
+    -webkit-font-smoothing:antialiased;overflow:hidden;}
+  /* ambient glows behind everything (from the design) */
+  #glow{position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:
+      radial-gradient(520px 400px at 82% 26%,rgba(233,140,116,.20),transparent 70%),
+      radial-gradient(560px 460px at 14% 92%,rgba(140,147,214,.18),transparent 70%),
+      radial-gradient(1200px 700px at 22% 2%,#f4f1ec,#efece7 60%);}
+  #app{position:relative;z-index:1;height:100vh;display:grid;grid-template-columns:250px 1fr;}
+
+  /* titlebar space (native traffic lights float top-left over this) */
+  .titlebar{grid-column:1 / -1;height:40px;display:flex;align-items:center;justify-content:center;
+    -webkit-app-region:drag;font:500 12.5px var(--sans);color:var(--ink-3);}
+
+  /* ---- rail: "Set up X" + progress + task checklist ---- */
+  #rail{padding:8px 24px 24px;display:flex;flex-direction:column;border-right:1px solid var(--line);}
+  #rail-title{font-family:var(--serif);font-size:27px;letter-spacing:-.01em;color:var(--ink);margin:6px 0 16px;}
+  .prog{display:flex;align-items:center;gap:12px;margin-bottom:22px;}
+  .prog .bar{flex:1;height:4px;border-radius:3px;background:#e6e2db;overflow:hidden;}
+  .prog .bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--terra),var(--peri));transition:width .4s ease;}
+  .prog .n{font:500 11px var(--mono);color:var(--ink-3);}
+  #tasks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;}
+  .task{display:flex;align-items:center;gap:13px;padding:9px 6px;border-radius:9px;cursor:pointer;color:var(--ink-2);font-size:14px;}
+  .task:hover{color:var(--ink);}
+  .task.active{color:var(--ink);font-weight:500;}
+  .task .dot{width:22px;height:22px;border-radius:50%;border:1.5px solid #d9d4cc;flex:0 0 auto;display:grid;place-items:center;font-size:12px;color:transparent;}
+  .task.active .dot{border-color:var(--ink);}
+  .task.done .dot{background:var(--ok);border-color:var(--ok);color:#fff;}
+  .rail-foot{margin-top:auto;font:400 12px var(--sans);color:var(--ink-3);}
+  .rail-foot b{color:var(--ink-2);font-weight:500;}
+
+  /* ---- stage: the active screen ---- */
+  #stage{position:relative;overflow:hidden;}
+  .screen{position:absolute;inset:0;padding:40px 60px 56px;display:none;flex-direction:column;animation:fadein .3s ease;}
+  .screen.show{display:flex;}
+  .eyebrow{font:600 11px var(--mono);color:var(--terra);text-transform:uppercase;letter-spacing:.18em;}
+  .hero{font-family:var(--serif);font-weight:400;font-size:74px;line-height:1.0;letter-spacing:-.015em;margin:16px 0 0;max-width:9ch;}
+  .lede{font-size:16px;color:var(--ink-2);line-height:1.55;max-width:440px;margin-top:20px;}
+  .spacer{flex:1;}
+  .row{display:flex;gap:12px;align-items:center;}
+  .btn{font:600 15px var(--sans);border-radius:12px;padding:14px 26px;border:1px solid transparent;cursor:pointer;-webkit-app-region:no-drag;}
+  .btn-primary{background:var(--ink);color:#fff;}
+  .btn-ghost{background:transparent;border-color:var(--line);color:var(--ink);}
+  .kbd{font:500 13px var(--mono);background:#fff;border:1px solid var(--line);border-bottom-width:2px;border-radius:7px;padding:3px 8px;}
+  .field{width:100%;max-width:420px;padding:14px 16px;font-size:15px;border-radius:12px;border:1px solid var(--line);outline:none;background:#fff;}
+  .done-note{color:var(--ok);font-size:13px;display:inline-flex;align-items:center;gap:6px;}
+
+  /* the orb — big floating sphere from the design */
+  .orb{position:absolute;right:64px;top:50%;transform:translateY(-50%);width:190px;height:190px;border-radius:50%;
+    background:var(--orb);box-shadow:0 40px 80px -24px rgba(120,80,120,.5),inset 0 -12px 34px rgba(70,55,110,.35);
+    animation:floaty 6s ease-in-out infinite;}
+  .orb.sm{position:static;transform:none;width:120px;height:120px;margin-top:30px;animation:floaty 5s ease-in-out infinite;}
+
+  /* per-beat: voice cards */
+  .vcards{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;max-width:560px;margin-top:26px;}
+  .vcard{border:1px solid var(--line);border-radius:13px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;background:var(--card);position:relative;transition:border-color .15s;}
+  .vcard:hover{border-color:#cfc8bd;}
+  .vcard.sel{border:1.5px solid var(--ink);}
+  .vcard .av{width:48px;height:48px;border-radius:50%;}
+  .vcard .nm{font:500 13px var(--sans);color:var(--ink);}
+  .vcard .ta{font:400 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
+  .vcard .ck{position:absolute;top:9px;right:10px;width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;}
+  .vcard.sel .ck{display:flex;}
+  /* per-beat: mic listening */
+  @keyframes listen{0%,100%{transform:scale(1);opacity:.92}50%{transform:scale(1.09);opacity:1}}
+  @keyframes ring2{0%{transform:scale(.8);opacity:.5}100%{transform:scale(2);opacity:0}}
+  .listen-wrap{position:relative;width:150px;height:150px;margin-top:24px;display:grid;place-items:center;}
+  .listen{width:120px;height:120px;border-radius:50%;background:var(--orb);animation:listen 1.4s ease-in-out infinite;box-shadow:0 20px 50px -16px rgba(120,80,120,.5);}
+  .listen-wrap .rr{position:absolute;width:120px;height:120px;border-radius:50%;border:2px solid var(--terra);animation:ring2 2.2s ease-out infinite;}
+  .listen-lbl{font:600 10px var(--mono);letter-spacing:.18em;color:var(--terra);margin-top:16px;}
+  /* per-beat: pairing */
+  .qr{width:154px;height:154px;border-radius:16px;background:#fff;border:1px solid var(--line);margin-top:24px;display:grid;place-items:center;font:500 11px var(--mono);color:var(--ink-3);box-shadow:0 10px 30px -16px rgba(0,0,0,.25);}
+
+  /* ===================== HOME (Mission Control) ===================== */
+  #home{position:relative;z-index:1;height:100vh;display:none;flex-direction:column;background:#fff;}
+  .h-title{height:40px;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag;font:500 13px var(--sans);color:var(--ink-2);}
+  .h-body{display:flex;flex:1;min-height:0;}
+  .h-side{width:214px;flex:0 0 auto;border-right:1px solid #efefef;padding:6px 16px 18px;display:flex;flex-direction:column;background:#fcfcfc;}
+  .h-brand{display:flex;align-items:center;gap:9px;padding:2px 6px 16px;}
+  .h-brand .o{width:24px;height:24px;border-radius:50%;background:var(--orb);}
+  .h-brand span{font:600 15px var(--sans);color:var(--ink);}
+  .h-nav{display:flex;flex-direction:column;gap:3px;}
+  .h-nav a{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:9px;cursor:pointer;font:400 12.5px var(--sans);color:var(--ink-2);}
+  .h-nav a .d{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.5;}
+  .h-nav a.on{background:var(--ink);color:#fff;font-weight:500;}
+  .h-nav a.on .d{opacity:.9;}
+  .h-today{margin-top:auto;padding:12px;border:1px solid #eee;border-radius:12px;background:#fff;}
+  .h-today .k{font:500 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#bdbdbd;margin-bottom:6px;}
+  .h-today .big{font-family:var(--serif);font-size:27px;line-height:1;color:var(--ink);}
+  .h-today .sub{font:400 11px var(--sans);color:#8a8a8a;margin-top:3px;}
+  .h-main{flex:1;min-width:0;background:#fafafa;overflow-y:auto;}
+  .h-view{display:none;} .h-view.on{display:block;}
+  /* now-narrating banner */
+  .now{margin:18px;padding:17px 20px;border-radius:14px;display:flex;align-items:center;gap:16px;
+    background:linear-gradient(105deg,rgba(233,140,116,.14),rgba(140,147,214,.14) 70%);border:1px solid rgba(140,147,214,.16);}
+  .now .o{width:42px;height:42px;border-radius:50%;flex:0 0 auto;background:var(--orb);}
+  .now .k{font:500 9.5px var(--mono);letter-spacing:.13em;text-transform:uppercase;color:#9a8fa0;margin-bottom:4px;}
+  .now .q{font-family:var(--serif);font-style:italic;font-size:20px;line-height:1.3;color:var(--ink);}
+  .now .wv{display:flex;align-items:flex-end;gap:3px;height:30px;flex:0 0 auto;}
+  .now .wv i{width:3px;border-radius:3px;background:linear-gradient(180deg,#cf7d64,#8c93d6);}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:0 18px 18px;}
+  .pcard{background:#fff;border:1px solid #ececec;border-radius:13px;padding:15px 16px;}
+  .pcard .top{display:flex;align-items:center;gap:8px;margin-bottom:11px;}
+  .pcard .nm{font:500 14px var(--sans);color:var(--ink);}
+  .pcard .ag{font:400 10px var(--mono);color:#a3a3a3;}
+  .pill{margin-left:auto;display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font:500 10px var(--mono);}
+  .pill .d{width:5px;height:5px;border-radius:50%;}
+  .pill.speaking{background:rgba(233,140,116,.14);color:#b25b41;} .pill.speaking .d{background:#cf7d64;}
+  .pill.building{background:rgba(140,180,214,.16);color:#4a7da0;} .pill.building .d{background:#8cb4d6;}
+  .pill.await{background:rgba(226,200,120,.2);color:#937c2e;} .pill.await .d{background:#e2c878;}
+  .pill.blocked{background:rgba(214,140,150,.18);color:#a8505f;} .pill.blocked .d{background:#d68c96;}
+  .pcard .ln{font:400 12px/1.5 var(--sans);color:var(--ink-2);}
+  .pcard .ln .t{color:#bdbdbd;font-family:var(--mono);font-size:10px;}
+  .pbar{margin-top:12px;height:4px;border-radius:3px;background:#f0f0f0;overflow:hidden;}
+  .pbar i{display:block;height:100%;background:linear-gradient(90deg,#cf7d64,#8c93d6);}
+  .pacts{margin-top:12px;display:flex;gap:7px;}
+  .pacts a{padding:5px 12px;border-radius:8px;font:500 11px var(--sans);cursor:pointer;}
+  .pacts a.p{background:var(--ink);color:#fff;} .pacts a.g{border:1px solid #e6e6e6;color:var(--ink-2);}
+  /* transcript */
+  .h-pad{padding:22px 24px;}
+  .h-h{font-family:var(--serif);font-size:26px;color:var(--ink);margin-bottom:16px;}
+  .tr{display:flex;gap:13px;margin-bottom:14px;}
+  .tr .tt{font:400 10px var(--mono);color:#bdbdbd;flex:0 0 44px;padding-top:3px;}
+  .tr .proj{font:500 11px var(--sans);margin-bottom:2px;}
+  .tr .say{font-family:var(--serif);font-style:italic;font-size:16px;line-height:1.4;color:var(--ink);}
+</style>
+</head>
+<body>
+<div id="glow"></div>
+<div id="app">
+  <div class="titlebar" id="titlebar">Heard — Set up</div>
+  <aside id="rail">
+    <div id="rail-title">Set up</div>
+    <div class="prog"><div class="bar"><i id="prog-fill" style="width:0%"></i></div><span class="n" id="prog-n">0 / 0</span></div>
+    <ul id="tasks"></ul>
+    <div class="rail-foot">Your plan · <b id="rail-plan">Free</b></div>
+  </aside>
+  <main id="stage"></main>
+</div>
+
+<div id="home">
+  <div class="h-title" id="h-title">Heard — Mission Control</div>
+  <div class="h-body">
+    <div class="h-side">
+      <div class="h-brand"><div class="o"></div><span>Heard</span></div>
+      <div class="h-nav" id="h-nav">
+        <a data-v="mission" class="on"><span class="d"></span>Mission Control</a>
+        <a data-v="transcript"><span class="d"></span>Transcript</a>
+        <a data-v="settings"><span class="d"></span>Settings</a>
+      </div>
+      <div class="h-today"><div class="k">Today</div><div class="big" id="h-today-big">—</div><div class="sub" id="h-today-sub">narrated</div></div>
+    </div>
+    <div class="h-main">
+      <div class="h-view on" id="v-mission"></div>
+      <div class="h-view" id="v-transcript"></div>
+      <div class="h-view" id="v-settings"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ------------------------------------------------------------------ bridge
+function bridge(action, extra){
+  try{ window.webkit.messageHandlers.heard.postMessage(Object.assign({action}, extra||{})); }
+  catch(e){ console.log('[bridge]', action, extra||''); }
+}
+
+// ------------------------------------------------------------------ state
+let S = {
+  signedIn:false, email:'', plan:'free', trialDaysLeft:null, onboardedPlan:null,
+  agentConnected:false, micGranted:false, axGranted:false,
+  voice:null, whisperOn:false, phonePaired:false,
+};
+window.__heard = {
+  setState(patch){ Object.assign(S, patch||{}); render(); },
+  goto(taskId){ current = taskId || null; render(); },
+};
+// dev preview: onboarding.html?plan=power | ?plan=pro&upgrade=1 | ?trial=1
+(function(){ const q=new URLSearchParams(location.search);
+  if(q.get('plan')){ S.plan=q.get('plan'); S.signedIn=q.get('plan')!=='free'; S.email='you@example.com'; }
+  if(q.get('upgrade')){ S.plan='power'; S.onboardedPlan='pro'; S.signedIn=true; }
+  if(q.get('trial')){ S.trialDaysLeft=14; }
+})();
+
+// ------------------------------------------------------------------ tasks
+const T = {
+  welcome:{id:'welcome', label:'Welcome',            done:()=>S.onboardedPlan===S.plan},
+  signin: {id:'signin',  label:'Log in',             done:()=>S.signedIn},
+  connect:{id:'connect', label:'Connect your tools', done:()=>S.agentConnected},
+  mode:   {id:'mode',    label:'Choose your mode',   done:()=>!!S.mode},
+  voice:  {id:'voice',   label:'Choose your voice',  done:()=>!!S.voice},
+  whisper:{id:'whisper', label:'Heard Whisper',      done:()=>S.whisperOn},
+  mictest:{id:'mictest', label:'Mic & talk-back',    done:()=>S.micGranted},
+  loop:   {id:'loop',    label:'The hands-free loop',done:()=>S.axGranted},
+  phone:  {id:'phone',   label:'Pair mobile',        done:()=>S.phonePaired},
+};
+function flow(){
+  const upgrade = S.plan==='power' && S.onboardedPlan==='pro';
+  if (upgrade)          return [T.welcome, T.whisper, T.mictest, T.loop, T.phone];
+  if (S.plan==='power') return [T.welcome, T.signin, T.whisper, T.voice, T.mictest, T.loop, T.phone];
+  return [T.welcome, T.signin, T.connect, T.mode, T.voice];   // 2a Pro
+}
+function planWord(){ return S.plan==='power'?'Power':S.plan==='pro'?'Pro':'Free'; }
+
+// ------------------------------------------------------------------ render
+let current = null;
+let navHome = 'mission';
+function homeMode(){
+  if(new URLSearchParams(location.search).get('view')==='home') return true;
+  // Once signed in and onboarding is complete for this plan, the window IS the
+  // Home. Native sets onboarded_plan when the user finishes setup.
+  return S.signedIn && S.onboardedPlan===S.plan;
+}
+function render(){
+  if(homeMode()){
+    document.getElementById('app').style.display='none';
+    document.getElementById('home').style.display='flex';
+    renderHome();
+    return;
+  }
+  document.getElementById('app').style.display='grid';
+  document.getElementById('home').style.display='none';
+  const tasks = flow();
+  // exclude the welcome task from the numbered progress (it's the intro)
+  const steps = tasks.filter(t=>t.id!=='welcome');
+  const doneN = steps.filter(t=>t.done()).length;
+  const active = current || (tasks.find(t=>!t.done())||tasks[tasks.length-1]).id;
+
+  document.getElementById('titlebar').textContent = 'Heard — Set up ' + planWord();
+  document.getElementById('rail-title').textContent = 'Set up ' + planWord();
+  document.getElementById('rail-plan').textContent = planWord();
+  document.getElementById('prog-fill').style.width = (steps.length? (doneN/steps.length*100):0) + '%';
+  document.getElementById('prog-n').textContent = doneN + ' / ' + steps.length;
+
+  const ul=document.getElementById('tasks'); ul.innerHTML='';
+  tasks.forEach(t=>{
+    if(t.id==='welcome') return;
+    const done=t.done(), on=t.id===active;
+    const li=document.createElement('li');
+    li.className='task'+(done?' done':'')+(on?' active':'');
+    li.innerHTML=`<span class="dot">✓</span><span>${t.label}</span>`;
+    li.onclick=()=>{ current=t.id; render(); };
+    ul.appendChild(li);
+  });
+
+  const stage=document.getElementById('stage');
+  stage.innerHTML = (SCREENS[active]||SCREENS.welcome)();
+  const el=stage.querySelector('.screen'); if(el) el.classList.add('show');
+}
+function next(){ current=null; render(); }
+
+// ------------------------------------------------------------------ HOME
+// Mission Control / Transcript / Settings. Fed by S.home when native pushes it;
+// falls back to the design's sample so the surface is never blank. Wire real
+// agent-state / history / config into S.home next.
+const HOME_SAMPLE = {
+  today:{value:'3h 41m', sub:'narrated · 612 events'},
+  now:{voice:S.voice||'Aria', line:'Two agents on payments-api are blocked on your review — everything else is green.'},
+  projects:[
+    {name:'payments-api', agents:12, status:'speaking', lines:[['10:33','Migration at 80%. 2 PRs blocked on review.'],['10:32','Stripe webhook signature verified.']], progress:80},
+    {name:'web-dashboard', agents:8, status:'building', lines:[['10:31','Shipping production build. ETA ~3 min.'],['10:29','Type errors cleared (0).']], progress:64},
+    {name:'infra/terraform', agents:5, status:'await', lines:[['10:28','Waiting on your approval to apply.'],['10:27','Plan is clean: +12 ~3 -0.']], acts:true},
+    {name:'auth-service', agents:6, status:'blocked', lines:[['10:24','Circular import: session ↔ middleware.'],['10:22','2 agents idle, waiting on a decision.']]},
+  ],
+  transcript:[
+    ['10:33','payments-api','#b25b41','Two agents are blocked on your review — everything else is green.'],
+    ['10:31','web-dashboard','#4a7da0','Shipping production build. ETA about three minutes.'],
+    ['10:28','infra/terraform','#937c2e','Plan is clean — plus twelve, three changed, none destroyed. Waiting on your approval.'],
+    ['10:24','auth-service','#a8505f','Hit a circular import between session and middleware. Two agents are idle.'],
+  ],
+};
+const PILL = {speaking:'SPEAKING',building:'BUILDING',await:'AWAITING YOU',blocked:'BLOCKED'};
+function renderHome(){
+  const H = Object.assign({}, HOME_SAMPLE, S.home||{});
+  document.getElementById('h-title').textContent = 'Heard — ' + ({mission:'Mission Control',transcript:'Transcript',settings:'Settings'}[navHome]);
+  document.getElementById('h-today-big').textContent = H.today.value;
+  document.getElementById('h-today-sub').textContent = H.today.sub;
+  // nav
+  document.querySelectorAll('#h-nav a').forEach(a=>{
+    a.classList.toggle('on', a.dataset.v===navHome);
+    a.onclick=()=>{ navHome=a.dataset.v; renderHome(); };
+  });
+  document.querySelectorAll('.h-view').forEach(v=>v.classList.remove('on'));
+  document.getElementById('v-'+navHome).classList.add('on');
+
+  // Mission Control
+  const wv = [40,75,100,60,85].map(h=>`<i style="height:${h}%"></i>`).join('');
+  document.getElementById('v-mission').innerHTML = `
+    <div class="now"><div class="o"></div>
+      <div style="flex:1;min-width:0"><div class="k">Now narrating · ${H.now.voice}</div><div class="q">"${H.now.line}"</div></div>
+      <div class="wv">${wv}</div></div>
+    <div class="cards">${H.projects.map(p=>`
+      <div class="pcard"><div class="top"><span class="nm">${p.name}</span><span class="ag">${p.agents} agents</span>
+        <span class="pill ${p.status}"><span class="d"></span>${PILL[p.status]}</span></div>
+        ${p.lines.map(l=>`<div class="ln"><span class="t">${l[0]}</span>&nbsp;${l[1]}</div>`).join('')}
+        ${p.acts?`<div class="pacts"><a class="p">Approve</a><a class="g">Review</a></div>`:`<div class="pbar"><i style="width:${p.progress||0}%"></i></div>`}
+      </div>`).join('')}</div>`;
+
+  // Transcript
+  document.getElementById('v-transcript').innerHTML = `<div class="h-pad"><div class="h-h">Transcript</div>
+    ${H.transcript.map(t=>`<div class="tr"><span class="tt">${t[0]}</span><div style="flex:1"><div class="proj" style="color:${t[2]}">${t[1]}</div><div class="say">"${t[3]}"</div></div></div>`).join('')}</div>`;
+
+  // Settings — quick surface; the full controls come next
+  document.getElementById('v-settings').innerHTML = `<div class="h-pad"><div class="h-h">Settings</div>
+    <div class="lede" style="max-width:520px">Voice, verbosity, mode, and speed live here — the full controls are the next build. Plan: <b>${planWord()}</b>${S.trialDaysLeft!=null?` · Power trial, ${S.trialDaysLeft} days left`:''}.</div></div>`;
+}
+
+// ------------------------------------------------------------------ screens
+const SCREENS = {
+  welcome(){
+    const power=S.plan==='power';
+    const hero = power ? 'Welcome to Power.' : 'You just gave your agents a voice.';
+    const lede = power
+      ? 'The full hands-free loop — talk to your agents, hear them work, and reply without lifting a finger.'
+      : 'A few quick steps to set up narration exactly how you like it.';
+    return `<section class="screen">
+      <div class="eyebrow">${planWord()}</div>
+      <h1 class="hero">${hero}</h1>
+      <p class="lede">${lede}</p>
+      <div class="spacer"></div>
+      <div class="row"><button class="btn btn-primary" onclick="next()">Begin setup</button></div>
+      <div class="orb"></div>
+    </section>`;
+  },
+  signin(){
+    if(S.signedIn) return SCREENS._msg('Log in','Signed in as '+(S.email||'your account')+'.', true);
+    return `<section class="screen">
+      <div class="eyebrow">Log in</div>
+      <h1 class="hero" style="font-size:60px">Sign in to Heard.</h1>
+      <p class="lede">Sync your voice, keys, and preferences across every device.</p>
+      <div style="margin-top:26px;display:flex;flex-direction:column;gap:12px;max-width:420px">
+        <button class="btn btn-primary" onclick="bridge('signin_google')">Continue with Google</button>
+        <input class="field" id="email" type="email" placeholder="you@example.com">
+        <button class="btn btn-ghost" onclick="bridge('signin_email',{email:document.getElementById('email').value})">Continue with email</button>
+      </div>
+      <div class="spacer"></div>
+    </section>`;
+  },
+  connect(){ return SCREENS._act('Connect your tools','Connect your agents',
+    'Heard listens to Claude Code, Codex, or any CLI agent. Connect the ones you use.',
+    'Connect', "bridge('connect_agent')", S.agentConnected, 'Connected'); },
+  mode(){ return `<section class="screen">
+      <div class="eyebrow">Choose your mode</div>
+      <h1 class="hero" style="font-size:56px">How should Heard show up?</h1>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:600px;margin-top:28px">
+        ${['Companion|Narrates as work happens, in real time.','Focus|Silent until something needs you.','Standup|One spoken digest, on your schedule.'].map(m=>{const[t,d]=m.split('|');return `<div onclick="bridge('set_mode',{mode:'${t.toLowerCase()}'});S.mode='${t.toLowerCase()}';next()" style="border:1px solid var(--line);border-radius:13px;padding:16px;cursor:pointer;background:var(--card)"><div style="font-weight:600;margin-bottom:5px">${t}</div><div style="font-size:12px;color:var(--ink-2);line-height:1.45">${d}</div></div>`}).join('')}
+      </div>
+      <div class="spacer"></div>
+    </section>`; },
+  voice(){
+    const voices=[
+      ['aria','Aria','Calm','oklch(78% .07 240),oklch(62% .08 250)'],
+      ['friday','Friday','Warm','oklch(80% .09 30),oklch(64% .12 32)'],
+      ['jarvis','Jarvis','Butler','oklch(86% .08 80),oklch(70% .1 72)'],
+      ['atlas','Atlas','Cinematic','oklch(82% .07 150),oklch(64% .08 152)'],
+    ];
+    return `<section class="screen">
+      <div class="eyebrow">${S.plan==='power'?'Choose a cloud voice':'Choose your voice'}</div>
+      <h1 class="hero" style="font-size:56px">Choose your voice.</h1>
+      <p class="lede">Cloud voices are included with your plan. Tap to preview and pick the one that sounds like you.</p>
+      <div class="vcards">${voices.map(v=>`
+        <div class="vcard ${S.voice===v[0]?'sel':''}" onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});render()">
+          <div class="ck">✓</div>
+          <div class="av" style="background:radial-gradient(circle at 50% 50%,${v[3]})"></div>
+          <div class="nm">${v[1]}</div><div class="ta">${v[2]}</div>
+        </div>`).join('')}</div>
+      <div class="spacer"></div>
+      <div class="row">
+        ${S.voice?`<button class="btn btn-primary" onclick="next()">Continue</button><span class="done-note">✓ ${S.voice}</span>`
+                 :`<button class="btn btn-ghost" onclick="next()">Skip for now</button>`}
+      </div>
+    </section>`; },
+  whisper(){ return SCREENS._act('Heard Whisper','Talk to your agents',
+    'Hold <span class="kbd">⌥ Space</span> and just talk. Heard Whisper turns speech into precise prompts on-device — no window, no typing.',
+    'Turn on Heard Whisper', "bridge('enable_whisper')", S.whisperOn, 'Heard Whisper on', true); },
+  mictest(){ return `<section class="screen">
+      <div class="eyebrow">Mic &amp; talk-back</div>
+      <h1 class="hero" style="font-size:52px">Hold <span class="kbd" style="font-size:20px">⌥ Space</span> and talk.</h1>
+      <p class="lede">Give it a try — we only listen while you hold to talk, and nothing is recorded. Headphones help so Heard doesn’t hear itself.</p>
+      <div class="listen-wrap"><div class="rr"></div><div class="listen"></div></div>
+      <div class="listen-lbl">LISTENING</div>
+      <div class="spacer"></div>
+      <div class="row">
+        ${S.micGranted?`<button class="btn btn-primary" onclick="next()">Continue</button><span class="done-note">✓ Mic ready</span>`
+                      :`<button class="btn btn-primary" onclick="bridge('mic_test')">Start mic test</button>`}
+      </div>
+    </section>`; },
+  loop(){ return SCREENS._act('The hands-free loop','The hands-free loop',
+    'Start an agent by voice, hear it as it happens, reply without lifting a finger. Needs Accessibility access.',
+    'Grant Accessibility', "bridge('grant_accessibility')", S.axGranted, 'Hands-free loop live', true); },
+  phone(){ return `<section class="screen">
+      <div class="eyebrow">Pair mobile</div>
+      <h1 class="hero" style="font-size:56px">Now take it anywhere.</h1>
+      <p class="lede">The loop follows you out the door. Scan with Heard Mobile to pair — or do it later from the menu bar.</p>
+      <div class="qr">${S.pairCode?'▚▞▚▞▚<br>▞▚▞▚▞<br>▚▞▚▞▚':'Scan to pair'}</div>
+      <div class="spacer"></div>
+      <div class="row">
+        ${S.phonePaired?`<button class="btn btn-primary" onclick="next()">Done</button><span class="done-note">✓ Mobile paired</span>`
+          :`<button class="btn btn-primary" onclick="bridge('pair_phone')">Show pairing code</button><button class="btn btn-ghost" onclick="next()">I’ll pair later</button>`}
+      </div>
+    </section>`; },
+
+  // generic action screen (design shell: eyebrow + serif title + lede + orb + CTA)
+  _act(eyebrow,title,body,cta,onclick,done,doneLabel,orb,secLabel,secClick){
+    return `<section class="screen">
+      <div class="eyebrow">${eyebrow}</div>
+      <h1 class="hero" style="font-size:56px">${title}</h1>
+      <p class="lede">${body}</p>
+      ${orb?'<div class="orb sm"></div>':''}
+      <div class="spacer"></div>
+      <div class="row">
+        ${done
+          ? `<button class="btn btn-primary" onclick="next()">Continue</button><span class="done-note">✓ ${doneLabel}</span>`
+          : `<button class="btn btn-primary" onclick="${onclick}">${cta}</button>`}
+        ${secLabel?`<button class="btn btn-ghost" onclick="${secClick}">${secLabel}</button>`:''}
+      </div>
+    </section>`;
+  },
+  _msg(eyebrow,title,ok){
+    return `<section class="screen"><div class="eyebrow">${eyebrow}</div>
+      <h1 class="hero" style="font-size:56px">${title}</h1><div class="spacer"></div>
+      <div class="row"><button class="btn btn-primary" onclick="next()">Continue</button></div></section>`;
+  },
+};
+
+render();
+</script>
+</body>
+</html>

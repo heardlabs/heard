@@ -146,6 +146,14 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
     config.set_value("heard_trial_expires_at", int(trial_expires_at or 0))
     _reload_and_selftest()
     _bring_onboarding_forward_signed_in(email or "your account")
+    # Also refresh the persistent Heard window (the new WebView home/onboarding)
+    # so its checklist flips to signed-in + the plan lands without a reopen.
+    try:
+        from heard import home_window
+
+        home_window.refresh_if_open()
+    except Exception:
+        pass
 
 
 def _claim_and_apply(code: str) -> None:
