@@ -410,7 +410,10 @@ def _build_controller_class():
             action = None
             try:
                 body = message.body()
-                if not isinstance(body, dict):
+                # WKWebView delivers the JS object as an NSDictionary, which is
+                # NOT isinstance(dict) under PyObjC — gating on that silently
+                # dropped every bridge message. Accept anything dict-like.
+                if not hasattr(body, "get"):
                     return
                 action = body.get("action")
                 handler = getattr(
