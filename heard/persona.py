@@ -572,10 +572,14 @@ def call_with_prompt(
         if not token:
             return None
         base_url = (cfg.get("heard_api_base") or "https://api.heard.dev").rstrip("/")
+        # Send the requested brain model (Sonnet for the Power brain). The
+        # Worker GATES this to plan=power — a non-Power account is forced back
+        # to Haiku server-side — and adds thinking:disabled for non-Haiku models
+        # so narration stays snappy. So it's safe to send it unconditionally.
         body = {
             "system": system_text,
             "messages": [{"role": "user", "content": user_msg}],
-            "model": HAIKU_MODEL,
+            "model": _brain_model(),
             "max_tokens": max_tokens,
         }
         try:
