@@ -1764,10 +1764,14 @@ def _build_user_message(
         lines = "\n".join(f"- {t}" for t in recent_narration)
         sections.append(
             "ALREADY SAID ALOUD — your last few spoken lines (across all "
-            "agents):\n" + lines + "\n→ Do NOT restate a point already made "
-            "above. If this event only repeats something here — the same "
-            "issue, finding, or status in different words — stay SILENT "
-            "(speak=false). Speak only if you have genuinely NEW information.")
+            "agents):\n" + lines + "\n→ The listener is on ONE audio channel and "
+            "is actively annoyed by hearing the same work narrated over and over. "
+            "If the current event is another STEP in a thread you're already "
+            "narrating above (same feature / fix / investigation / file), DEFAULT "
+            "TO SILENCE (speak=false). Only break silence for a genuinely NEW, "
+            "material outcome — a result, a decision, a blocker, or a completion — "
+            "NOT progress chatter ('now doing X', 'checking Y', 'X looks good') on "
+            "something already announced. When unsure, stay silent.")
 
     # Active agents. Pre-sorted by salience: blocked first, then
     # active-decision, then routine. Cap at MAX_AGENTS_IN_PROMPT so a

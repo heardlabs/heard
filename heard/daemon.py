@@ -400,6 +400,11 @@ class Daemon:
         # restate a point it just made in different words (the "same issue
         # over and over" complaint), plus a deterministic near-dup backstop.
         self._recent_narration: collections.deque[str] = collections.deque(maxlen=8)
+        # Anti-repeat cooldown: at most one INTERMEDIATE progress line per project
+        # per _INTERMEDIATE_COOLDOWN_S. Word-matching can't catch "same work,
+        # different words," so this is the reliable backstop against burst
+        # repetition. Finals/openers are exempt (they always speak). repo → monotonic.
+        self._last_intermediate_at: dict[str, float] = {}
         # Per-session mute. Holds the session_ids the user has silenced
         # via /quiet — events from these are observed (state/memory stay
         # complete) but never narrated, until /unquiet. In-memory: a
@@ -2099,6 +2104,8 @@ class Daemon:
                 pass
             self._current_proc = None
 
+    _INTERMEDIATE_COOLDOWN_S = 25.0  # min gap between spoken intermediates per repo
+
     _REPEAT_STOPWORDS = frozenset((
         "that", "this", "with", "from", "into", "have", "just", "here", "there",
         "now", "the", "and", "for", "are", "was", "were", "been", "being", "then",
@@ -2127,7 +2134,7 @@ class Daemon:
             p = _content(prev)
             if not p:
                 continue
-            if len(new & p) / len(new | p) >= 0.6:  # Jaccard — near-duplicate
+            if len(new & p) / len(new | p) >= 0.45:  # Jaccard — near-duplicate
                 return True
         return False
 
@@ -3121,13 +3128,25 @@ class Daemon:
                 if focus_mode:
                     spoken_text = self._final_lead(decision.text, max_chars=140) or decision.text
 
-                # Anti-repeat backstop: even past the prompt hint, drop an
-                # INTERMEDIATE line that near-duplicates something just spoken
-                # (content-word overlap). Finals/openers must speak — exempt.
-                if (kind != "final" and not is_opener
-                        and self._is_repeat_narration(spoken_text)):
-                    _log("event_drop", kind=kind, tag=tag, reason="repeat_narration")
-                    return
+                # Anti-repeat backstop (INTERMEDIATE only; finals/openers must
+                # speak). Two guards: (1) a near-duplicate of something just said
+                # (content-word overlap); (2) a hard per-project cooldown — at most
+                # one progress line per repo per _INTERMEDIATE_COOLDOWN_S, the
+                # reliable defense against burst repetition that word-matching
+                # can't catch ("same work, different words").
+                if kind != "final" and not is_opener:
+                    info = self.router._sessions.get(session_id)  # noqa: SLF001
+                    proj = (getattr(info, "repo_name", "") or "") or session_id
+                    now = time.monotonic()
+                    if self._is_repeat_narration(spoken_text):
+                        _log("event_drop", kind=kind, tag=tag, reason="repeat_narration")
+                        return
+                    if now - self._last_intermediate_at.get(proj, 0.0) < \
+                            self._INTERMEDIATE_COOLDOWN_S:
+                        _log("event_drop", kind=kind, tag=tag,
+                             reason="intermediate_cooldown", proj=proj)
+                        return
+                    self._last_intermediate_at[proj] = now
 
                 _log(
                     "event_speak",
