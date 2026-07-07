@@ -36,6 +36,9 @@ _BACKOFF_MAX_S = 30.0
 _HEALTHY_RESET_S = 30.0
 # How often the keepalive thread checks liveness.
 _POLL_S = 1.0
+# Consecutive fast crashes before we report the service as unhealthy (once) via
+# the on_unhealthy callback — turns a silent crash-loop into a telemetry signal.
+_UNHEALTHY_AFTER = 3
 
 
 class VoiceServiceSupervisor:
@@ -52,6 +55,7 @@ class VoiceServiceSupervisor:
         cmd: str,
         log: Callable[..., None] | None = None,
         log_path: str | None = None,
+        on_unhealthy: Callable[[str], None] | None = None,
     ) -> None:
         self.cmd = (cmd or "").strip()
         self._argv = shlex.split(self.cmd) if self.cmd else []
@@ -60,6 +64,12 @@ class VoiceServiceSupervisor:
         # service's output (incl. a startup traceback) is lost, so a crash-loop
         # is invisible. None → inherit the daemon's fds.
         self._log_path = log_path
+        # Called once (with the log tail) after _UNHEALTHY_AFTER consecutive fast
+        # crashes — the daemon wires this to analytics so a tester's silent
+        # crash-loop reaches our dashboards instead of vanishing.
+        self._on_unhealthy = on_unhealthy
+        self._consec_crashes = 0
+        self._reported_unhealthy = False
         self._lock = threading.RLock()
         self._proc: subprocess.Popen | None = None
         self._want_running = False
@@ -139,19 +149,44 @@ class VoiceServiceSupervisor:
         )
         self._thread.start()
 
+    def _read_log_tail(self, n: int = 25) -> str:
+        """Last n lines of the service log — the crash traceback, for telemetry."""
+        if not self._log_path:
+            return ""
+        try:
+            with open(self._log_path, encoding="utf-8", errors="replace") as f:
+                return "".join(f.readlines()[-n:])[-2000:]
+        except Exception:
+            return ""
+
     def _keepalive(self) -> None:
         """Relaunch serve if it dies while it is supposed to be running."""
         while not self._stop_evt.wait(_POLL_S):
+            report_unhealthy = False
             with self._lock:
                 if not self._want_running or self._alive():
                     continue
                 lived = time.monotonic() - self._last_spawn
                 if lived >= _HEALTHY_RESET_S:
+                    # It ran healthily then died — reset the crash tracking.
                     self._backoff = _BACKOFF_START_S
+                    self._consec_crashes = 0
+                    self._reported_unhealthy = False
+                else:
+                    self._consec_crashes += 1
                 delay = self._backoff
-                self._log("voice_service_exited_relaunching", backoff=delay)
-            # Wait for the backoff OUTSIDE the lock so sync()/stop() aren't
-            # blocked while we're delaying.
+                self._log("voice_service_exited_relaunching",
+                          backoff=delay, crashes=self._consec_crashes)
+                if self._consec_crashes >= _UNHEALTHY_AFTER and not self._reported_unhealthy:
+                    self._reported_unhealthy = True
+                    report_unhealthy = True
+            # Fire telemetry + wait for the backoff OUTSIDE the lock so
+            # sync()/stop() aren't blocked.
+            if report_unhealthy and self._on_unhealthy:
+                try:
+                    self._on_unhealthy(self._read_log_tail())
+                except Exception:
+                    pass
             if self._stop_evt.wait(delay):
                 break
             with self._lock:

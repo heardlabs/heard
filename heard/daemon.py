@@ -1001,10 +1001,27 @@ class Daemon:
                 self._voice_service = voice_service_mod.VoiceServiceSupervisor(
                     cmd, log=_log,
                     log_path=str(config.CONFIG_DIR / "voice_service.log"),
+                    on_unhealthy=self._report_voice_service_unhealthy,
                 )
             self._voice_service.sync(should_run)
         except Exception as e:
             _log("voice_service_sync_failed", err=str(e))
+
+    def _report_voice_service_unhealthy(self, log_tail: str) -> None:
+        """Supervisor callback: after repeated fast serve crashes, emit a
+        one-time telemetry event so a tester's silent crash-loop reaches our
+        dashboards. Ships the error tail (NEVER audio), plan, and app version.
+        Best-effort — telemetry must never disturb the daemon."""
+        try:
+            from heard import analytics  # noqa: PLC0415
+            analytics.capture("power_voice_service_unhealthy", {
+                "error_tail": (log_tail or "")[-1500:],
+                "plan": (self.cfg.get("heard_plan") or "").strip().lower(),
+                "app_version": updater.resolved_current_version(),
+            })
+            _log("voice_service_unhealthy_reported")
+        except Exception as e:
+            _log("voice_service_unhealthy_report_failed", err=str(e))
 
     def _start_audio_monitor(self) -> None:
         """Start the mic-capture watcher (CoreAudio polling) so Heard
