@@ -280,7 +280,17 @@ function render(){
   stage.innerHTML = (SCREENS[active]||SCREENS.welcome)();
   const el=stage.querySelector('.screen'); if(el) el.classList.add('show');
 }
-function next(){ current=null; render(); }
+function next(){
+  // Advance to the next not-done task after the current one. (The old version
+  // reset to welcome every time — every Continue button looked dead.)
+  const tasks = flow();
+  const activeId = current || (tasks.find(t=>!t.done())||tasks[0]).id;
+  const idx = tasks.findIndex(t=>t.id===activeId);
+  const rest = tasks.slice(idx+1);
+  const nextT = rest.find(t=>!t.done()) || rest[0];
+  if(nextT){ current=nextT.id; render(); }
+  else { bridge('close'); }   // finished the last step → close marks onboarded → Home
+}
 
 // ------------------------------------------------------------------ HOME
 // Mission Control / Transcript / Settings. Fed by S.home when native pushes it;
@@ -416,11 +426,11 @@ const SCREENS = {
       </div>
     </section>`; },
   whisper(){ return SCREENS._act('Heard Whisper','Talk to your agents',
-    'Hold <span class="kbd">⌥ Space</span> and just talk. Heard Whisper turns speech into precise prompts on-device — no window, no typing.',
+    'Hold <span class="kbd">Right ⌘</span> and just talk. Heard Whisper turns speech into precise prompts on-device — no window, no typing.',
     'Turn on Heard Whisper', "bridge('enable_whisper')", S.whisperOn, 'Heard Whisper on', true); },
   mictest(){ return `<section class="screen">
       <div class="eyebrow">Mic &amp; talk-back</div>
-      <h1 class="hero" style="font-size:52px">Hold <span class="kbd" style="font-size:20px">⌥ Space</span> and talk.</h1>
+      <h1 class="hero" style="font-size:52px">Hold <span class="kbd" style="font-size:20px">Right ⌘</span> and talk.</h1>
       <p class="lede">Give it a try — we only listen while you hold to talk, and nothing is recorded. Headphones help so Heard doesn’t hear itself.</p>
       <div class="listen-wrap"><div class="rr"></div><div class="listen"></div></div>
       <div class="listen-lbl">LISTENING</div>

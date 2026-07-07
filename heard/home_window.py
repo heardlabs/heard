@@ -251,6 +251,7 @@ def _build_controller_class():
     """Define the ObjC controller lazily so WebKit/AppKit load only on use."""
     import objc
     from AppKit import (
+        NSAppearance,
         NSBackingStoreBuffered,
         NSColor,
         NSWindow,
@@ -298,6 +299,9 @@ def _build_controller_class():
             win.setReleasedWhenClosed_(False)
             win.setTitlebarAppearsTransparent_(True)
             win.setBackgroundColor_(NSColor.colorWithSRGBRed_green_blue_alpha_(0.937, 0.925, 0.906, 1.0))
+            # Force light appearance so the native "Heard" title renders DARK on
+            # the cream titlebar (in dark mode it came out white/illegible).
+            win.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameAqua"))
             win.center()
 
             wcfg = WKWebViewConfiguration.alloc().init()
