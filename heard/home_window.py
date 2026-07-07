@@ -579,6 +579,11 @@ def _build_controller_class():
         def _act_enable_whisper(self, body):
             try:
                 config.set_value("voice_mode", "ptt")
+                # The daemon gates the GLOBAL hold-to-talk hotkey monitor on
+                # push_to_talk, not voice_mode — without this the serve runs but
+                # holding Right ⌘ does nothing (PTT dead). Match the menu's
+                # voice-mode radio, which sets both.
+                config.set_value("push_to_talk", True)
                 _reload_daemon()
             except Exception as e:
                 _log_bridge_error("enable_whisper", e)
