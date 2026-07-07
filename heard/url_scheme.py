@@ -55,42 +55,15 @@ def _post_main(fn) -> None:
 
 
 def _bring_onboarding_forward_signed_in(email: str) -> None:
-    """If the onboarding window is open, jump it to the sign-in screen
-    (so ``_enter_signin`` repaints the '✓ Signed in' state) and pull
-    the app to the front. Safe to call when nothing's open."""
+    """Repaint the onboarding/home window with the signed-in state and pull
+    the app forward. Safe to call when nothing's open."""
     try:
         from AppKit import NSApp
 
-        from heard.settings_window import _OnboardingController
-        ctrl = getattr(_OnboardingController, "_instance", None)
-        win = getattr(ctrl, "_window", None) if ctrl is not None else None
-        if ctrl is not None and win is not None and win.isVisible():
-            # A fresh sign-in always wins over a "switch account" form view.
-            try:
-                ctrl._signin_show_form = False
-                ctrl._signin_code_sent = False
-            except Exception:
-                pass
-            try:
-                idx = next(
-                    (i for i, s in enumerate(ctrl._screens) if s[0] == "signin"),
-                    None,
-                )
-            except Exception:
-                idx = None
-            if idx is not None and getattr(ctrl, "_screen_idx", None) != idx:
-                ctrl._go_to(idx)
-            else:
-                try:
-                    ctrl._signin_status("")
-                    ctrl._enter_signin()
-                except Exception:
-                    pass
-            win.makeKeyAndOrderFront_(None)
-            try:
-                NSApp.activateIgnoringOtherApps_(True)
-            except Exception:
-                pass
+        from heard import home_window
+
+        home_window.refresh_if_open()
+        NSApp.activateIgnoringOtherApps_(True)
     except Exception:
         pass
     notify("Heard — signed in", f"Signed in as {email}.", kind="oauth_signed_in")
