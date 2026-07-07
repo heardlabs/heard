@@ -511,6 +511,7 @@ def _build_controller_class():
 
                 claude_code.install()
                 self._push_state()
+                _notify_connected("Claude Code")
             except Exception as e:
                 _log_bridge_error("connect_agent", e)
 
@@ -520,6 +521,7 @@ def _build_controller_class():
 
                 codex.install()
                 self._push_state()
+                _notify_connected("Codex")
             except Exception as e:
                 _log_bridge_error("connect_codex", e)
 
@@ -583,6 +585,9 @@ def _build_controller_class():
 
         def _act_signin_google(self, body):
             _open_web_signin("google")
+
+        def _act_signin_github(self, body):
+            _open_web_signin("github")
 
         def _act_signin_email(self, body):
             _open_web_signin("email", body.get("email") or "")
@@ -676,6 +681,18 @@ def _poke_power(cmd: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _notify_connected(name: str) -> None:
+    """Tangible confirmation that a Connect click actually did something — the
+    hook install is otherwise invisible until an agent runs."""
+    try:
+        from heard import notify
+
+        notify.notify("Heard", f"{name} connected — I'll narrate it as it runs.",
+                      kind="agent_connected")
+    except Exception:
+        pass
 
 
 def _open_web_signin(method: str, email: str = "") -> None:

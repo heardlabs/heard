@@ -284,28 +284,8 @@ class HeardApp(rumps.App):
         # submenu (mode radios + clean-up); everyone else sees a clickable
         # upgrade teaser. voice_input_unlocked is a dev/test escape hatch.
         _powered = (_plan == "power") or bool(config.load().get("voice_input_unlocked"))
-        self._voice_mode_items: dict = {}
-        if _powered:
-            self.voice_menu = rumps.MenuItem("Voice input")
-            for label, mode in (
-                ("Off", "off"),
-                ("Push to talk (hold ⌘)", "ptt"),
-                ("Hands-free (always on)", "ambient"),
-            ):
-                item = rumps.MenuItem(label, callback=self._mk_voice_mode_cb(mode))
-                self.voice_menu[label] = item
-                self._voice_mode_items[mode] = item
-            # Phone pairing (Heard Power). The menu owns the UI; the action is
-            # done by Power — we poke its socket (open-core: OSS never imports
-            # heard_power). Re-pair when the token lapses; reset un-pairs all.
-            self.voice_menu.add(rumps.separator)
-            self.voice_menu["Pair phone…"] = rumps.MenuItem(
-                "Pair phone…", callback=self._on_pair_phone)
-            self.voice_menu["Reset pairing (un-pair all)"] = rumps.MenuItem(
-                "Reset pairing (un-pair all)", callback=self._on_reset_pair)
-        else:
-            self.voice_menu = rumps.MenuItem(
-                "Voice input — upgrade to Power", callback=self.on_upgrade)
+        self._voice_built_powered = _powered
+        self.voice_menu = self._build_voice_menu(_powered)
 
         # API-keys submenu — top row shows the *active* voice path the
         # daemon picked (cloud / BYOK ElevenLabs / Kokoro / none), then
@@ -437,6 +417,7 @@ class HeardApp(rumps.App):
             self._daemon_ever_alive = True
 
         self._refresh_account_row(cfg)
+        self._refresh_voice_menu(cfg)
         self._refresh_api_key_labels(cfg, status or {})
         self._refresh_usage_item(cfg, status or {})
 
@@ -937,6 +918,49 @@ class HeardApp(rumps.App):
             pass
         self.refresh(None)
 
+    def _build_voice_menu(self, powered: bool):
+        """The Voice-input menu item: full submenu for Power, upgrade teaser
+        otherwise. Extracted so a plan→power change (sign-in) can re-gate it
+        without a relaunch (the menu is otherwise built once at launch)."""
+        self._voice_mode_items = {}
+        if not powered:
+            return rumps.MenuItem(
+                "Voice input — upgrade to Power", callback=self.on_upgrade)
+        vm = rumps.MenuItem("Voice input")
+        for label, mode in (
+            ("Off", "off"),
+            ("Push to talk (hold ⌘)", "ptt"),
+            ("Hands-free (always on)", "ambient"),
+        ):
+            item = rumps.MenuItem(label, callback=self._mk_voice_mode_cb(mode))
+            vm[label] = item
+            self._voice_mode_items[mode] = item
+        # Phone pairing (Heard Power) — poke Power's socket (OSS never imports it).
+        vm.add(rumps.separator)
+        vm["Pair phone…"] = rumps.MenuItem("Pair phone…", callback=self._on_pair_phone)
+        vm["Reset pairing (un-pair all)"] = rumps.MenuItem(
+            "Reset pairing (un-pair all)", callback=self._on_reset_pair)
+        return vm
+
+    def _refresh_voice_menu(self, cfg: dict) -> None:
+        """Re-gate the voice menu when the plan changes. Sign-in flips
+        free→power AFTER launch, so without this a fresh Power user keeps
+        seeing 'Voice input — upgrade to Power' until they relaunch."""
+        plan = (cfg.get("heard_plan") or "").strip().lower()
+        powered = plan == "power" or bool(cfg.get("voice_input_unlocked"))
+        if powered == self._voice_built_powered:
+            return
+        try:
+            old_title = self.voice_menu.title
+            new_menu = self._build_voice_menu(powered)
+            if old_title in self.menu:
+                del self.menu[old_title]
+            self.menu.insert_before("Mode", new_menu)
+            self.voice_menu = new_menu
+            self._voice_built_powered = powered
+        except Exception as e:
+            print(f"voice menu re-gate failed: {e}", file=sys.stderr)
+
     def _mk_voice_mode_cb(self, mode: str):
         """Radio callback for the Voice input submenu. Sets voice_mode and keeps
         the daemon's hotkey gate (push_to_talk) in sync — hotkey only in ptt
@@ -1194,7 +1218,10 @@ class HeardApp(rumps.App):
         - trial in last 5 days: "Upgrade to Pro — N days left", clickable.
         - trial otherwise: plain "Upgrade to Pro", clickable.
         """
-        if plan == "pro":
+        if plan in ("pro", "pro_plus", "power"):
+            # Top-tier plans have nothing to upgrade to — hide the CTA. (power
+            # + pro_plus previously fell through to the trial branch and wrongly
+            # showed "Upgrade to Pro".) The email row above already shows the plan.
             # Hide the row entirely when pro — the email row above
             # already says "… · pro" AND is now clickable (opens the
             # dashboard via `on_manage_subscription`). Setting the

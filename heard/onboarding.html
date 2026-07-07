@@ -74,6 +74,11 @@
   .btn{font:600 15px var(--sans);border-radius:12px;padding:14px 26px;border:1px solid transparent;cursor:pointer;-webkit-app-region:no-drag;}
   .btn-primary{background:var(--ink);color:#fff;}
   .btn-ghost{background:transparent;border-color:var(--line);color:var(--ink);}
+  .btn-oauth{background:#fff;border:1px solid var(--line);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;gap:10px;}
+  .btn-oauth:hover{border-color:#cfc8bd;}
+  .btn-oauth svg{flex:0 0 auto;}
+  .or-divider{display:flex;align-items:center;gap:12px;color:var(--ink-3);font:500 12px var(--sans);margin:4px 0;}
+  .or-divider::before,.or-divider::after{content:"";flex:1;height:1px;background:var(--line);}
   .kbd{font:500 13px var(--mono);background:#fff;border:1px solid var(--line);border-bottom-width:2px;border-radius:7px;padding:3px 8px;}
   .field{width:100%;max-width:420px;padding:14px 16px;font-size:15px;border-radius:12px;border:1px solid var(--line);outline:none;background:#fff;}
   .done-note{color:var(--ok);font-size:13px;display:inline-flex;align-items:center;gap:6px;}
@@ -97,6 +102,7 @@
   .vcard .nm{font:500 13px var(--sans);color:var(--ink);}
   .vcard .ta{font:400 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
   .vcard .ck{position:absolute;top:9px;right:10px;width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;}
+  .vbadge{position:absolute;top:9px;left:10px;font:600 8px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--terra);background:rgba(178,91,65,.1);padding:3px 7px;border-radius:999px;}
   .vcard.sel .ck{display:flex;}
   /* per-beat: mic listening */
   @keyframes listen{0%,100%{transform:scale(1);opacity:.92}50%{transform:scale(1.09);opacity:1}}
@@ -225,7 +231,7 @@ const T = {
   signin: {id:'signin',  label:'Log in',               done:()=>S.signedIn},
   connect:{id:'connect', label:'Connect your tools',   done:()=>S.agentConnected},
   mode:   {id:'mode',    label:'Choose your mode',     done:()=>!!S.mode},
-  voice:  {id:'voice',   label:'Choose your voice',    done:()=>!!S.voice},
+  voice:  {id:'voice',   label:'Choose your voice',    done:()=>['aria','friday','jarvis','atlas'].includes((S.voice||'').toLowerCase())},
   whisper:{id:'whisper', label:'Enable Heard Whisper', done:()=>S.whisperOn},
   phone:  {id:'phone',   label:'Pair Heard Mobile',    done:()=>S.phonePaired},
   done:   {id:'done',    label:'',                     done:()=>false},
@@ -290,6 +296,10 @@ function render(){
   const mi=stage.querySelector('#mic-in'); if(mi) setTimeout(()=>mi.focus(), 60);
   // The original onboarding's "Hi, I'm Jarvis" hello — play once on welcome.
   if(active==='welcome' && !window.__greeted){ window.__greeted=true; setTimeout(()=>bridge('greet'), 550); }
+  // Default the voice to Jarvis when arriving at the voice step with no pick.
+  if(active==='voice' && !['aria','friday','jarvis','atlas'].includes((S.voice||'').toLowerCase())){
+    S.voice='jarvis'; bridge('set_voice',{voice:'jarvis'}); setTimeout(render,0);
+  }
 }
 // Voice preview: poke native to synth + play a sample in that voice.
 function previewVoice(btn, voice){
@@ -432,10 +442,18 @@ const SCREENS = {
       <div class="eyebrow">Log in</div>
       <h1 class="hero" style="font-size:60px">Sign in to Heard.</h1>
       <p class="lede">Sync your voice, keys, and preferences across every device.</p>
-      <div style="margin-top:26px;display:flex;flex-direction:column;gap:12px;max-width:420px">
-        <button class="btn btn-primary" onclick="bridge('signin_google')">Continue with Google</button>
+      <div style="margin-top:26px;display:flex;flex-direction:column;gap:12px;max-width:440px">
+        <button class="btn btn-oauth" onclick="bridge('signin_google')">
+          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          <span>Continue with Google</span>
+        </button>
+        <button class="btn btn-oauth" onclick="bridge('signin_github')">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="#0b0b0c"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 012-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>Continue with GitHub</span>
+        </button>
+        <div class="or-divider"><span>or</span></div>
         <input class="field" id="email" type="email" placeholder="you@example.com">
-        <button class="btn btn-ghost" onclick="bridge('signin_email',{email:document.getElementById('email').value})">Continue with email</button>
+        <button class="btn btn-primary" onclick="bridge('signin_email',{email:document.getElementById('email').value})">Continue with email</button>
       </div>
       <div class="spacer"></div>
     </section>`;
@@ -473,22 +491,26 @@ const SCREENS = {
       <div class="spacer"></div>
     </section>`; },
   voice(){
+    // Jarvis first + flagged "most picked"; it's the default selection.
     const voices=[
+      ['jarvis','Jarvis','Butler','oklch(86% .08 80),oklch(70% .1 72)', true],
       ['aria','Aria','Calm','oklch(78% .07 240),oklch(62% .08 250)'],
       ['friday','Friday','Warm','oklch(80% .09 30),oklch(64% .12 32)'],
-      ['jarvis','Jarvis','Butler','oklch(86% .08 80),oklch(70% .1 72)'],
       ['atlas','Atlas','Cinematic','oklch(82% .07 150),oklch(64% .08 152)'],
     ];
-    // Only reflect a pick among these 4 cards — a pre-existing custom voice
-    // (e.g. "george") isn't one of them, so don't claim it's selected here.
-    const pick = voices.find(v=>v[0]===S.voice); const pname = pick ? pick[1] : null;
+    // Effective selection: an onboarding pick if there is one, else default to
+    // Jarvis (a custom pre-existing voice like "george" isn't one of these 4).
+    const sel = ['aria','friday','jarvis','atlas'].includes((S.voice||'').toLowerCase())
+      ? (S.voice||'').toLowerCase() : 'jarvis';
+    const pname = (voices.find(v=>v[0]===sel)||[])[1];
     return `<section class="screen">
       <div class="eyebrow">${S.plan==='power'?'Choose a cloud voice':'Choose your voice'}</div>
       <h1 class="hero" style="font-size:56px">Choose your voice.</h1>
       <p class="lede">Cloud voices are included with your plan. Hit Preview to hear each, then pick the one that sounds like you.</p>
       <div class="vcards">${voices.map(v=>`
-        <div class="vcard ${S.voice===v[0]?'sel':''}" onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});render()">
+        <div class="vcard ${sel===v[0]?'sel':''}" onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});render()">
           <div class="ck">✓</div>
+          ${v[4]?`<div class="vbadge">most picked</div>`:''}
           <div class="av" style="background:radial-gradient(circle at 50% 50%,${v[3]})"></div>
           <div class="nm">${v[1]}</div><div class="ta">${v[2]}</div>
           <button class="vpreview" onclick="event.stopPropagation();previewVoice(this,'${v[0]}')"><span class="tri">▶</span> Preview</button>
