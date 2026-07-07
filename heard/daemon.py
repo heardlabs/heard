@@ -1461,9 +1461,11 @@ class Daemon:
         # mute command's queue-clear (cancel_only ran on a different
         # _speak thread, this one already had its text). Belt-and-
         # suspenders with the start_speech guard.
-        if bool(cfg.get("muted")):
+        if bool(cfg.get("muted")) and not cfg.get("narration_spool"):
             _log("synth_skipped", reason="muted")
             return
+        # Muted + narration_spool: still synth (the phone stream gets it via the
+        # spool) but skip local playback below — "Mac shush, phone keeps talking."
         # Mic-active suppression (Wispr / Zoom / dictation): the audio
         # monitor flips this true on capture-start, false on release,
         # so narration sits out the whole capture rather than just
@@ -1892,6 +1894,11 @@ class Daemon:
             # at 1.2), make up the difference with afplay -r. The
             # backend already clamped its own synth, so we layer the
             # remaining speed-up on playback.
+            if bool(cfg.get("muted")):
+                # Spool-only (muted + narration_spool): the phone already got this
+                # via the narration-out spool above; keep the Mac speaker silent.
+                path.unlink(missing_ok=True)
+                continue
             max_native = float(getattr(self.tts, "MAX_NATIVE_SPEED", 1.2))
             afplay_args = ["afplay", str(path)]
             if speed > max_native and max_native > 0:
@@ -2125,7 +2132,7 @@ class Daemon:
             return
         # "Pause Heard" — indefinite mute. Don't even queue; the mute
         # command already cleared whatever was in flight.
-        if bool(self.cfg.get("muted")):
+        if bool(self.cfg.get("muted")) and not self.cfg.get("narration_spool"):
             _log("speech_skipped", reason="muted", session=session_id)
             return
         # Mic-active suppression — see _speak / _on_mic_active. Rather
