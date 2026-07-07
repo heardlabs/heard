@@ -282,8 +282,28 @@ function render(){
   // Focus the mic-test field so push-to-talk dictation types into it.
   const mi=stage.querySelector('#mic-in'); if(mi) setTimeout(()=>mi.focus(), 60);
 }
-// Mic test: as dictated words land in the field, confirm we heard them.
-function micHeard(v){ const ok=document.getElementById('mic-ok'); if(ok) ok.style.opacity=(v&&v.trim())?'1':'0'; }
+// Mic test: compare the dictation to the target. Close enough → snap the field
+// to the clean sentence + green ✓ (hides STT imperfection). Way off → red warn.
+const MIC_TARGET = "Ship the payments migration, then run the tests.";
+function _micWords(s){ return s.toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(Boolean); }
+function _micSim(a){ const A=_micWords(a), B=_micWords(MIC_TARGET); if(!A.length||!B.length) return 0;
+  const setA=new Set(A); let hit=0; for(const w of new Set(B)) if(setA.has(w)) hit++; return hit/new Set(B).size; }
+let _micTimer=null;
+function micHeard(v){ clearTimeout(_micTimer); _micTimer=setTimeout(()=>micEval(v), 450); }
+function micEval(v){
+  const ok=document.getElementById('mic-ok'), inp=document.getElementById('mic-in');
+  if(!ok) return;
+  if(!v || !v.trim()){ ok.style.opacity='0'; return; }
+  if(_micSim(v) >= 0.55){
+    if(inp) inp.value = MIC_TARGET;   // snap to the clean sentence
+    ok.textContent = '✓ Heard you clearly — Heard Whisper is working.';
+    ok.style.color = 'var(--ok)';
+  } else {
+    ok.textContent = '⚠ Heard you — but that’s not the sentence. Give the line above another read.';
+    ok.style.color = '#e5484d';
+  }
+  ok.style.opacity = '1';
+}
 // Native calls this on the REAL Right-⌘ down/up (local key monitor) so the
 // LISTENING label + orb pulse only show while actually listening, and the
 // field stays focused so the serve's transcription types into it.
