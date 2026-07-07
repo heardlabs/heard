@@ -253,6 +253,10 @@ def _build_controller_class():
     from AppKit import (
         NSBackingStoreBuffered,
         NSColor,
+        NSView,
+        NSViewHeightSizable,
+        NSViewMinYMargin,
+        NSViewWidthSizable,
         NSWindow,
         NSWindowStyleMaskClosable,
         NSWindowStyleMaskFullSizeContentView,
@@ -262,6 +266,15 @@ def _build_controller_class():
     )
     from Foundation import NSURL, NSMakeRect, NSObject
     from WebKit import WKWebView, WKWebViewConfiguration
+
+    class _DragView(NSView):
+        """Transparent strip over the titlebar so the frameless WKWebView window
+        can be dragged. WKWebView consumes mouse events, so
+        movableByWindowBackground alone doesn't work — this view reports it can
+        move the window. Native traffic lights float above it."""
+
+        def mouseDownCanMoveWindow(self):
+            return True
 
     class HeardHome(NSObject):
         def init(self):
@@ -311,7 +324,17 @@ def _build_controller_class():
 
             web = WKWebView.alloc().initWithFrame_configuration_(rect, wcfg)
             web.setNavigationDelegate_(self)
-            win.setContentView_(web)
+            web.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+
+            # Container = web (full) + a draggable strip over the titlebar area.
+            container = NSView.alloc().initWithFrame_(rect)
+            container.addSubview_(web)
+            strip = _DragView.alloc().initWithFrame_(
+                NSMakeRect(0, rect.size.height - 44, rect.size.width, 44)
+            )
+            strip.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin)
+            container.addSubview_(strip)
+            win.setContentView_(container)
 
             self._window = win
             self._web = web
