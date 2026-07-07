@@ -277,6 +277,10 @@ def _build_controller_class():
             self._pending_start = start
             if self._window is None:
                 self._make_window()
+            else:
+                # Reload so a re-open reflects fresh content (and hot-patched
+                # HTML during dev). _push_state re-fires on didFinishNavigation.
+                self._web.reload()
             self._window.makeKeyAndOrderFront_(None)
             self._push_state()
 
