@@ -520,6 +520,7 @@ def narrate(
     working_memory: str = "",
     cwd: str | None = None,
     is_opener: bool = False,
+    recent_narration: tuple[str, ...] = (),
 ) -> HarnessDecision | None:
     """Layer 5 NARRATE call. Returns:
 
@@ -565,6 +566,7 @@ def narrate(
         agent_states=agent_states,
         working_memory=working_memory,
         is_opener=is_opener,
+        recent_narration=recent_narration,
     )
 
     # One retry on a transient failure (a momentary proxy/network blip
@@ -1739,6 +1741,7 @@ def _build_user_message(
     agent_states: AgentStateRegistry,
     working_memory: str,
     is_opener: bool = False,
+    recent_narration: tuple[str, ...] = (),
 ) -> str:
     """Assemble the dynamic user message. This is the per-call payload
     — Agent State snapshot, Working Memory excerpt, current event.
@@ -1749,6 +1752,22 @@ def _build_user_message(
         sections.append("Recent context:\n" + working_memory.strip())
     else:
         sections.append("Recent context: (no rolling summary yet)")
+
+    # Anti-repeat: the listener hears one audio stream across ALL agents, so
+    # the same finding narrated by two agents (or re-narrated as work circles a
+    # problem) reads as Heard repeating itself. Show the brain what it JUST said
+    # aloud and tell it not to restate the same point — the strongest lever
+    # against thematic repetition (raw-event dedup can't catch "same issue,
+    # different words"). Openers/finals below still demand speech; this only
+    # suppresses a re-statement that adds nothing new.
+    if recent_narration:
+        lines = "\n".join(f"- {t}" for t in recent_narration)
+        sections.append(
+            "ALREADY SAID ALOUD — your last few spoken lines (across all "
+            "agents):\n" + lines + "\n→ Do NOT restate a point already made "
+            "above. If this event only repeats something here — the same "
+            "issue, finding, or status in different words — stay SILENT "
+            "(speak=false). Speak only if you have genuinely NEW information.")
 
     # Active agents. Pre-sorted by salience: blocked first, then
     # active-decision, then routine. Cap at MAX_AGENTS_IN_PROMPT so a
@@ -1820,6 +1839,12 @@ def _render_agent_table(rows: list[dict[str, Any]]) -> str:
     for r in rows:
         sid_short = (r.get("id") or "")[:8]
         repo = r.get("repo_name") or "?"
+        # Feature/area within the repo (`.heard.yaml` label or derived dir).
+        # When present, it's the sharper disambiguator between concurrent
+        # agents than the repo alone — surface it as "repo/area".
+        area = r.get("area")
+        if area and area != repo:
+            repo = f"{repo}/{area}"
         tool = r.get("current_tool") or r.get("last_tool") or "-"
         shape = r.get("response_shape_hint", "mixed")
         salience = r.get("salience_hint", "routine")

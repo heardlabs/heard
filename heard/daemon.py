@@ -395,6 +395,11 @@ class Daemon:
         self._recent_event_signatures: dict[str, collections.deque] = (
             collections.defaultdict(lambda: collections.deque(maxlen=32))
         )
+        # Recently-SPOKEN narration lines (across ALL agents/sessions — the
+        # listener hears one audio stream). Fed to the harness so it won't
+        # restate a point it just made in different words (the "same issue
+        # over and over" complaint), plus a deterministic near-dup backstop.
+        self._recent_narration: collections.deque[str] = collections.deque(maxlen=8)
         # Per-session mute. Holds the session_ids the user has silenced
         # via /quiet — events from these are observed (state/memory stay
         # complete) but never narrated, until /unquiet. In-memory: a
@@ -2094,6 +2099,38 @@ class Daemon:
                 pass
             self._current_proc = None
 
+    _REPEAT_STOPWORDS = frozenset((
+        "that", "this", "with", "from", "into", "have", "just", "here", "there",
+        "now", "the", "and", "for", "are", "was", "were", "been", "being", "then",
+        "still", "also", "only", "what", "which", "your", "yours", "sir", "good",
+        "news", "found", "checking", "doing", "going", "looks", "like", "some",
+    ))
+
+    def _is_repeat_narration(self, text: str) -> bool:
+        """True if `text` largely restates a recently-spoken line (content-word
+        Jaccard overlap). Conservative threshold so it only catches near-
+        duplicates — the harness prompt hint does the semantic dedup; this is a
+        deterministic safety net. Strips the "Now on <repo>." project prefix so
+        two updates about the same work aren't judged similar just by prefix."""
+        import re  # noqa: PLC0415
+
+        def _content(s: str) -> set:
+            s = re.sub(r"^\s*now on [\w .-]+?[.:]", "", s.strip(), flags=re.I)
+            words = re.findall(r"[a-z0-9']+", s.lower())
+            return {w for w in words
+                    if len(w) > 3 and w not in self._REPEAT_STOPWORDS}
+
+        new = _content(text)
+        if len(new) < 4:
+            return False  # too short to judge confidently
+        for prev in self._recent_narration:
+            p = _content(prev)
+            if not p:
+                continue
+            if len(new & p) / len(new | p) >= 0.6:  # Jaccard — near-duplicate
+                return True
+        return False
+
     def _start_speech(
         self,
         text: str,
@@ -2135,6 +2172,10 @@ class Daemon:
         if bool(self.cfg.get("muted")) and not self.cfg.get("narration_spool"):
             _log("speech_skipped", reason="muted", session=session_id)
             return
+        # Record what we're about to say so the harness can avoid repeating it
+        # (anti-repeat: prompt hint + near-dup backstop). All narration paths
+        # funnel through here, so this captures harness + floor + opener lines.
+        self._recent_narration.append(text)
         # Mic-active suppression — see _speak / _on_mic_active. Rather
         # than DROP what we'd say while the listener is dictating, hold
         # it and replay on mic-release (_flush_deferred_while_mic). We
@@ -2997,6 +3038,7 @@ class Daemon:
                     working_memory=self.working_memory.snapshot(),
                     cwd=cwd,
                     is_opener=is_opener,
+                    recent_narration=tuple(self._recent_narration),
                 )
             except Exception:
                 decision = None
@@ -3078,6 +3120,14 @@ class Daemon:
                 spoken_text = decision.text
                 if focus_mode:
                     spoken_text = self._final_lead(decision.text, max_chars=140) or decision.text
+
+                # Anti-repeat backstop: even past the prompt hint, drop an
+                # INTERMEDIATE line that near-duplicates something just spoken
+                # (content-word overlap). Finals/openers must speak — exempt.
+                if (kind != "final" and not is_opener
+                        and self._is_repeat_narration(spoken_text)):
+                    _log("event_drop", kind=kind, tag=tag, reason="repeat_narration")
+                    return
 
                 _log(
                     "event_speak",
