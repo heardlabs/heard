@@ -434,11 +434,12 @@ const SCREENS = {
     'Turn on Heard Whisper', "bridge('enable_whisper')", S.whisperOn, 'Heard Whisper on', true); },
   mictest(){ return `<section class="screen">
       <div class="eyebrow">Mic &amp; talk-back</div>
-      <h1 class="hero" style="font-size:44px">Read this out loud.</h1>
-      <div style="max-width:560px;margin-top:20px;padding:16px 20px;border:1px solid var(--line);border-radius:14px;background:var(--card);font-family:var(--serif);font-size:23px;line-height:1.3;color:var(--ink)">“Ship the payments migration, then run the tests.”</div>
-      <p class="lede" style="margin-top:16px">Hold <span class="kbd">Right ⌘</span> and read it aloud — your words appear below. We only listen while you hold; nothing is recorded.</p>
-      <input class="field" id="mic-in" style="max-width:560px;margin-top:14px" placeholder="…your words will appear here" oninput="micHeard(this.value)">
-      <div id="mic-ok" class="done-note" style="margin-top:12px;opacity:0;transition:opacity .3s">✓ Heard you clearly — Heard Whisper is working.</div>
+      <h1 class="hero" style="font-size:46px">Hold <span class="kbd" style="font-size:20px">Right ⌘</span> and talk.</h1>
+      <div class="listen-wrap" style="margin-top:14px"><div class="rr"></div><div class="listen"></div></div>
+      <div class="listen-lbl">LISTENING</div>
+      <div style="max-width:560px;margin-top:20px;padding:13px 18px;border:1px solid var(--line);border-radius:12px;background:var(--card);font-family:var(--serif);font-size:20px;line-height:1.3;color:var(--ink)">Read aloud: “Ship the payments migration, then run the tests.”</div>
+      <input class="field" id="mic-in" style="max-width:560px;margin-top:12px" placeholder="…your words will appear here" oninput="micHeard(this.value)">
+      <div id="mic-ok" class="done-note" style="margin-top:10px;opacity:0;transition:opacity .3s">✓ Heard you clearly — Heard Whisper is working.</div>
       <div class="spacer"></div>
       <div class="row">
         <button class="btn btn-primary" onclick="next()">Continue</button>
