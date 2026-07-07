@@ -216,21 +216,22 @@ window.__heard = {
 
 // ------------------------------------------------------------------ tasks
 const T = {
-  welcome:{id:'welcome', label:'Welcome',            done:()=>S.onboardedPlan===S.plan},
-  signin: {id:'signin',  label:'Log in',             done:()=>S.signedIn},
-  connect:{id:'connect', label:'Connect your tools', done:()=>S.agentConnected},
-  mode:   {id:'mode',    label:'Choose your mode',   done:()=>!!S.mode},
-  voice:  {id:'voice',   label:'Choose your voice',  done:()=>!!S.voice},
-  whisper:{id:'whisper', label:'Heard Whisper',      done:()=>S.whisperOn},
-  mictest:{id:'mictest', label:'Mic & talk-back',    done:()=>S.micGranted},
-  loop:   {id:'loop',    label:'The hands-free loop',done:()=>S.axGranted},
-  phone:  {id:'phone',   label:'Pair mobile',        done:()=>S.phonePaired},
+  welcome:{id:'welcome', label:'Welcome',              done:()=>false},
+  signin: {id:'signin',  label:'Log in',               done:()=>S.signedIn},
+  connect:{id:'connect', label:'Connect your tools',   done:()=>S.agentConnected},
+  mode:   {id:'mode',    label:'Choose your mode',     done:()=>!!S.mode},
+  voice:  {id:'voice',   label:'Choose your voice',    done:()=>!!S.voice},
+  whisper:{id:'whisper', label:'Enable Heard Whisper', done:()=>S.whisperOn},
+  phone:  {id:'phone',   label:'Pair Heard Mobile',    done:()=>S.phonePaired},
+  done:   {id:'done',    label:'',                     done:()=>false},
 };
+// Flows match the design (2a Pro / 2b Power). welcome + done are non-task
+// screens (excluded from the rail + progress).
 function flow(){
   const upgrade = S.plan==='power' && S.onboardedPlan==='pro';
-  if (upgrade)          return [T.welcome, T.whisper, T.mictest, T.loop, T.phone];
-  if (S.plan==='power') return [T.welcome, T.signin, T.whisper, T.voice, T.mictest, T.loop, T.phone];
-  return [T.welcome, T.signin, T.connect, T.mode, T.voice];   // 2a Pro
+  if (upgrade)          return [T.welcome, T.whisper, T.phone, T.done];                       // Pro→Power delta
+  if (S.plan==='power') return [T.welcome, T.signin, T.connect, T.voice, T.whisper, T.phone, T.done]; // 2b Power
+  return [T.welcome, T.signin, T.connect, T.mode, T.voice, T.done];                            // 2a Pro
 }
 function planWord(){ return S.plan==='power'?'Power':S.plan==='pro'?'Pro':'Free'; }
 
@@ -254,8 +255,9 @@ function render(){
   document.getElementById('app').style.display='grid';
   document.getElementById('home').style.display='none';
   const tasks = flow();
-  // exclude the welcome task from the numbered progress (it's the intro)
-  const steps = tasks.filter(t=>t.id!=='welcome');
+  // exclude welcome + done from the numbered progress (intro + completion)
+  const RAIL_SKIP = ['welcome','done'];
+  const steps = tasks.filter(t=>!RAIL_SKIP.includes(t.id));
   const doneN = steps.filter(t=>t.done()).length;
   const active = current || (tasks.find(t=>!t.done())||tasks[tasks.length-1]).id;
 
@@ -267,7 +269,7 @@ function render(){
 
   const ul=document.getElementById('tasks'); ul.innerHTML='';
   tasks.forEach(t=>{
-    if(t.id==='welcome') return;
+    if(RAIL_SKIP.includes(t.id)) return;
     const done=t.done(), on=t.id===active;
     const li=document.createElement('li');
     li.className='task'+(done?' done':'')+(on?' active':'');
@@ -458,11 +460,14 @@ const SCREENS = {
                  :`<button class="btn btn-ghost" onclick="next()">Skip for now</button>`}
       </div>
     </section>`; },
-  whisper(){ return SCREENS._act('Heard Whisper','Talk to your agents',
-    'Hold <span class="kbd">Right ⌘</span> and just talk. Heard Whisper turns speech into precise prompts on-device — no window, no typing.',
-    'Turn on Heard Whisper', "bridge('enable_whisper')", S.whisperOn, 'Heard Whisper on', true); },
-  mictest(){ return `<section class="screen">
-      <div class="eyebrow">Mic &amp; talk-back</div>
+  // Heard Whisper: first enable it (design's "Speak, don't type"), then the
+  // read-aloud mic test folds in so they feel it work before moving on.
+  whisper(){
+    if(!S.whisperOn) return SCREENS._act('Heard Whisper','Speak, don’t type.',
+      'Dictate prompts by voice — hold <span class="kbd">Right ⌘</span> and just talk. Heard Whisper turns speech into precise prompts on-device. No window, no typing.',
+      'Enable Heard Whisper', "bridge('enable_whisper')", false, '', true, 'Maybe later', 'next()');
+    return `<section class="screen">
+      <div class="eyebrow">Heard Whisper</div>
       <h1 class="hero" style="font-size:46px">Hold <span class="kbd" style="font-size:20px">Right ⌘</span> and talk.</h1>
       <div class="listen-wrap" style="margin-top:14px"><div class="rr" id="mic-ring" style="display:none"></div><div class="listen" id="mic-ball" style="animation-play-state:paused"></div></div>
       <div class="listen-lbl" id="mic-lbl" style="visibility:hidden">LISTENING</div>
@@ -474,10 +479,8 @@ const SCREENS = {
         <button class="btn btn-primary" onclick="next()">Continue</button>
         <button class="btn btn-ghost" onclick="next()">Skip for now</button>
       </div>
-    </section>`; },
-  loop(){ return SCREENS._act('The hands-free loop','The hands-free loop',
-    'Start an agent by voice, hear it as it happens, reply without lifting a finger. Needs Accessibility access.',
-    'Grant Accessibility', "bridge('grant_accessibility')", S.axGranted, 'Hands-free loop live', true); },
+    </section>`;
+  },
   phone(){ return `<section class="screen">
       <div class="eyebrow">Pair mobile</div>
       <h1 class="hero" style="font-size:56px">Now take it anywhere.</h1>
@@ -489,6 +492,22 @@ const SCREENS = {
           :`<button class="btn btn-primary" onclick="bridge('pair_phone')">Show pairing code</button><button class="btn btn-ghost" onclick="next()">I’ll pair later</button>`}
       </div>
     </section>`; },
+
+  // Completion (both flows end here). Closing marks onboarded → Mission Control.
+  done(){
+    const who = S.voice ? S.voice[0].toUpperCase()+S.voice.slice(1) : 'Aria';
+    const sub = S.plan==='power'
+      ? 'The full loop is live. Hold <span class="kbd">Right ⌘</span> to talk, and Heard follows you to mobile.'
+      : `${who}’s listening to your agents. Now — focus on what matters.`;
+    return `<section class="screen">
+      <div class="eyebrow">All set</div>
+      <h1 class="hero" style="font-size:56px">You’re all set.</h1>
+      <p class="lede">${sub}</p>
+      <div class="orb"></div>
+      <div class="spacer"></div>
+      <div class="row"><button class="btn btn-primary" onclick="bridge('close')">Start using Heard</button></div>
+    </section>`;
+  },
 
   // generic action screen (design shell: eyebrow + serif title + lede + orb + CTA)
   _act(eyebrow,title,body,cta,onclick,done,doneLabel,orb,secLabel,secClick){
