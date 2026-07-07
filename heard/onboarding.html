@@ -439,7 +439,7 @@ const SCREENS = {
       <div class="spacer"></div>
     </section>`;
   },
-  connect(){ const done=S.agentConnected; return `<section class="screen">
+  connect(){ return `<section class="screen">
       <div class="eyebrow">Connect your tools</div>
       <h1 class="hero" style="font-size:44px">Connect your tools.</h1>
       <p class="lede" style="max-width:440px">Heard narrates your agents wherever they run. Connect at least one now — you can add more later.</p>
@@ -447,12 +447,12 @@ const SCREENS = {
         <div style="background:#fff;border:1px solid #ececec;border-radius:13px;padding:14px 16px;display:flex;align-items:center;gap:13px">
           <div style="width:36px;height:36px;border-radius:9px;flex:0 0 auto;background:#cc785c;display:flex;align-items:center;justify-content:center;color:#f3ece2;font-size:18px">✳</div>
           <div style="flex:1"><div style="font:600 14px var(--sans);color:var(--ink)">Claude Code</div><div style="font:400 11.5px var(--sans);color:#8a8a8a">Anthropic · terminal &amp; IDE</div></div>
-          ${done?`<span class="done-note">✓ Connected</span>`:`<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="bridge('connect_agent')">Connect</button>`}
+          ${S.claudeConnected?`<span class="done-note">✓ Connected</span>`:`<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="bridge('connect_agent')">Connect</button>`}
         </div>
         <div style="background:#fff;border:1px solid #ececec;border-radius:13px;padding:14px 16px;display:flex;align-items:center;gap:13px">
           <div style="width:36px;height:36px;border-radius:9px;flex:0 0 auto;background:#0b0b0c;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px">✦</div>
           <div style="flex:1"><div style="font:600 14px var(--sans);color:var(--ink)">Codex</div><div style="font:400 11.5px var(--sans);color:#8a8a8a">OpenAI · CLI</div></div>
-          <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="bridge('connect_codex')">Connect</button>
+          ${S.codexConnected?`<span class="done-note">✓ Connected</span>`:`<button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="bridge('connect_codex')">Connect</button>`}
         </div>
         <div style="background:#faf9f7;border:1px solid #f0eeea;border-radius:13px;padding:14px 16px;display:flex;align-items:center;gap:13px;opacity:.72">
           <div style="width:36px;height:36px;border-radius:9px;flex:0 0 auto;background:#e6e2dc;display:flex;align-items:center;justify-content:center;color:#8a8580;font-size:15px">▸</div>
@@ -531,7 +531,7 @@ const SCREENS = {
   phone(){ return `<section class="screen">
       <div class="eyebrow">Pair mobile</div>
       <h1 class="hero" style="font-size:52px">Now take it anywhere.</h1>
-      <p class="lede" style="max-width:480px">The loop doesn’t stop at your desk. When you’re ready to step away, just say <span style="font-family:var(--serif);font-style:italic;color:var(--terra)">“pair”</span> — Heard hands off to your phone, so you keep hearing your agents and can reply by voice, anywhere. You can set up Heard Mobile any time from the menu bar.</p>
+      <p class="lede" style="max-width:480px">The loop doesn’t stop at your desk. <span style="font-family:var(--serif);font-style:italic;color:var(--terra)">Heard Mobile</span> keeps you in it after you step away — hear your agents and reply by voice from your phone. You’ll pair it from the menu bar; nothing to set up right now.</p>
       <div class="orb sm" style="margin-top:12px"></div>
       <div class="spacer"></div>
       <div class="row"><button class="btn btn-primary" onclick="next()">Pair later</button></div>

@@ -66,6 +66,8 @@ def _current_state() -> dict[str, Any]:
         "trialDaysLeft": trial_left,
         "onboardedPlan": cfg.get("onboarded_plan") or None,
         "agentConnected": _agent_connected(),
+        "claudeConnected": _claude_connected(),
+        "codexConnected": _codex_connected(),
         "micGranted": _mic_granted(),
         "axGranted": _ax_granted(),
         "voice": cfg.get("voice") or None,
@@ -204,18 +206,25 @@ def _home_data() -> dict:
     return out
 
 
-def _agent_connected() -> bool:
-    """True if a Heard hook is installed in Claude Code or Codex."""
+def _claude_connected() -> bool:
     try:
         cc = Path.home() / ".claude" / "settings.json"
-        if cc.exists() and "heard" in cc.read_text(encoding="utf-8"):
-            return True
-        cx = Path.home() / ".codex" / "hooks.json"
-        if cx.exists() and "heard" in cx.read_text(encoding="utf-8"):
-            return True
+        return cc.exists() and "heard" in cc.read_text(encoding="utf-8")
     except Exception:
-        pass
-    return False
+        return False
+
+
+def _codex_connected() -> bool:
+    try:
+        cx = Path.home() / ".codex" / "hooks.json"
+        return cx.exists() and "heard" in cx.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+
+def _agent_connected() -> bool:
+    """True if a Heard hook is installed in Claude Code or Codex."""
+    return _claude_connected() or _codex_connected()
 
 
 # Persona → the website's sample file (served at heard.dev/audio/intro_<key>.mp3).
@@ -231,8 +240,15 @@ def _play_voice_sample(voice_name: str) -> None:
 
         key = _VOICE_MP3.get(voice_name.lower(), "calm")
         url = f"https://heard.dev/audio/intro_{key}.mp3"
+        # heard.dev 403s the default urllib User-Agent — send a browser one.
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
+            data = r.read()
         path = tempfile.mktemp(suffix=".mp3")
-        urllib.request.urlretrieve(url, path)  # noqa: S310 (fixed https host)
+        with open(path, "wb") as f:
+            f.write(data)
         subprocess.run(["afplay", path], check=False)
     except Exception as e:
         _log_bridge_error("preview_voice", e)
