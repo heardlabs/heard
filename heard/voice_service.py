@@ -20,11 +20,17 @@ is left down until the next ``sync()``.
 
 from __future__ import annotations
 
+import os
 import shlex
+import socket
 import subprocess
 import threading
 import time
 from collections.abc import Callable
+
+# The voice service listens here (stable contract with heard_power's serve; we
+# don't import that package — this is the OSS side). Used for the liveness ping.
+_SERVE_SOCK = os.path.expanduser("~/.heard_power.sock")
 
 # Relaunch backoff after an UNEXPECTED exit: start small, double, cap — so a
 # serve that crash-loops (bad model, missing dep) can't spin the CPU.
@@ -39,6 +45,13 @@ _POLL_S = 1.0
 # Consecutive fast crashes before we report the service as unhealthy (once) via
 # the on_unhealthy callback — turns a silent crash-loop into a telemetry signal.
 _UNHEALTHY_AFTER = 3
+# Deadlock watchdog: a serve can be _alive() (process up, socket bound, flock
+# held) yet have a WEDGED accept loop — it refuses every poke, so push-to-talk
+# silently dies and KeepAlive never notices (the process didn't exit). Ping it;
+# after this many consecutive no-pongs (past a warmup grace) kill it so the
+# keepalive relaunches a fresh one.
+_WARMUP_S = 20.0
+_UNRESPONSIVE_KILLS = 2
 
 
 class VoiceServiceSupervisor:
@@ -77,6 +90,7 @@ class VoiceServiceSupervisor:
         self._last_spawn = 0.0
         self._thread: threading.Thread | None = None
         self._stop_evt = threading.Event()
+        self._unresponsive = 0  # consecutive failed liveness pings (deadlock)
 
     # --- public API -------------------------------------------------------
 
@@ -159,12 +173,43 @@ class VoiceServiceSupervisor:
         except Exception:
             return ""
 
+    def _serve_responsive(self) -> bool:
+        """Round-trip liveness: connect to the serve socket, send 'ping', expect
+        'pong'. A DEADLOCKED serve leaves the socket bound so a bare connect can
+        succeed — only a reply proves the accept loop is running. No heard_power
+        import; just the socket contract."""
+        try:
+            c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            c.settimeout(1.5)
+            c.connect(_SERVE_SOCK)
+            c.sendall(b"ping")
+            ok = c.recv(8) == b"pong"
+            c.close()
+            return ok
+        except Exception:
+            return False
+
     def _keepalive(self) -> None:
-        """Relaunch serve if it dies while it is supposed to be running."""
+        """Relaunch serve if it dies OR deadlocks while it should be running."""
         while not self._stop_evt.wait(_POLL_S):
             report_unhealthy = False
             with self._lock:
-                if not self._want_running or self._alive():
+                if not self._want_running:
+                    continue
+                if self._alive():
+                    # Process is up — but is its accept loop RESPONSIVE? Kill a
+                    # deadlocked serve so the relaunch path below revives it.
+                    lived = time.monotonic() - self._last_spawn
+                    if lived < _WARMUP_S or self._serve_responsive():
+                        self._unresponsive = 0
+                        continue
+                    self._unresponsive += 1
+                    if self._unresponsive < _UNRESPONSIVE_KILLS:
+                        continue
+                    self._log("voice_service_deadlocked_killing",
+                              unresponsive=self._unresponsive)
+                    self._unresponsive = 0
+                    self._kill()  # → not _alive() next poll → relaunched below
                     continue
                 lived = time.monotonic() - self._last_spawn
                 if lived >= _HEALTHY_RESET_S:
