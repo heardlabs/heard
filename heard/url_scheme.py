@@ -82,6 +82,35 @@ def _reload_and_selftest() -> None:
         pass
 
 
+def _maybe_start_power_trial(token: str) -> None:
+    """Power build only: auto-enroll a fresh sign-in into the 14-day, no-card
+    Power trial. The server grants it once per account — no-ops if already
+    Power, refuses if the trial was already used — so it's safe on every
+    sign-in. OSS builds skip it (no bundled voice service = not the Power build).
+    """
+    try:
+        if not (config.load().get("voice_service_cmd") or "").strip():
+            return  # not the Power build
+        import json
+        import urllib.request
+
+        base = config.load().get("heard_api_base") or "https://api.heard.dev"
+        req = urllib.request.Request(
+            f"{base}/v1/power/trial/start",
+            method="POST",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
+            data = json.loads(r.read().decode() or "{}")
+        if data.get("plan") == "power":
+            config.set_value("heard_plan", "power")
+            exp = int(data.get("trial_expires_at") or 0)
+            if exp:
+                config.set_value("heard_trial_expires_at", exp)
+    except Exception:
+        pass
+
+
 def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> None:
     config.set_value("heard_token", token)
     config.set_value("heard_plan", plan or "trial")
@@ -117,6 +146,7 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
         except Exception:
             pass
     config.set_value("heard_trial_expires_at", int(trial_expires_at or 0))
+    _maybe_start_power_trial(token)  # Power build: auto-enroll the 14-day trial
     _reload_and_selftest()
     _bring_onboarding_forward_signed_in(email or "your account")
     # Also refresh the persistent Heard window (the new WebView home/onboarding)
