@@ -253,28 +253,14 @@ def _build_controller_class():
     from AppKit import (
         NSBackingStoreBuffered,
         NSColor,
-        NSView,
-        NSViewHeightSizable,
-        NSViewMinYMargin,
-        NSViewWidthSizable,
         NSWindow,
         NSWindowStyleMaskClosable,
-        NSWindowStyleMaskFullSizeContentView,
         NSWindowStyleMaskMiniaturizable,
         NSWindowStyleMaskResizable,
         NSWindowStyleMaskTitled,
     )
     from Foundation import NSURL, NSMakeRect, NSObject
     from WebKit import WKWebView, WKWebViewConfiguration
-
-    class _DragView(NSView):
-        """Transparent strip over the titlebar so the frameless WKWebView window
-        can be dragged. WKWebView consumes mouse events, so
-        movableByWindowBackground alone doesn't work — this view reports it can
-        move the window. Native traffic lights float above it."""
-
-        def mouseDownCanMoveWindow(self):
-            return True
 
     class HeardHome(NSObject):
         def init(self):
@@ -294,28 +280,23 @@ def _build_controller_class():
             self._push_state()
 
         def _make_window(self):
+            # NO fullSizeContentView: the WKWebView renders out-of-process and
+            # eats mouse events, so it can't host a draggable titlebar. Keep the
+            # native titlebar ABOVE the web view — it drags reliably. Transparent
+            # so it blends into the cream; the title shows "Heard".
             style = (
                 NSWindowStyleMaskTitled
                 | NSWindowStyleMaskClosable
                 | NSWindowStyleMaskMiniaturizable
                 | NSWindowStyleMaskResizable
-                | NSWindowStyleMaskFullSizeContentView
             )
-            rect = NSMakeRect(0, 0, 1080, 740)
+            rect = NSMakeRect(0, 0, 1080, 720)
             win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 rect, style, NSBackingStoreBuffered, False
             )
             win.setTitle_("Heard")
             win.setReleasedWhenClosed_(False)
-            # Transparent titlebar + hidden title so the HTML fills the whole
-            # window (design chrome shows through; native traffic lights float
-            # top-left). Matches the Mission Control mock.
             win.setTitlebarAppearsTransparent_(True)
-            win.setTitleVisibility_(1)  # NSWindowTitleVisibilityHidden
-            # WKWebView ignores CSS -webkit-app-region:drag, and the web view
-            # covers the titlebar (full-size content), so the only reliable way
-            # to drag a custom-chrome WKWebView window is background-drag.
-            win.setMovableByWindowBackground_(True)
             win.setBackgroundColor_(NSColor.colorWithSRGBRed_green_blue_alpha_(0.937, 0.925, 0.906, 1.0))
             win.center()
 
@@ -324,17 +305,9 @@ def _build_controller_class():
 
             web = WKWebView.alloc().initWithFrame_configuration_(rect, wcfg)
             web.setNavigationDelegate_(self)
-            web.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
-
-            # Container = web (full) + a draggable strip over the titlebar area.
-            container = NSView.alloc().initWithFrame_(rect)
-            container.addSubview_(web)
-            strip = _DragView.alloc().initWithFrame_(
-                NSMakeRect(0, rect.size.height - 44, rect.size.width, 44)
-            )
-            strip.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin)
-            container.addSubview_(strip)
-            win.setContentView_(container)
+            # Web view sits BELOW the native titlebar (no fullSizeContentView),
+            # so the titlebar drags natively.
+            win.setContentView_(web)
 
             self._window = win
             self._web = web

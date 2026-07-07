@@ -41,8 +41,8 @@
   #app{position:relative;z-index:1;height:100vh;display:grid;grid-template-columns:250px 1fr;}
 
   /* titlebar space (native traffic lights float top-left over this) */
-  .titlebar{grid-column:1 / -1;height:40px;display:flex;align-items:center;justify-content:center;
-    -webkit-app-region:drag;font:500 12.5px var(--sans);color:var(--ink-3);}
+  /* Native titlebar now handles chrome + dragging — hide the in-HTML ones. */
+  .titlebar{display:none;}
 
   /* ---- rail: "Set up X" + progress + task checklist ---- */
   #rail{padding:8px 24px 24px;display:flex;flex-direction:column;border-right:1px solid var(--line);}
@@ -105,7 +105,7 @@
 
   /* ===================== HOME (Mission Control) ===================== */
   #home{position:relative;z-index:1;height:100vh;display:none;flex-direction:column;background:#fff;}
-  .h-title{height:40px;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag;font:500 13px var(--sans);color:var(--ink-2);}
+  .h-title{display:none;}
   .h-body{display:flex;flex:1;min-height:0;}
   .h-side{width:214px;flex:0 0 auto;border-right:1px solid #efefef;padding:6px 16px 18px;display:flex;flex-direction:column;background:#fcfcfc;}
   .h-brand{display:flex;align-items:center;gap:9px;padding:2px 6px 16px;}
