@@ -16,6 +16,7 @@ less-used switches.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -293,6 +294,14 @@ class HeardApp(rumps.App):
                 item = rumps.MenuItem(label, callback=self._mk_voice_mode_cb(mode))
                 self.voice_menu[label] = item
                 self._voice_mode_items[mode] = item
+            # Phone pairing (Heard Power). The menu owns the UI; the action is
+            # done by Power — we poke its socket (open-core: OSS never imports
+            # heard_power). Re-pair when the token lapses; reset un-pairs all.
+            self.voice_menu.add(rumps.separator)
+            self.voice_menu["Pair phone…"] = rumps.MenuItem(
+                "Pair phone…", callback=self._on_pair_phone)
+            self.voice_menu["Reset pairing (un-pair all)"] = rumps.MenuItem(
+                "Reset pairing (un-pair all)", callback=self._on_reset_pair)
         else:
             self.voice_menu = rumps.MenuItem(
                 "Voice input — upgrade to Power", callback=self.on_upgrade)
@@ -939,6 +948,32 @@ class HeardApp(rumps.App):
                 pass
             self.refresh(None)
         return _cb
+
+    def _poke_power(self, cmd: str) -> bool:
+        """Poke Heard Power's voice-service socket (open-core: OSS pokes Power,
+        never imports it). Returns False if Power isn't running."""
+        import socket as _socket
+        sock = (config.load().get("push_to_talk_socket")
+                or os.path.expanduser("~/.heard_power.sock"))
+        try:
+            s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(sock)
+            s.sendall(cmd.encode())
+            s.close()
+            return True
+        except Exception:
+            return False
+
+    def _on_pair_phone(self, _sender) -> None:
+        if not self._poke_power("pair"):
+            rumps.notification("Heard", "Voice service not running",
+                               "Turn on Voice input, then try Pair phone again.")
+
+    def _on_reset_pair(self, _sender) -> None:
+        if not self._poke_power("reset-pair"):
+            rumps.notification("Heard", "Voice service not running",
+                               "Turn on Voice input, then try Reset pairing again.")
 
     def on_open_config(self, _sender) -> None:
         import subprocess
