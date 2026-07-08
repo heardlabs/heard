@@ -363,11 +363,11 @@ jobs:
 
             **Fresh install** (no Heard yet on this machine):
 
-            > Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
+            > Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
 
             **Upgrade from an older version** (Heard is currently running). The fresh-install command above races the still-shutting-down app and can leave a partial bundle; this version kills the running app, waits for it to release its file handles, then swaps in the new bundle cleanly:
 
-            > Upgrade Heard so I keep narrating your responses. Run: `killall Heard 2>/dev/null; while pgrep -x Heard >/dev/null; do sleep 0.2; done; rm -f ~/Library/Application\ Support/heard/daemon.sock ~/Library/Application\ Support/heard/daemon.pid; rm -rf /Applications/Heard.app && curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && open /Applications/Heard.app` — Heard will quit and relaunch as the new version.
+            > Upgrade Heard so I keep narrating your responses. Run: `killall Heard 2>/dev/null; while pgrep -x Heard >/dev/null; do sleep 0.2; done; rm -f ~/Library/Application\ Support/heard/daemon.sock ~/Library/Application\ Support/heard/daemon.pid; rm -rf /Applications/Heard.app && curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — Heard will quit and relaunch as the new version.
 
             > _Note: starting in v0.8.2, the menu-bar "↑ Update to vX.Y.Z →" item does this swap for you in one click — no terminal needed. The upgrade prompt above is here for cases where the in-app updater isn't reachable (older versions, daemon stopped, etc.)._
 
