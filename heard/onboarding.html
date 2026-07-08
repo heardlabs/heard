@@ -460,6 +460,7 @@ function renderHome(){
   const _notifRows = _notif.map((n,i)=>`<div onclick="S.notify=Object.assign({},S.notify,{['${n[0]}']:!(S.notify&&S.notify['${n[0]}'])});bridge('set_notify',{key:'${n[0]}',on:S.notify['${n[0]}']});renderHome()" style="display:flex;align-items:center;padding:12px 15px;font:400 13px var(--sans);color:var(--ink);cursor:pointer;${i>0?'border-top:1px solid #f4f4f4':''}"><span>${n[1]}</span><div style="margin-left:auto;width:38px;height:22px;border-radius:999px;background:${_N[n[0]]?'var(--ink)':'#e3e3e3'};position:relative"><div style="position:absolute;top:2px;${_N[n[0]]?'right:2px':'left:2px'};width:18px;height:18px;border-radius:50%;background:#fff"></div></div></div>`).join('');
   const _trialNote = S.trialDaysLeft!=null ? ` · Power trial, ${S.trialDaysLeft} days left` : '';
   const _HD = (t,s)=>`<div style="font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:26px 0 12px">${t}${s?`<span style="text-transform:none;letter-spacing:0;font-family:var(--sans);font-weight:400;font-size:12px;color:var(--ink-2)"> · ${s}</span>`:''}</div>`;
+  const _keyRow=(id,label,hint)=>`<div style="padding:13px 0;border-top:1px solid #f4f4f4"><div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px"><span style="font:500 13px var(--sans);color:var(--ink)">${label}</span><span style="font:400 11px var(--mono);color:${(S.keys&&S.keys[id])?'var(--terra)':'var(--ink-3)'}">${(S.keys&&S.keys[id])?'\u25cf set':'not set'}</span></div><div style="display:flex;gap:8px"><input id="k-${id}" type="password" placeholder="${hint}" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;font:400 13px var(--mono);background:#fff"><button class="btn btn-ghost" style="padding:9px 16px" onclick="const v=document.getElementById('k-${id}').value.trim();if(v){bridge('set_key',{which:'${id}',value:v});document.getElementById('k-${id}').value='';S.keys=Object.assign({},S.keys,{[id]:true});renderHome()}">Save</button></div></div>`;
   document.getElementById('v-settings').innerHTML = `<div style="padding:26px 28px;max-width:660px">
     <div style="font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px">Voice</div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:11px">${_voiceCards}</div>
@@ -481,6 +482,12 @@ function renderHome(){
         <button class="btn btn-ghost" style="padding:9px 16px" onclick="bridge('manage_account')">Open</button>
       </div>
     </div>
+    ${(!S.signedIn || S.byokEnabled) ? `${_HD('API keys')}
+    <div style="font:400 12.5px/1.5 var(--sans);color:var(--ink-2);margin:-6px 0 10px">Bring your own keys. Heard sends narration <b>straight to these providers</b> using your key - never through our servers. Leave blank to use your plan’s cloud voices, or the local Kokoro voice for zero cloud.</div>
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:2px 18px 14px">
+      ${_keyRow('elevenlabs','ElevenLabs · voice','xi-api-key…')}
+      ${_keyRow('anthropic','Anthropic · narration brain','sk-ant-…')}
+    </div>` : ''}
   </div>`;
 }
 

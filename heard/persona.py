@@ -361,14 +361,25 @@ OPENAI_MODEL = "gpt-4o-mini"
 def _anthropic_key() -> str:
     """Resolve the Anthropic API key. Config wins over env var so the
     user can override per-machine via heard ui without touching the
-    shell environment."""
-    env = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    shell environment.
+
+    BYOK is GATED: a managed account (heard_token set) that isn't granted
+    `byok_enabled` does NOT get its key honored — the brain uses the managed
+    proxy it pays for. OSS (no token) and granted accounts honor the key. This
+    keeps Pro "managed, not paid-OSS" and can't be bypassed by a stale key."""
     try:
         from heard import config as _config
 
-        cfg_key = (_config.load().get("anthropic_api_key") or "").strip()
+        cfg = _config.load()
     except Exception:
-        cfg_key = ""
+        cfg = {}
+    tok = (cfg.get("heard_token") or "").strip()
+    plan = (cfg.get("heard_plan") or "").strip().lower()
+    managed_active = bool(tok) and plan != "expired"
+    if managed_active and not cfg.get("byok_enabled"):
+        return ""  # active managed account, not granted → use the managed brain
+    cfg_key = (cfg.get("anthropic_api_key") or "").strip()
+    env = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
     return cfg_key or env
 
 

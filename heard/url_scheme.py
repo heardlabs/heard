@@ -106,9 +106,31 @@ def _maybe_start_power_trial(token: str) -> None:
         pass
 
 
+def _refresh_byok_enabled(token: str) -> None:
+    """Cache the BYOK entitlement from /v1/me. Gates the Settings → API keys
+    section AND the daemon's honoring of BYOK keys (see daemon._make_tts /
+    persona._anthropic_key). Off for normal managed accounts; on only for
+    granted testers / enterprise-privacy accounts. Best-effort — a network
+    blip just leaves the last-known value."""
+    try:
+        import json
+        import urllib.request
+
+        base = config.load().get("heard_api_base") or "https://api.heard.dev"
+        req = urllib.request.Request(
+            f"{base}/v1/me", headers={"Authorization": f"Bearer {token}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
+            data = json.loads(r.read().decode() or "{}")
+        config.set_value("byok_enabled", bool(data.get("byok_enabled")))
+    except Exception:
+        pass
+
+
 def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> None:
     config.set_value("heard_token", token)
     config.set_value("heard_plan", plan or "trial")
+    _refresh_byok_enabled(token)
     if email:
         config.set_value("heard_email", email)
         # Use the email's SHA-256 as the analytics user_id when we don't

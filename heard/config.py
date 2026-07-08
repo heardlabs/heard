@@ -104,6 +104,11 @@ DEFAULTS: dict[str, Any] = {
     "anthropic_api_key": "",
     "openai_api_key": "",
     "elevenlabs_api_key": "",
+    # BYOK entitlement (mirrors the account's byok_enabled, refreshed from
+    # /v1/me at sign-in). Gates the Settings → API keys section AND the daemon's
+    # honoring of BYOK keys. Off for normal managed accounts; on for OSS
+    # (no token) or hand-granted testers / enterprise-privacy accounts.
+    "byok_enabled": False,
     # Heard token issued by api.heard.dev after email + 6-digit-code
     # signup. When present, the daemon routes TTS through our managed
     # proxy instead of asking for an ElevenLabs key. Empty for

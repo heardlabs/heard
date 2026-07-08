@@ -82,6 +82,16 @@ def _current_state() -> dict[str, Any]:
             "blocked": bool(cfg.get("notify_blocked", True)),
             "completions": bool(cfg.get("notify_completions", True)),
         },
+        # BYOK key presence for the Settings → API keys section. Booleans only —
+        # the actual key is never sent back to the WebView.
+        "keys": {
+            "elevenlabs": bool((cfg.get("elevenlabs_api_key") or "").strip()),
+            "anthropic": bool((cfg.get("anthropic_api_key") or "").strip()),
+        },
+        # BYOK entitlement. The Keys section shows only for OSS self-hosters
+        # (not signed in) or granted accounts. Server-set, carried in the token
+        # claim + /v1/me; normal managed accounts stay managed-only.
+        "byokEnabled": bool(cfg.get("byok_enabled")),
         "whisperOn": (cfg.get("voice_mode") or "off") != "off",
         "phonePaired": bool(cfg.get("phone_paired")),
         # Legacy onboarded flag — existing set-up users land on Home, not the
@@ -602,6 +612,7 @@ def _build_controller_class():
                 for key in ("heard_token", "heard_plan", "heard_email"):
                     config.set_value(key, "")
                 config.set_value("heard_trial_expires_at", 0)
+                config.set_value("byok_enabled", False)
                 _reload_daemon()
                 self._push_state()
             except Exception as e:
@@ -672,6 +683,21 @@ def _build_controller_class():
                     config.set_value(f"notify_{key}", bool(body.get("on")))
                 except Exception as e:
                     _log_bridge_error("set_notify", e)
+
+        def _act_set_key(self, body):
+            # BYOK: store a provider key the daemon uses DIRECTLY (never proxied
+            # through Heard's servers). Reload so the TTS/brain pick it up.
+            which = (body.get("which") or "").strip()
+            value = (body.get("value") or "").strip()
+            ck = {"elevenlabs": "elevenlabs_api_key",
+                  "anthropic": "anthropic_api_key"}.get(which)
+            if not ck or not value:
+                return
+            try:
+                config.set_value(ck, value)
+                _reload_daemon()
+            except Exception as e:
+                _log_bridge_error("set_key", e)
 
         def _act_preview_line(self, body):
             # Speak a sample line in the current voice — the mode screen's play

@@ -1331,12 +1331,23 @@ class Daemon:
         the cloud path.
         """
         api_key = (self.cfg.get("elevenlabs_api_key") or "").strip()
-        if api_key:
-            return ElevenLabsTTS(api_key=api_key)
-
         heard_token = (self.cfg.get("heard_token") or "").strip()
         heard_plan = (self.cfg.get("heard_plan") or "").strip().lower()
-        if heard_token and heard_plan != "expired" and not self._managed_capped_today():
+        managed_usable = (
+            bool(heard_token)
+            and heard_plan != "expired"
+            and not self._managed_capped_today()
+        )
+        # BYOK is GATED: a key is honored unless there's a USABLE managed path
+        # the user pays for (active, not expired/capped) and they aren't a
+        # granted `byok_enabled` account. So an active Pro/Power can't bypass
+        # the managed voices it pays for with a stale key (Pro stays "managed,
+        # not paid-OSS"), but a lapsed/capped user still falls back to their
+        # own key rather than dropping to Kokoro.
+        if api_key and (bool(self.cfg.get("byok_enabled")) or not managed_usable):
+            return ElevenLabsTTS(api_key=api_key)
+
+        if managed_usable:
             from heard.tts.managed import ManagedTTS  # noqa: PLC0415
 
             return ManagedTTS(

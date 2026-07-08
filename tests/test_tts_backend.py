@@ -122,10 +122,10 @@ def test_selector_picks_managed_when_heard_token_present(tmp_path, monkeypatch):
     assert daemon.tts.token == "tok_abc"
 
 
-def test_selector_byok_beats_managed_when_both_present(tmp_path, monkeypatch):
-    """If the user pasted their own ElevenLabs key, use it — even
-    signed in. It's their bill, not ours, and it mirrors the Haiku
-    ladder (which already prefers a BYOK Anthropic key)."""
+def test_selector_managed_beats_byok_for_active_paid_account(tmp_path, monkeypatch):
+    """An ACTIVE managed account uses the managed voices it pays for — a stale
+    BYOK key does NOT override it (Pro stays 'managed, not paid-OSS'). BYOK is
+    gated behind `byok_enabled` for signed-in accounts."""
     daemon = _make_daemon(
         tmp_path,
         monkeypatch,
@@ -135,10 +135,28 @@ def test_selector_byok_beats_managed_when_both_present(tmp_path, monkeypatch):
             "elevenlabs_api_key": "sk_legacy",
         },
     )
+    from heard.tts.managed import ManagedTTS
+
+    assert isinstance(daemon.tts, ManagedTTS)
+
+
+def test_selector_byok_honored_when_granted(tmp_path, monkeypatch):
+    """A granted (byok_enabled) managed account uses its OWN key — the
+    enterprise-privacy / early-tester path: pays for Power, runs on own keys."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok_pro",
+            "heard_plan": "power",
+            "byok_enabled": True,
+            "elevenlabs_api_key": "sk_own",
+        },
+    )
     from heard.tts.elevenlabs import ElevenLabsTTS
 
     assert isinstance(daemon.tts, ElevenLabsTTS)
-    assert daemon.tts.api_key == "sk_legacy"
+    assert daemon.tts.api_key == "sk_own"
 
 
 def test_selector_skips_managed_when_plan_expired(tmp_path, monkeypatch):
