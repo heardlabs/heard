@@ -14,10 +14,6 @@ sign-in handoff. The flow:
      daemon, and bring the onboarding window forward showing
      "✓ Signed in".
 
-A ``heard://auth?token=<bearer>`` form is also accepted (write the
-bearer straight to config, no claim round-trip) so the web side can
-switch to handing back a bearer directly later without an app change.
-
 No copy-paste, no second "Continue with Google" on the web — the
 browser page is a brief "returning you to Heard…" interstitial.
 
@@ -76,7 +72,6 @@ def _reload_and_selftest() -> None:
     except Exception:
         pass
     try:
-        from heard.settings_window import _self_test_managed_async
         _self_test_managed_async()
     except Exception:
         pass
@@ -146,7 +141,10 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
         except Exception:
             pass
     config.set_value("heard_trial_expires_at", int(trial_expires_at or 0))
-    _maybe_start_power_trial(token)  # Power build: auto-enroll the 14-day trial
+    # NOTE: the Power trial is now OPT-IN — the user clicks "Start Power trial"
+    # on the Power-build welcome (home_window._act_start_power_trial), which
+    # calls /v1/power/trial/start. We no longer auto-enroll on sign-in, so a Pro
+    # user on the Power build keeps their plan until they explicitly opt in.
     _reload_and_selftest()
     _bring_onboarding_forward_signed_in(email or "your account")
     # Also refresh the persistent Heard window (the new WebView home/onboarding)
@@ -198,17 +196,7 @@ def handle_url(url_str: str) -> None:
     if host != "auth":
         return
     qs = urllib.parse.parse_qs(parsed.query or "")
-    token = (qs.get("token") or [""])[0].strip()
     code = (qs.get("code") or [""])[0].strip()
-    if token:
-        plan = (qs.get("plan") or ["trial"])[0].strip() or "trial"
-        email = (qs.get("email") or [""])[0].strip()
-        try:
-            trial = int((qs.get("trial_expires_at") or ["0"])[0].strip() or "0")
-        except ValueError:
-            trial = 0
-        _apply_token(token, plan, email, trial)
-        return
     if code:
         threading.Thread(target=_claim_and_apply, args=(code,), daemon=True).start()
 
@@ -244,3 +232,68 @@ def register() -> None:
         )
     except Exception:
         _handler_obj = None
+
+
+def _self_test_managed_async() -> None:
+    """After an install-code claim: one tiny synth through api.heard.dev
+    to confirm the bearer works. Silent on success; on failure posts a
+    notification with a meaningful next step. (Moved here from the retired
+    settings_window.py — url_scheme is its only caller.)"""
+    import threading
+
+    from heard.notify import notify
+
+    def _run() -> None:
+        import os
+        import tempfile
+        import time
+        from pathlib import Path
+
+        time.sleep(1.0)  # let things settle
+        try:
+            cfg = config.load()
+            from heard.tts.managed import ManagedError, ManagedTTS
+
+            tts = ManagedTTS(
+                token=cfg.get("heard_token", ""),
+                base_url=cfg.get("heard_api_base") or "https://api.heard.dev",
+            )
+            fd, path_str = tempfile.mkstemp(suffix=".mp3", prefix="heard-selftest-")
+            os.close(fd)
+            path = Path(path_str)
+            try:
+                tts.synth_to_file("ok", cfg.get("voice", "george"), 1.0,
+                                  cfg.get("lang", "en-us"), path)
+            finally:
+                path.unlink(missing_ok=True)
+        except ManagedError as e:
+            if e.status == 401:
+                notify("Heard — sign-in not recognised",
+                       "Your token was rejected. Redeem a fresh install code.",
+                       kind="onboarding_managed_test_auth")
+            elif e.status == 402:
+                notify("Heard — trial expired",
+                       "Cloud voices need an active plan. Upgrade in Settings, or "
+                       "use a local voice (Settings → Advanced → Offline voice).",
+                       kind="onboarding_managed_test_402")
+            elif e.status == 429:
+                notify("Heard — daily cap already hit",
+                       "You're at today's character cap. Cloud voices reset at the "
+                       "next UTC midnight.",
+                       kind="onboarding_managed_test_429")
+            else:
+                notify("Heard — voice service couldn't be reached",
+                       f"{e.reason}: {e.detail[:100]}".rstrip(": "),
+                       kind="onboarding_managed_test_proxy")
+        except Exception as e:
+            msg = str(e)
+            if "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
+                notify("Heard — TLS handshake failed",
+                       "Couldn't reach Heard cloud over HTTPS. Check your "
+                       "network connection or proxy settings.",
+                       kind="onboarding_managed_test_ssl")
+            else:
+                notify("Heard — voice service couldn't be reached", msg[:120],
+                       kind="onboarding_managed_test_network")
+
+    threading.Thread(target=_run, daemon=True).start()

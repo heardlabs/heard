@@ -12,11 +12,11 @@ from heard import service
 
 def test_plist_bundle_sets_pythonhome():
     bundle_exe = "/Applications/Heard.app/Contents/MacOS/python"
-    plist = service._plist(
+    plist = service._plist_bytes(
         bundle_exe,
         "/tmp/log",
         {"PYTHONHOME": "/Applications/Heard.app/Contents/Resources"},
-    )
+    ).decode()
     assert "EnvironmentVariables" in plist
     assert "<key>PYTHONHOME</key>" in plist
     assert "/Applications/Heard.app/Contents/Resources" in plist
@@ -25,7 +25,7 @@ def test_plist_bundle_sets_pythonhome():
 
 def test_plist_pipx_no_env_block():
     pipx_exe = "/Users/x/.local/pipx/venvs/heard/bin/python"
-    plist = service._plist(pipx_exe, "/tmp/log", {})
+    plist = service._plist_bytes(pipx_exe, "/tmp/log", {}).decode()
     # No EnvironmentVariables block at all when env is empty —
     # pipx's interpreter doesn't need PYTHONHOME.
     assert "EnvironmentVariables" not in plist

@@ -229,7 +229,7 @@ def test_stage_and_swap_writes_helper_without_spawning(_scratch):
     staged = data_dir / "updates" / "staging" / "Heard.app"
     staged.mkdir(parents=True)
 
-    with patch("subprocess.Popen") as popen:
+    with patch("subprocess.Popen") as popen, patch("heard.updater.verify_staged_app"):
         helper = updater.stage_and_swap(
             staged,
             "0.8.1",
@@ -253,7 +253,7 @@ def test_stage_and_swap_spawns_detached_helper(_scratch):
     staged = data_dir / "updates" / "staging" / "Heard.app"
     staged.mkdir(parents=True)
 
-    with patch("subprocess.Popen") as popen:
+    with patch("subprocess.Popen") as popen, patch("heard.updater.verify_staged_app"):
         updater.stage_and_swap(
             staged, "0.8.1", parent_pid=os.getpid(), target_app=install_path
         )

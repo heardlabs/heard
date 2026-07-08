@@ -1,3 +1,4 @@
+import shlex
 import sys
 
 from heard.adapters import claude_code, codex
@@ -23,5 +24,8 @@ def build_hook_command(agent: str) -> str:
     if "/Contents/MacOS/" in exe and ".app/" in exe:
         bundle_root = exe.split("/Contents/MacOS/")[0]
         pythonhome = f"{bundle_root}/Contents/Resources"
-        return f'PYTHONHOME="{pythonhome}" "{exe}" -m heard.hook {agent}'
-    return f'"{exe}" -m heard.hook {agent}'
+        return (
+            f"PYTHONHOME={shlex.quote(pythonhome)} {shlex.quote(exe)} "
+            f"-m heard.hook {shlex.quote(agent)}"
+        )
+    return f"{shlex.quote(exe)} -m heard.hook {shlex.quote(agent)}"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import plistlib
 import subprocess
 import sys
 from pathlib import Path
@@ -29,50 +30,27 @@ def _interpreter_env() -> tuple[str, dict[str, str]]:
     return exe, env
 
 
-def _env_block(env: dict[str, str]) -> str:
-    if not env:
-        return ""
-    pairs = "".join(
-        f"        <key>{k}</key>\n        <string>{v}</string>\n" for k, v in env.items()
-    )
-    return (
-        "    <key>EnvironmentVariables</key>\n"
-        "    <dict>\n"
-        f"{pairs}"
-        "    </dict>\n"
-    )
-
-
-def _plist(python_bin: str, log_path: str, env: dict[str, str]) -> str:
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{python_bin}</string>
-        <string>-m</string>
-        <string>heard.daemon</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-{_env_block(env)}    <key>StandardOutPath</key>
-    <string>{log_path}</string>
-    <key>StandardErrorPath</key>
-    <string>{log_path}</string>
-</dict>
-</plist>
-"""
+def _plist_bytes(python_bin: str, log_path: str, env: dict[str, str]) -> bytes:
+    """Build the LaunchAgent plist as a dict and serialize via ``plistlib``
+    so special characters in the interpreter path / log path / env values
+    are XML-escaped correctly instead of breaking the document."""
+    plist: dict[str, object] = {
+        "Label": LABEL,
+        "ProgramArguments": [python_bin, "-m", "heard.daemon"],
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "StandardOutPath": log_path,
+        "StandardErrorPath": log_path,
+    }
+    if env:
+        plist["EnvironmentVariables"] = dict(env)
+    return plistlib.dumps(plist)
 
 
 def install(log_path: str) -> None:
     LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
     exe, env = _interpreter_env()
-    PLIST_PATH.write_text(_plist(exe, log_path, env), encoding="utf-8")
+    PLIST_PATH.write_bytes(_plist_bytes(exe, log_path, env))
     subprocess.run(
         ["launchctl", "unload", str(PLIST_PATH)],
         check=False,

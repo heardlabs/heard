@@ -45,6 +45,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -454,9 +455,40 @@ def unzip_app(zip_path: Path, staging_dir: Path) -> Path:
 
     The release zips ship the bundle directly at the root, so the
     archive layout is ``Heard.app/...``. Anything else is treated as a
-    corrupt asset."""
+    corrupt asset.
+
+    Before extracting we validate every archive member (zip-slip
+    defense): any member whose resolved path escapes ``staging_dir`` is
+    rejected, and the archive's single top-level entry must be
+    ``Heard.app``. A crafted zip with a ``../../foo`` member could
+    otherwise write outside the staging dir when handed to
+    ``/usr/bin/unzip``."""
     staging_dir.mkdir(parents=True, exist_ok=True)
     staged = staging_dir / "Heard.app"
+
+    # Zip-slip + layout validation, up front, before touching the disk.
+    staging_resolved = staging_dir.resolve()
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            names = zf.namelist()
+    except (zipfile.BadZipFile, OSError) as e:
+        raise UpdateInstallError(f"release zip is unreadable: {e}") from e
+    top_levels: set[str] = set()
+    for name in names:
+        dest = (staging_resolved / name).resolve()
+        if dest != staging_resolved and not dest.is_relative_to(staging_resolved):
+            raise UpdateInstallError(
+                f"release zip member escapes staging dir (zip-slip): {name!r}"
+            )
+        first = name.lstrip("/").split("/", 1)[0]
+        if first:
+            top_levels.add(first)
+    if top_levels != {"Heard.app"}:
+        raise UpdateInstallError(
+            "release zip top-level is not a single Heard.app "
+            f"(found: {sorted(top_levels)})"
+        )
+
     if staged.exists():
         # rm -rf via shell — Python's shutil.rmtree blows up on macOS
         # bundles with broken symlinks inside the Frameworks dir, which
@@ -479,6 +511,57 @@ def unzip_app(zip_path: Path, staging_dir: Path) -> Path:
             f"(staging dir: {staging_dir})"
         )
     return staged
+
+
+# Our Apple Developer ID team. Any staged bundle we swap in MUST be
+# signed by this team — a codesign check is the only thing standing
+# between a tampered/attacker-supplied zip and us moving it into
+# /Applications and stripping its quarantine xattr.
+_EXPECTED_TEAM_ID = "GWGX8RY6P9"
+
+
+def verify_staged_app(staged_app: Path) -> None:
+    """Verify a staged ``Heard.app`` before we swap it into place.
+
+    Two independent checks, both of which must pass:
+
+    1. ``codesign --verify --deep --strict`` — the signature is intact
+       and nothing in the bundle was altered after signing.
+    2. The bundle's ``TeamIdentifier`` is our Developer ID team
+       (``GWGX8RY6P9``) — it was signed by us, not re-signed by whoever
+       supplied the zip.
+
+    Raises ``UpdateInstallError`` on any failure so the caller aborts the
+    swap and never moves an unverified bundle into /Applications."""
+    if not staged_app.is_dir():
+        raise UpdateInstallError(f"staged bundle missing at {staged_app}")
+
+    verify = subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(staged_app)],
+        capture_output=True,
+        text=True,
+    )
+    if verify.returncode != 0:
+        raise UpdateInstallError(
+            f"codesign verification failed: {verify.stderr.strip() or 'unknown'}"
+        )
+
+    info = subprocess.run(
+        ["/usr/bin/codesign", "-dv", "--verbose=4", str(staged_app)],
+        capture_output=True,
+        text=True,
+    )
+    # codesign writes the -dv report to stderr; read both streams to be safe.
+    team = ""
+    for line in f"{info.stderr}\n{info.stdout}".splitlines():
+        if line.startswith("TeamIdentifier="):
+            team = line.split("=", 1)[1].strip()
+            break
+    if team != _EXPECTED_TEAM_ID:
+        raise UpdateInstallError(
+            f"staged bundle team identifier {team or '(none)'!r} "
+            f"!= expected {_EXPECTED_TEAM_ID!r}"
+        )
 
 
 def _build_swap_script(
@@ -569,7 +652,16 @@ def stage_and_swap(
 
     The caller is expected to ``rumps.quit_application()`` (or
     equivalent) shortly after this returns; the helper waits up to
-    30 s for the PID to exit before proceeding."""
+    30 s for the PID to exit before proceeding.
+
+    Refuses to swap a bundle that fails codesign verification
+    (``verify_staged_app``) — a tampered or attacker-supplied zip must
+    never reach /Applications with its quarantine stripped."""
+    # Gate: verify the staged bundle's signature + Developer ID team
+    # BEFORE we build/spawn the swap helper. Raises UpdateInstallError
+    # (surfaced to the UI as "update failed"); we do NOT swap.
+    verify_staged_app(staged_app)
+
     parent_pid = parent_pid if parent_pid is not None else os.getpid()
     updates_dir = _updates_dir()
     updates_dir.mkdir(parents=True, exist_ok=True)
