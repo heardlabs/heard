@@ -482,7 +482,7 @@ function renderHome(){
         <button class="btn btn-ghost" style="padding:9px 16px" onclick="bridge('manage_account')">Open</button>
       </div>
     </div>
-    ${(!S.signedIn || S.byokEnabled) ? `${_HD('API keys')}
+    ${S.byokEnabled ? `${_HD('API keys')}
     <div style="font:400 12.5px/1.5 var(--sans);color:var(--ink-2);margin:-6px 0 10px">Bring your own keys. Heard sends narration <b>straight to these providers</b> using your key - never through our servers. Leave blank to use your plan’s cloud voices, or the local Kokoro voice for zero cloud.</div>
     <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:2px 18px 14px">
       ${_keyRow('elevenlabs','ElevenLabs · voice','xi-api-key…')}

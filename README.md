@@ -36,9 +36,9 @@
 
 https://github.com/user-attachments/assets/d823a946-fb6f-438b-904f-aa66d4268ed1
 
-## Install
+## Get the app
 
-Bring an [ElevenLabs](https://elevenlabs.io) key for the best voices, or use **Kokoro** — free, local, no key.
+The app is the **managed** experience: download, sign in, and you're narrating - Heard runs the cloud voices and the narration brain for you, no keys to manage. Prefer to run it yourself with your own keys? See [Self-host](#self-host-open-source).
 
 ### Have your coding tool install it (recommended)
 
@@ -58,6 +58,17 @@ Heard supports both **Codex CLI** and **Codex App**.
 - **Codex App:** keep Heard running from the menu bar. Heard watches Codex Desktop's local session log and narrates new app activity automatically once Codex is enabled.
 
 You should not need to run a development daemon. If Heard ever starts with a stale daemon socket or pid file, the app now cleans that up on launch.
+
+## Plans
+
+| | Voice | Talk back | Setup | Price |
+|---|---|---|---|---|
+| **Self-host** (open source) | BYO ElevenLabs, or local Kokoro | - | Clone + configure (terminal) | Free · your API bill |
+| **Free** | Managed cloud (daily cap) | - | Download + sign in | Free |
+| **Pro** | Managed cloud, all voices, higher caps | - | Download + sign in | $15/mo |
+| **Power** | Managed cloud | **Yes** - hands-free voice control (talk *to* your agent) | Download + sign in | $30/mo |
+
+Pro and Power are the managed tiers - we run the voices and the narration brain for you, gated by your plan. [See pricing →](https://heard.dev/pricing)
 
 ## What it does
 
@@ -101,6 +112,26 @@ Pin a specific session if you want to focus: menu bar → Active agents → clic
 The basics — persona, voice, speed, mode, pause/resume — all live in the menu bar. Hotkeys: ⇧⌥. to pause, ⇧⌥, to resume.
 
 Deeper knobs (verbosity profiles, per-repo overrides, narration preferences) live in Settings or `.heard.yaml`. Most users never need to touch them — Heard's listening modes cover the common cases on their own.
+
+## Self-host (open source)
+
+Heard is Apache-2.0. The packaged app above is the managed experience; if you'd rather run it from source — your own keys, no account, full control — clone and configure it:
+
+```bash
+git clone https://github.com/heardlabs/heard.git
+cd heard
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# bring your own keys — used directly by the daemon, nothing through our servers
+heard config set elevenlabs_api_key <your-key>   # voice (skip this → local Kokoro)
+heard config set anthropic_api_key <your-key>    # narration brain (skip → neutral templates)
+
+# wire up your coding agent — the daemon auto-starts on the first tool call
+heard install claude-code        # also: codex-cli, codex-app
+```
+
+That's the DIY path: you own keys, updates, and config. Everything's configurable (personas in `heard/personas/*.md`, verbosity in `heard/profiles/*.yaml`, per-repo `.heard.yaml`). The managed tiers are the same engine with the voices + brain run for you.
 
 ## FAQ
 
