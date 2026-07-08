@@ -1,28 +1,24 @@
-"""Layer 5 — Harness Agent (NARRATE-only prototype).
+"""Layer 5 — Harness Agent. The mandatory narration brain.
 
-This is the make-or-break A/B for the v2 architecture. The harness
-replaces today's three-stage decision (verbosity gate → multi-agent
-router → persona Haiku rewrite) with one Haiku call that has access
-to:
+This is the single decision point for prose and finals. For each such
+event the harness makes one Haiku call that has access to:
 
   * Persona + cross-persona narration rules (Layer "soft-core")
   * Agent State (Layer 2 — the scoreboard, all active agents)
-  * Working Memory (Layer 3 — STUB string for the prototype; the real
-    Working Memory lands in Phase 3 step 7)
-  * Preferences (Layer 6 — STUB for the prototype; Phase 4 will fill in)
+  * Working Memory (Layer 3 — the rolling prose summary)
+  * Preferences (Layer 6 — folded into the system block)
   * The current event
 
 The harness makes a single decision per call: speak / skip, scope,
-altitude. The architecture-v2 doc describes a richer decision space
-(timing, salience, voice override); the prototype handles speak vs.
-skip + plain-text output and defers the rest.
+altitude — returned as a `HarnessDecision`.
 
-**A/B gating.** Driven by `cfg["harness_enabled"]`. Off by default
-(zero impact on existing users). When on, the harness gets first shot
-at every event the daemon would have processed; on any None / failure
-it falls through to the v1 path (verbosity + multi_agent + persona
-rewrite). v1 is the safety net — see architecture-v2 "Failure-fallback
-policy".
+**Not optional.** `is_enabled()` always returns True; the harness gets
+first shot at every prose/final event. Tool events skip it and go to
+fast-path templates (`should_use_fast_path`). The ONLY fallback is the
+daemon's no-LLM floor (`Daemon._floor_text`), which fires when this call
+returns `None` — i.e. the LLM is unreachable (managed daily cap, outage,
+or no provider configured). There is no legacy pipeline behind it; the
+old verbosity → multi_agent → persona-rewrite path was removed.
 
 **Cache strategy.** System block is byte-stable per session: persona +
 shared rules + (eventually) preferences. Goes through
@@ -173,7 +169,7 @@ def warm_cache(
 #   * Real per-event Haiku token cost (every routine `cat` reads
 #     the prompt + writes a sentence — adds up fast on a heavy day)
 #   * A risk of the harness over-silencing trivia (which it already
-#     demonstrated during K.'s first session — that was the
+#     demonstrated during the maintainer's first session — that was the
 #     `default-speak` prompt rebalance)
 #
 # So: classify each event deterministically here. If it's
