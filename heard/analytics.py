@@ -1,18 +1,15 @@
 """PostHog product analytics for Heard.
 
-Two-tier capture model (matches the proposal K. signed off on):
+Opt-out. Analytics are ON by default (the `product_analytics` config flag
+defaults to True) with a one-time disclosure; a user can turn them off in
+Settings. When they do, NOTHING fires — no event bypasses the flag (the
+earlier "Tier 1 always-on" carve-out was removed, so opt-out is fully honored).
 
-  Tier 1 — always on, no consent UI.
-    Anonymous health metrics tied to an `install_id` (UUID written to
-    config on first launch). Events: app launches, wizard funnel,
-    hook installs, greeting playback, synth failures, defect reports.
-    No PII. Powers the acquisition + activation funnels and the
-    quality dashboards.
-
-  Tier 2 — opt-in via the `product_analytics` config flag.
-    Identified usage analytics tied to the signed-in `user_id`.
-    Events: narration_spoken (sampled), setting_changed, session_*.
-    Powers engagement + retention cohorts.
+Events are anonymous (tied to an `install_id` UUID, or the signed-in `user_id`
+after sign-in) and carry NO transcript content — only usage / funnel signals:
+app launches, the wizard funnel, synth failures, sampled narration counts,
+setting changes. Signed-in conversions (sign-in, trial, plan changes) are also
+counted server-side by api.heard.dev.
 
 PostHog Project API Key is the public ingest key (`phc_…`) — designed
 to be embedded in client code, can only POST events, can't query or
@@ -41,48 +38,13 @@ from heard import config
 
 # --- configuration -------------------------------------------------------
 
-# US Cloud — K.'s project sits at posthog.com (US region). EU Cloud users
-# would use https://eu.i.posthog.com.
+# US Cloud (PostHog). EU Cloud deployments would use https://eu.i.posthog.com.
 POSTHOG_HOST = "https://us.i.posthog.com"
 POSTHOG_KEY = "phc_e5ekF1UGPd2tNYtuu8BXrmi4DP6YAYzhBmw57F0EBXj"
 
 # Sampling for high-frequency events. 1:10 keeps `narration_spoken` under
 # PostHog's 1M-events/month free-tier ceiling at ~3K DAU.
 DEFAULT_SAMPLE_RATE = 10
-
-# Events that bypass the product_analytics opt-in gate. These are the
-# anonymous health / funnel signals — no user PII, no cross-account
-# tracking, operationally necessary to know whether the product works
-# at all. Documented in the privacy posture.
-_TIER_1_EVENTS = frozenset({
-    "app_first_launched",
-    "app_launched",
-    "app_updated",
-    "wizard_viewed",
-    "wizard_completed",
-    "wizard_abandoned",
-    "hook_installed",
-    "hook_uninstalled",
-    "greeting_played",
-    "synth_failed",
-    "audio_cutoff_detected",
-    "harness_fallback",
-    "app_crashed",
-    "defect_reported",
-    # Lifecycle / revenue signals. Anonymous (hashed user id), very low
-    # volume, and the core "is the business working" funnel — trial start,
-    # sign-in, and every plan transition (upgrade / trial-drop / churn).
-    # Kept in Tier 1 so they fire even for users who opt out of the
-    # richer Tier 2 product analytics; without them we'd be blind to
-    # conversions for exactly the privacy-conscious cohort.
-    "signin_completed",
-    "trial_started",
-    "plan_changed",
-    # The once-per-day "user actually heard Heard today" signal.
-    # Fires at most once per local day per install — see
-    # `Daemon._speak` in heard/daemon.py for the gating.
-    "narration_played_today",
-})
 
 # --- internal state ------------------------------------------------------
 
@@ -130,11 +92,11 @@ def _user_id_or_install() -> str:
 
 
 def _consent_for(event: str) -> bool:
-    """True if this event is allowed to fire under the current config.
-    Tier 1 always fires. Tier 2 only with the opt-in flag."""
-    if event in _TIER_1_EVENTS:
-        return True
-    return bool(config.load().get("product_analytics", False))
+    """True unless the user has opted out. Analytics are ON by default; when a
+    user turns `product_analytics` off, NOTHING fires — no event bypasses the
+    flag (opt-out is fully honored, unlike the earlier Tier-1 carve-out).
+    Signed-in conversions are also counted server-side by api.heard.dev."""
+    return bool(config.load().get("product_analytics", True))
 
 
 def _environment() -> str:
@@ -241,8 +203,9 @@ def capture(
     *,
     set_person: dict[str, Any] | None = None,
 ) -> None:
-    """Fire a PostHog event. Gated by Tier 1 / Tier 2 rules. Non-blocking
-    (POST runs on a daemon thread).
+    """Fire a PostHog event. Gated by the `product_analytics` flag (on by
+    default; when the user opts out, nothing fires — no event bypasses it).
+    Non-blocking (POST runs on a daemon thread).
 
     ``set_person`` attaches PostHog's ``$set`` so the event also updates
     the person's profile properties (e.g. their current ``plan`` after an
