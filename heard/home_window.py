@@ -299,10 +299,22 @@ def _speak_greeting(voice_name: str) -> None:
     """The original welcome hello — synth 'Hi, I'm <persona>. I'm up in your
     menu bar…' in the persona's real voice (matches the first-launch greeting)."""
     try:
-        import tempfile
-
         from heard import persona as _persona
 
+        # 1. Bundled fixed MP3 — Jarvis ships `assets/welcome-jarvis.mp3`,
+        # pre-synthed at build time (the SAME file the daemon's first-launch
+        # greeting plays). Preferred: identical every play, no synth, no API.
+        bundled = Path(__file__).parent / "assets" / f"welcome-{voice_name.lower()}.mp3"
+        if bundled.is_file():
+            _play_file(bundled)
+            return
+        # 2. Other personas have no bundled MP3 → cache one per persona: synth
+        # once, then replay the same file. No repeat ElevenLabs calls, and it
+        # sounds identical every time (live synth is non-deterministic).
+        cache = config.DATA_DIR / f"greet_{voice_name.lower()}.mp3"
+        if cache.exists() and cache.stat().st_size > 0:
+            _play_file(cache)
+            return
         cfg = config.load()
         try:
             tts_voice = _persona.load(voice_name).voice or voice_name
@@ -313,12 +325,12 @@ def _speak_greeting(voice_name: str) -> None:
             return
         name = voice_name.capitalize()
         line = (
-            f"Hi, I'm {name}. I'm up in your menu bar at the top of your screen. "
+            f"Hi! I'm {name}. I'm up in your menu bar, at the top of your screen. "
             "Look for my icon, and let's get you set up."
         )
-        path = Path(tempfile.mktemp(suffix=getattr(tts, "AUDIO_EXT", ".mp3")))
-        tts.synth_to_file(line, tts_voice, 1.0, "en", path)
-        _play_file(path)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tts.synth_to_file(line, tts_voice, 1.0, "en", cache)
+        _play_file(cache)
     except Exception as e:
         _log_bridge_error("greet", e)
 
@@ -384,12 +396,18 @@ def _build_controller_class():
             self._pending_start = start
             if self._window is None:
                 self._make_window()
+                # Fresh window: didFinishNavigation fires _push_state (which
+                # consumes _pending_start → goto). Push now too in case the page
+                # was already cached-loaded.
+                self._push_state()
             else:
-                # Reload so a re-open reflects fresh content (and hot-patched
-                # HTML during dev). _push_state re-fires on didFinishNavigation.
+                # Re-open: reload so fresh content shows. Do NOT _push_state here
+                # — it would run before the reload finishes and consume
+                # _pending_start, so the goto lands on the old page and is lost.
+                # didFinishNavigation does the push (+ goto) once the reload is
+                # actually done.
                 self._web.reload()
             self._window.makeKeyAndOrderFront_(None)
-            self._push_state()
 
         def _make_window(self):
             # NO fullSizeContentView: the WKWebView renders out-of-process and
@@ -585,6 +603,28 @@ def _build_controller_class():
                 # voice-mode radio, which sets both.
                 config.set_value("push_to_talk", True)
                 _reload_daemon()
+                # CRITICAL: the serve is a subprocess with no UI, so it can't
+                # show the mic TCC prompt — macOS silently KILLS it the moment it
+                # opens the mic (a native crash, no traceback → the serve
+                # crash-loops and PTT never works). The prompt must come from
+                # THIS app process. Request it here; once the app holds the grant
+                # the serve inherits it, and we reload to respawn it immediately
+                # (skipping the supervisor's crash backoff).
+                try:
+                    from AVFoundation import AVCaptureDevice, AVMediaTypeAudio
+
+                    def _after(granted):
+                        try:
+                            if granted:
+                                _reload_daemon()
+                        except Exception:
+                            pass
+
+                    AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+                        AVMediaTypeAudio, _after
+                    )
+                except Exception as e:
+                    _log_bridge_error("enable_whisper_mic", e)
             except Exception as e:
                 _log_bridge_error("enable_whisper", e)
 

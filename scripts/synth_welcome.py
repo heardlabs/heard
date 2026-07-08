@@ -31,8 +31,8 @@ import certifi  # noqa: E402
 from heard import persona as persona_mod  # noqa: E402
 
 GREETING = (
-    "Hi! I'm Jarvis. I'm up in your menu bar, just look for my icon at "
-    "the top. Let's get you set up in 3 easy steps."
+    "Hi! I'm Jarvis. I'm up in your menu bar, at the top of your screen. "
+    "Look for my icon, and let's get you set up."
 )
 
 OUT_PATH = ROOT / "heard" / "assets" / "welcome-jarvis.mp3"
@@ -48,11 +48,14 @@ OUT_PATH = ROOT / "heard" / "assets" / "welcome-jarvis.mp3"
 #   - similarity_boost=0.80 — fidelity to the cloned voice.
 #   - style=0.55 — boosts expressive range (multilingual_v2 only).
 #   - use_speaker_boost=True — sharpens vocal presence.
+# "Warm" tuning (variant B, chosen 2026-07-07). stability 0.30 was erratic —
+# jittery subtleties. 0.42 keeps it expressive but steady; style 0.45 for a
+# natural butler lift; similarity 0.85 for fidelity.
 MODEL_ID = "eleven_multilingual_v2"
 VOICE_SETTINGS = {
-    "stability": 0.30,
-    "similarity_boost": 0.80,
-    "style": 0.55,
+    "stability": 0.42,
+    "similarity_boost": 0.85,
+    "style": 0.45,
     "use_speaker_boost": True,
 }
 

@@ -19,5 +19,29 @@
          narrow set we actually use for bootstrapping. -->
     <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
+
+    <!-- Heard Power's voice service (the bundled `python -m heard_power serve`)
+         opens the microphone for dictation. Under the hardened runtime, macOS
+         DENIES mic access outright — with NO TCC prompt — unless the binary
+         carries this entitlement. Without it the serve is killed the instant it
+         touches the mic (a silent native crash → crash-loop → PTT never works),
+         and it only appeared to work in unsigned dev builds where the runtime
+         doesn't enforce entitlements. NSMicrophoneUsageDescription (Info.plist)
+         supplies the prompt text; this entitlement is what actually allows it. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Heard Power's STT pipeline pulls in numba/llvmlite (via librosa), which
+         JIT-compiles to executable memory at runtime. Under the hardened
+         runtime macOS KILLS the process the instant it hits an unsigned
+         executable page — SIGKILL "Code Signature Invalid / Invalid Page",
+         crashing in libllvmlite.dylib ~2s after the serve goes ready. These two
+         entitlements permit JIT / unsigned executable memory so numba can run.
+         (This was the real PTT-never-worked crash; unsigned dev builds don't
+         enforce it.) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
 </dict>
 </plist>

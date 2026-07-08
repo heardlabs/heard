@@ -102,7 +102,7 @@
   .vcard .nm{font:500 13px var(--sans);color:var(--ink);}
   .vcard .ta{font:400 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
   .vcard .ck{position:absolute;top:9px;right:10px;width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;}
-  .vbadge{position:absolute;top:9px;left:10px;font:600 8px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--terra);background:rgba(178,91,65,.1);padding:3px 7px;border-radius:999px;}
+  .vbadge{position:absolute;top:0;left:50%;transform:translate(-50%,-50%);white-space:nowrap;font:600 8px var(--mono);letter-spacing:.05em;text-transform:uppercase;color:#fff;background:var(--terra);padding:4px 9px;border-radius:999px;box-shadow:0 3px 8px rgba(178,91,65,.35);z-index:2;}
   .vcard.sel .ck{display:flex;}
   /* per-beat: mic listening */
   @keyframes listen{0%,100%{transform:scale(1);opacity:.92}50%{transform:scale(1.09);opacity:1}}
@@ -300,6 +300,13 @@ function render(){
   if(active==='voice' && !['aria','friday','jarvis','atlas'].includes((S.voice||'').toLowerCase())){
     S.voice='jarvis'; bridge('set_voice',{voice:'jarvis'}); setTimeout(render,0);
   }
+}
+// Pick a voice WITHOUT a full re-render (no flash) — toggle .sel + the ✓ note.
+function pickVoice(id){
+  S.voice=id; bridge('set_voice',{voice:id});
+  document.querySelectorAll('.vcard').forEach(c=>c.classList.toggle('sel', c.dataset.voice===id));
+  const note=document.querySelector('.voice-note');
+  if(note) note.textContent='✓ '+(({jarvis:'Jarvis',aria:'Aria',friday:'Friday',atlas:'Atlas'})[id]||id);
 }
 // Voice preview: poke native to synth + play a sample in that voice.
 function previewVoice(btn, voice){
@@ -508,7 +515,7 @@ const SCREENS = {
       <h1 class="hero" style="font-size:56px">Choose your voice.</h1>
       <p class="lede">Cloud voices are included with your plan. Hit Preview to hear each, then pick the one that sounds like you.</p>
       <div class="vcards">${voices.map(v=>`
-        <div class="vcard ${sel===v[0]?'sel':''}" onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});render()">
+        <div class="vcard ${sel===v[0]?'sel':''}" data-voice="${v[0]}" onclick="pickVoice('${v[0]}')">
           <div class="ck">✓</div>
           ${v[4]?`<div class="vbadge">most picked</div>`:''}
           <div class="av" style="background:radial-gradient(circle at 50% 50%,${v[3]})"></div>
@@ -518,37 +525,47 @@ const SCREENS = {
       <div class="spacer"></div>
       <div class="row">
         <button class="btn btn-primary" onclick="next()">Continue</button>
-        ${pname?`<span class="done-note">✓ ${pname}</span>`:''}
+        <span class="done-note voice-note">✓ ${pname||'Jarvis'}</span>
       </div>
     </section>`; },
   // Heard Whisper: first enable it (design's "Speak, don't type"), then the
   // read-aloud mic test folds in so they feel it work before moving on.
   whisper(){
     const on = S.whisperOn;
-    const bars = [['#cf7d64','38%',''],['#c07a95','78%','.1s'],['#8c93d6','100%','.2s'],['#a98bb4','56%','.3s'],['#cf7d64','84%','.15s']]
-      .map(([c,h,d])=>`<div class="wf-bar" style="width:3px;height:${h};border-radius:3px;background:${c};transform-origin:center;animation:wf 1s ease-in-out infinite ${d};animation-play-state:paused"></div>`).join('');
-    return `<section class="screen">
-      <div class="eyebrow">Heard Whisper</div>
-      <h1 class="hero" style="font-size:40px">Speak, don’t type.</h1>
-      <p class="lede" style="max-width:440px;margin-top:14px">Dictate prompts by voice — hold <span class="kbd">Right ⌘</span> and just talk.${on?' Read the line below to try it.':''}</p>
-      ${on?`<div style="max-width:470px;margin-top:14px;font:400 13px/1.5 var(--sans);color:var(--ink-2)">Read aloud: <span style="font-family:var(--serif);font-style:italic;font-size:17px;color:var(--ink)">“Ship the payments migration, then run the tests.”</span></div>`:''}
-      <!-- design's voice-input card -->
-      <div style="margin-top:16px;background:#fff;border:1px solid #ece7e2;border-radius:15px;box-shadow:0 14px 30px -20px rgba(20,20,40,.3);padding:15px 17px;max-width:470px">
+    const line=(icon,head,body)=>`<div style="display:flex;gap:12px;align-items:flex-start"><span style="font-size:17px;line-height:1.3;flex:0 0 auto">${icon}</span><div style="font:400 13px/1.45 var(--sans);color:var(--ink-2)"><b style="color:var(--ink)">${head}</b> ${body}</div></div>`;
+    const modes=[
+      line('🎙️','Push to talk:','hold <span class="kbd" style="font-size:11px">Right ⌘</span> and talk anywhere you type. Release to send.'),
+      line('👂','Hands-free (ambient):','always on, no keys. Just talk and Heard dictates as you go, standing down when you fall quiet and waking on your next words.'),
+    ].join('');
+    const notes=[
+      line('⏸️','Pauses itself on calls:','it watches your mic and steps aside while you talk. You can also pause Heard from the menu bar.'),
+      line('🎧','Use headphones','so you keep to yourself and Heard doesn’t mistake its own voice for yours. On speaker? Cut Heard off anytime, and it lines up its reports until you stop talking.'),
+    ].join('');
+    const rows=`${modes}<div style="font:600 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:6px 0 -2px">Good to know</div>${notes}`;
+    const bars=[['#cf7d64','38%',''],['#c07a95','78%','.1s'],['#8c93d6','100%','.2s'],['#a98bb4','56%','.3s'],['#cf7d64','84%','.15s']].map(([c,h,d])=>`<div class="wf-bar" style="width:3px;height:${h};border-radius:3px;background:${c};transform-origin:center;animation:wf 1s ease-in-out infinite ${d};animation-play-state:paused"></div>`).join('');
+    const test = `
+      <div style="max-width:490px;margin-top:16px;font:400 13px/1.5 var(--sans);color:var(--ink-2)">Hold <span class="kbd">Right ⌘</span> and read this aloud (don’t type): <span style="font-family:var(--serif);font-style:italic;font-size:16px;color:var(--ink)">“Ship the payments migration, then run the tests.”</span></div>
+      <div style="margin-top:11px;background:#fff;border:1px solid #ece7e2;border-radius:15px;box-shadow:0 14px 30px -20px rgba(20,20,40,.3);padding:14px 16px;max-width:490px">
         <div style="display:flex;align-items:center;gap:12px">
-          <div style="width:34px;height:34px;border-radius:50%;flex:0 0 auto;background:#cf5b3c;display:flex;align-items:center;justify-content:center"><div style="position:relative;width:10px;height:14px;border:1.7px solid #fff;border-radius:5px"><div style="position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:1.7px;height:3.5px;background:#fff"></div></div></div>
-          <div id="mic-wave" style="display:flex;align-items:center;gap:2.5px;height:22px;flex:1;opacity:.35">${bars}</div>
+          <div style="width:32px;height:32px;border-radius:50%;flex:0 0 auto;background:#cf5b3c;display:flex;align-items:center;justify-content:center"><div style="position:relative;width:9px;height:13px;border:1.7px solid #fff;border-radius:5px"><div style="position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);width:1.7px;height:3.5px;background:#fff"></div></div></div>
+          <div id="mic-wave" style="display:flex;align-items:center;gap:2.5px;height:20px;flex:1;opacity:.35">${bars}</div>
           <span id="mic-lbl" style="font:500 10px var(--mono);color:#8a8a8a;visibility:hidden">LISTENING</span>
         </div>
-        <div style="margin-top:12px;padding-top:11px;border-top:1px solid #f2efeb;font-family:var(--serif);font-style:italic;font-size:17px;line-height:1.4;color:var(--ink);min-height:24px">“<input id="mic-in" ${on?'':'disabled'} oninput="micHeard(this.value)" placeholder="your words appear here…" style="border:none;outline:none;background:transparent;font-family:var(--serif);font-style:italic;font-size:17px;color:var(--ink);width:calc(100% - 22px)">”</div>
-        <div id="mic-ok" style="margin-top:8px;font:500 12px var(--sans);opacity:0;transition:opacity .3s;color:var(--ok)">✓ Heard you clearly.</div>
-      </div>
-      <div style="display:flex;align-items:flex-start;gap:8px;margin-top:14px;font:400 12px/1.45 var(--sans);color:#8a8a8a;max-width:440px"><span style="font-size:14px">🎧</span>Heard works best with headphones, so it doesn’t mistake its own voice for yours.</div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #f2efeb;font-family:var(--serif);font-style:italic;font-size:16px;line-height:1.4;color:var(--ink);min-height:22px">“<input id="mic-in" oninput="micHeard(this.value)" placeholder="…your dictation shows here" style="border:none;outline:none;background:transparent;font-family:var(--serif);font-style:italic;font-size:16px;color:var(--ink);width:calc(100% - 22px)">”</div>
+        <div id="mic-ok" style="margin-top:7px;font:500 12px var(--sans);opacity:0;transition:opacity .3s;color:var(--ok)">✓ Heard you clearly.</div>
+      </div>`;
+    return `<section class="screen">
+      <div class="eyebrow">Heard Whisper</div>
+      <h1 class="hero" style="font-size:44px">Speak, don’t type.</h1>
+      ${on
+        ? `<p class="lede" style="max-width:500px;margin-top:12px">Whisper’s on. Read the line below to try it.</p>${test}`
+        : `<p class="lede" style="max-width:500px;margin-top:12px">Heard’s voice-to-text. Two ways to dictate to your agents instead of typing:</p>
+           <div style="max-width:540px;margin-top:18px;display:flex;flex-direction:column;gap:12px">${rows}</div>
+           <p style="margin-top:20px;font:400 13px var(--sans);color:var(--ink-2)">Press below to enable Heard Whisper.</p>`}
       <div class="spacer"></div>
-      <div class="row">
-        ${on
-          ? `<button class="btn btn-primary" onclick="next()">Continue</button><button class="btn btn-ghost" onclick="next()">Skip for now</button>`
-          : `<button class="btn btn-primary" onclick="bridge('enable_whisper')">Enable Heard Whisper</button><button class="btn btn-ghost" onclick="next()">Maybe later</button>`}
-      </div>
+      <div class="row">${on
+        ? `<button class="btn btn-primary" onclick="next()">Continue</button><button class="btn btn-ghost" onclick="next()">Skip for now</button>`
+        : `<button class="btn btn-primary" onclick="bridge('enable_whisper')">Enable Heard Whisper</button><button class="btn btn-ghost" onclick="next()">Maybe later</button>`}</div>
     </section>`;
   },
   phone(){ return `<section class="screen">
