@@ -103,6 +103,16 @@
   .vcard .ta{font:400 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
   .vcard .ck{position:absolute;top:9px;right:10px;width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;display:none;align-items:center;justify-content:center;}
   .vbadge{position:absolute;top:0;left:50%;transform:translate(-50%,-50%);white-space:nowrap;font:600 8px var(--mono);letter-spacing:.05em;text-transform:uppercase;color:#fff;background:var(--terra);padding:4px 9px;border-radius:999px;box-shadow:0 3px 8px rgba(178,91,65,.35);z-index:2;}
+  .modecard{display:flex;align-items:flex-start;gap:12px;border:1px solid var(--line);border-radius:13px;padding:10px 14px;cursor:pointer;background:var(--card);transition:border-color .15s,box-shadow .15s;}
+  .modecard.sel{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink);}
+  .mode-radio{width:18px;height:18px;border-radius:50%;border:2px solid var(--line);flex:0 0 auto;margin-top:2px;position:relative;}
+  .modecard.sel .mode-radio{border-color:var(--ink);background:var(--ink);}
+  .modecard.sel .mode-radio::after{content:'✓';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;line-height:1;}
+  .mode-rec{font:600 8px var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--terra);background:rgba(178,91,65,.12);padding:3px 7px;border-radius:999px;}
+  .mode-tag{font:500 11px var(--sans);color:var(--ink-3);margin-left:auto;}
+  .mode-play{width:32px;height:32px;border-radius:50%;flex:0 0 auto;margin-top:1px;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:10px;color:var(--ink);display:flex;align-items:center;justify-content:center;}
+  .modecard.sel .mode-play{background:var(--ink);color:#fff;border-color:var(--ink);}
+  .mode-play.muted,.modecard.sel .mode-play.muted{background:#e7e3de;color:#b8b2aa;border-color:#e7e3de;cursor:default;}
   .vcard.sel .ck{display:flex;}
   /* per-beat: mic listening */
   @keyframes listen{0%,100%{transform:scale(1);opacity:.92}50%{transform:scale(1.09);opacity:1}}
@@ -152,6 +162,7 @@
   .pill.building{background:rgba(140,180,214,.16);color:#4a7da0;} .pill.building .d{background:#8cb4d6;}
   .pill.await{background:rgba(226,200,120,.2);color:#937c2e;} .pill.await .d{background:#e2c878;}
   .pill.blocked{background:rgba(214,140,150,.18);color:#a8505f;} .pill.blocked .d{background:#d68c96;}
+  .pill.idle{background:#efece7;color:#a49f98;} .pill.idle .d{background:#c7c2b9;}
   .pcard .ln{font:400 12px/1.5 var(--sans);color:var(--ink-2);}
   .pcard .ln .t{color:#bdbdbd;font-family:var(--mono);font-size:10px;}
   .pbar{margin-top:12px;height:4px;border-radius:3px;background:#f0f0f0;overflow:hidden;}
@@ -294,12 +305,22 @@ function render(){
   const el=stage.querySelector('.screen'); if(el) el.classList.add('show');
   // Focus the mic-test field so push-to-talk dictation types into it.
   const mi=stage.querySelector('#mic-in'); if(mi) setTimeout(()=>mi.focus(), 60);
-  // The original onboarding's "Hi, I'm Jarvis" hello — play once on welcome.
-  if(active==='welcome' && !window.__greeted){ window.__greeted=true; setTimeout(()=>bridge('greet'), 550); }
+  // NOTE: no auto-greet here — the daemon's _maybe_greet plays the first-launch
+  // hello once (greeted-gated). A second auto-greet here overlapped it ("two
+  // voices at once"). The "Say hello" button stays for a manual replay.
+  // Default the mode to Co-pilot when arriving at the mode step with no pick.
+  if(active==='mode' && !['copilot','companion','focus'].includes((S.mode||'').toLowerCase())){
+    S.mode='copilot'; bridge('set_mode',{mode:'copilot'});
+  }
   // Default the voice to Jarvis when arriving at the voice step with no pick.
   if(active==='voice' && !['aria','friday','jarvis','atlas'].includes((S.voice||'').toLowerCase())){
     S.voice='jarvis'; bridge('set_voice',{voice:'jarvis'}); setTimeout(render,0);
   }
+}
+// Pick a mode in place (no flash) — toggle .sel; CSS drives the radio + play.
+function pickMode(id){
+  S.mode=id; bridge('set_mode',{mode:id});
+  document.querySelectorAll('.modecard').forEach(c=>c.classList.toggle('sel', c.dataset.mode===id));
 }
 // Pick a voice WITHOUT a full re-render (no flash) — toggle .sel + the ✓ note.
 function pickVoice(id){
@@ -378,7 +399,7 @@ const HOME_SAMPLE = {
     ['10:24','auth-service','#a8505f','Hit a circular import between session and middleware. Two agents are idle.'],
   ],
 };
-const PILL = {speaking:'SPEAKING',building:'BUILDING',await:'AWAITING YOU',blocked:'BLOCKED'};
+const PILL = {speaking:'SPEAKING',building:'BUILDING',await:'AWAITING YOU',blocked:'BLOCKED',idle:'IDLE'};
 function renderHome(){
   // In the app S.home is REAL (daemon + history). Only use the design sample
   // when it's absent (browser preview) — never show fake projects to the user.
@@ -402,9 +423,10 @@ function renderHome(){
   // Mission Control
   const wv = [40,75,100,60,85].map(h=>`<i style="height:${h}%"></i>`).join('');
   const now = H.now;
+  const recap = H.recap;
   document.getElementById('v-mission').innerHTML = `
-    ${now?`<div class="now"><div class="o"></div>
-      <div style="flex:1;min-width:0"><div class="k">Now narrating · ${now.voice}</div><div class="q">"${now.line}"</div></div>
+    ${recap?`<div class="now"><div class="o"></div>
+      <div style="flex:1;min-width:0"><div class="k">✻ Recap</div><div class="q" style="font-size:17px;line-height:1.4">${recap}</div></div>
       <div class="wv">${wv}</div></div>`:''}
     ${projects.length
       ? `<div class="cards">${projects.map(p=>`
@@ -413,7 +435,7 @@ function renderHome(){
             ${(p.lines||[]).map(l=>`<div class="ln"><span class="t">${l[0]}</span>&nbsp;${l[1]}</div>`).join('')}
             ${p.acts?`<div class="pacts"><a class="p">Approve</a><a class="g">Review</a></div>`:(p.progress!=null?`<div class="pbar"><i style="width:${p.progress}%"></i></div>`:'')}
           </div>`).join('')}</div>`
-      : empty('No agents working right now', 'Mission Control lights up when your agents are running.')}`;
+      : (recap?'':empty('No agents working right now', 'Mission Control lights up when your agents are running.'))}`;
 
   // Transcript
   document.getElementById('v-transcript').innerHTML = `<div class="h-pad"><div class="h-h">Transcript</div>
@@ -421,19 +443,58 @@ function renderHome(){
       ? transcript.map(t=>`<div class="tr"><span class="tt">${t[0]}</span><div style="flex:1"><div class="proj" style="color:${t[2]}">${t[1]}</div><div class="say">"${t[3]}"</div></div></div>`).join('')
       : empty('Nothing yet today', 'Your narration history shows up here.')}</div>`;
 
-  // Settings — quick surface; the full controls come next
-  document.getElementById('v-settings').innerHTML = `<div class="h-pad"><div class="h-h">Settings</div>
-    <div class="lede" style="max-width:520px">Voice, verbosity, mode, and speed live here — the full controls are the next build. Plan: <b>${planWord()}</b>${S.trialDaysLeft!=null?` · Power trial, ${S.trialDaysLeft} days left`:''}.</div></div>`;
+  // Settings — real controls (Voice / Verbosity / Mode / Speed / Speak-up /
+  // Account), wired to config via bridges. Restores the retired native panel.
+  const _voices=[['jarvis','Jarvis','Butler','oklch(86% .08 80),oklch(70% .1 72)'],['aria','Aria','Calm','oklch(78% .07 240),oklch(62% .08 250)'],['friday','Friday','Warm','oklch(80% .09 30),oklch(64% .12 32)'],['atlas','Atlas','Cinematic','oklch(82% .07 150),oklch(64% .08 152)']];
+  const _vsel = ['jarvis','aria','friday','atlas'].includes((S.voice||'').toLowerCase())?(S.voice||'').toLowerCase():'jarvis';
+  const _voiceCards = _voices.map(v=>`<div onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});renderHome()" style="position:relative;border:${_vsel===v[0]?'1.5px solid var(--ink)':'1px solid var(--line)'};border-radius:13px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;background:var(--card)">${_vsel===v[0]?`<div style="position:absolute;top:9px;right:10px;width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center">✓</div>`:''}<div style="width:48px;height:48px;border-radius:50%;background:radial-gradient(circle at 50% 50%,${v[3]})"></div><div style="font:500 13px var(--sans);color:var(--ink)">${v[1]}</div><div style="font:400 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)">${v[2]}</div></div>`).join('');
+  const _verb=[['quiet','Minimal'],['normal','Balanced'],['verbose','Detailed']];
+  const _vbsel = S.verbosity||'normal';
+  const _verbSeg = _verb.map(x=>`<div onclick="S.verbosity='${x[0]}';bridge('set_verbosity',{verbosity:'${x[0]}'});renderHome()" style="flex:1;text-align:center;padding:9px;border-radius:8px;font:500 12.5px var(--sans);cursor:pointer;${_vbsel===x[0]?'color:var(--ink);background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1)':'color:var(--ink-2)'}">${x[1]}</div>`).join('');
+  const _modes=[['copilot','Co-pilot','Compact, eyes on screen.'],['companion','Companion','Fuller detail, eyes off screen.'],['focus','Focus','Silent until something needs you.']];
+  const _msel = S.mode||'copilot';
+  const _modeCards = _modes.map(m=>`<div onclick="S.mode='${m[0]}';bridge('set_mode',{mode:'${m[0]}'});renderHome()" style="border:${_msel===m[0]?'1.5px solid var(--ink)':'1px solid var(--line)'};border-radius:13px;padding:15px;cursor:pointer;background:var(--card)"><div style="font:600 13.5px var(--sans);color:var(--ink);margin-bottom:5px">${m[1]}</div><div style="font:400 11.5px/1.45 var(--sans);color:var(--ink-2)">${m[2]}</div></div>`).join('');
+  const _SPEEDS=[0.5,1,1.5,2]; const _raw=+(S.speed||1.0); const _spd=_SPEEDS.reduce((a,b)=>Math.abs(b-_raw)<Math.abs(a-_raw)?b:a);
+  const _notif=[['errors','Errors & failures'],['blocked','Blocked on your review'],['completions','Task completions']];
+  const _N = S.notify||{errors:true,blocked:true,completions:true,idle:false};
+  const _notifRows = _notif.map((n,i)=>`<div onclick="S.notify=Object.assign({},S.notify,{['${n[0]}']:!(S.notify&&S.notify['${n[0]}'])});bridge('set_notify',{key:'${n[0]}',on:S.notify['${n[0]}']});renderHome()" style="display:flex;align-items:center;padding:12px 15px;font:400 13px var(--sans);color:var(--ink);cursor:pointer;${i>0?'border-top:1px solid #f4f4f4':''}"><span>${n[1]}</span><div style="margin-left:auto;width:38px;height:22px;border-radius:999px;background:${_N[n[0]]?'var(--ink)':'#e3e3e3'};position:relative"><div style="position:absolute;top:2px;${_N[n[0]]?'right:2px':'left:2px'};width:18px;height:18px;border-radius:50%;background:#fff"></div></div></div>`).join('');
+  const _trialNote = S.trialDaysLeft!=null ? ` · Power trial, ${S.trialDaysLeft} days left` : '';
+  const _HD = (t,s)=>`<div style="font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:26px 0 12px">${t}${s?`<span style="text-transform:none;letter-spacing:0;font-family:var(--sans);font-weight:400;font-size:12px;color:var(--ink-2)"> · ${s}</span>`:''}</div>`;
+  document.getElementById('v-settings').innerHTML = `<div style="padding:26px 28px;max-width:660px">
+    <div style="font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px">Voice</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:11px">${_voiceCards}</div>
+    ${_HD('Mode','how much Heard says')}
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:11px">${_modeCards}</div>
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 12px"><span style="font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)">Speed</span><span id="spd-pill" style="font:500 12px var(--mono);color:var(--ink);padding:3px 9px;border:1px solid var(--line);border-radius:7px">${_spd}×</span></div>
+    <input type="range" min="0.5" max="2" step="0.5" value="${_spd}" oninput="document.getElementById('spd-pill').textContent=(+this.value)+'×'" onchange="S.speed=+this.value;bridge('set_speed',{speed:+this.value});renderHome()" style="width:100%;accent-color:var(--terra);cursor:pointer">
+    <div style="display:flex;justify-content:space-between;font:400 10px var(--mono);color:var(--ink-3);margin-top:7px"><span>0.5×</span><span>1×</span><span>1.5×</span><span>2×</span></div>
+    ${_HD('Speak up on')}
+    <div style="border:1px solid #efece7;border-radius:12px;overflow:hidden;background:var(--card)">${_notifRows}</div>
+    ${_HD('Account')}
+    <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div><div style="font-weight:600">${S.email||'Not signed in'}</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">Plan: <b>${planWord()}</b>${_trialNote}</div></div>
+        ${S.signedIn?`<button class="btn btn-ghost" style="padding:9px 16px" onclick="bridge('signout')">Sign out</button>`:`<button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('signin_google')">Sign in</button>`}
+      </div>
+      <div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div><div style="font-weight:600">Manage on heard.dev</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">Plan, payment, and email in the browser.</div></div>
+        <button class="btn btn-ghost" style="padding:9px 16px" onclick="bridge('manage_account')">Open</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 // ------------------------------------------------------------------ screens
 const SCREENS = {
   welcome(){
-    const power=S.plan==='power';
-    const hero = power ? 'Welcome to Power.' : 'You just gave your agents a voice.';
+    // Two screens, driven purely by the CURRENT plan. Upgrading / starting a
+    // Power trial is a menu-bar / settings concern, NOT the welcome screen — so
+    // a paid user never sees a "free trial" pitch here.
+    const power = S.plan==='power';
+    const hero = power ? 'Welcome to Power.' : 'Welcome to Pro.';
     const lede = power
-      ? 'The full hands-free loop — talk to your agents, hear them work, and reply without lifting a finger.'
-      : 'A few quick steps to set up narration exactly how you like it.';
+      ? 'The full hands-free loop - talk to your agents, hear them work, and reply without lifting a finger.'
+      : 'Hear your agents work as it happens, narrated exactly how you like it.';
     return `<section class="screen">
       <div class="eyebrow">${planWord()}</div>
       <h1 class="hero">${hero}</h1>
@@ -489,14 +550,39 @@ const SCREENS = {
       <div class="spacer"></div>
       <div class="row"><button class="btn btn-primary" onclick="next()">Save &amp; continue</button><button class="btn btn-ghost" onclick="next()">Skip for now</button></div>
     </section>`; },
-  mode(){ return `<section class="screen">
+  mode(){
+    // Real modes: copilot (default/recommended) / companion / focus. Same code
+    // event, three verbosities — matches the Claude Design.
+    const sel = ['copilot','companion','focus'].includes((S.mode||'').toLowerCase())
+      ? (S.mode||'').toLowerCase() : 'copilot';
+    const opts = [
+      ['copilot','Co-pilot','compact, eyes on screen','Password reset is done, 96 tests have passed, waiting for review.', true],
+      ['companion','Companion','fuller, eyes off screen','We’ve wired up the full password-reset flow. Reset-request issued a 15-minute token and emailed the reset link, the token rendered the form, and reset-confirm verified it, rehashed the password, and killed all sessions. All 96 tests have passed, ready for review.', false],
+      ['focus','Focus','only if needed','need your attention sir, tests are ready for review', false],
+    ];
+    const rows = opts.map(o=>`
+      <div class="modecard ${sel===o[0]?'sel':''}" data-mode="${o[0]}" onclick="pickMode('${o[0]}')">
+        <div class="mode-radio"></div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px"><b style="font-size:15px">${o[1]}</b>${o[4]?`<span class="mode-rec">Recommended</span>`:''}<span class="mode-tag">${o[2]}</span></div>
+          <div style="font-family:var(--serif);font-style:italic;font-size:15px;color:var(--ink-2);margin-top:4px;line-height:1.4">${o[0]==='focus'?`<span style="font-family:var(--sans);font-style:normal;font-size:12px;color:var(--ink-3)">(silent, until) </span>`:''}“${o[3]}”</div>
+        </div>
+        <button class="mode-play" data-line="${o[3].replace(/"/g,'&quot;')}" onclick="event.stopPropagation();bridge('preview_line',{text:this.dataset.line})">▶</button>
+      </div>`).join('');
+    return `<section class="screen">
       <div class="eyebrow">Choose your mode</div>
-      <h1 class="hero" style="font-size:56px">How should Heard show up?</h1>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:600px;margin-top:28px">
-        ${['Companion|Narrates as work happens, in real time.','Focus|Silent until something needs you.','Standup|One spoken digest, on your schedule.'].map(m=>{const[t,d]=m.split('|');return `<div onclick="bridge('set_mode',{mode:'${t.toLowerCase()}'});S.mode='${t.toLowerCase()}';next()" style="border:1px solid var(--line);border-radius:13px;padding:16px;cursor:pointer;background:var(--card)"><div style="font-weight:600;margin-bottom:5px">${t}</div><div style="font-size:12px;color:var(--ink-2);line-height:1.45">${d}</div></div>`}).join('')}
+      <h1 class="hero" style="font-size:38px">Choose your mode.</h1>
+      <p class="lede" style="max-width:520px;margin-top:6px">How much should Heard say? Here’s the same update, three ways.</p>
+      <div style="margin-top:10px;background:#1c1c22;border-radius:12px;padding:12px 16px;max-width:600px;font:400 11px/1.7 var(--mono);color:#c6c6cc">
+        <div style="color:#8a8a92;margin-bottom:6px;font-weight:500">claude-code</div>
+        Wired up the full password-reset flow. <span style="color:#e8e8ea">/auth/reset-request</span> issues a signed 15-minute token and emails the reset link, <span style="color:#e8e8ea">/reset/:token</span> renders the form with validation, and <span style="color:#e8e8ea">/auth/reset-confirm</span> verifies it, rehashes the password, and kills old sessions so a stale cookie can’t get back in. The reset-email template’s wired into the mailer too. <span style="color:#7cc47c">All 96 tests pass</span> and the typecheck’s clean, so nothing else needs you here. Ready for review.
       </div>
+      <div style="font:600 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:11px 0 7px">Heard boils that down to</div>
+      <div style="display:flex;flex-direction:column;gap:8px;max-width:600px">${rows}</div>
       <div class="spacer"></div>
-    </section>`; },
+      <div class="row"><button class="btn btn-primary" onclick="if(!S.mode){S.mode='copilot';bridge('set_mode',{mode:'copilot'})}next()">Save &amp; continue</button></div>
+    </section>`;
+  },
   voice(){
     // Jarvis first + flagged "most picked"; it's the default selection.
     const voices=[

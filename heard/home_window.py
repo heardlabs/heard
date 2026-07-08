@@ -63,6 +63,9 @@ def _current_state() -> dict[str, Any]:
         "signedIn": signed_in,
         "email": cfg.get("heard_email") or "",
         "plan": plan,
+        # This is the Power build (has the bundled voice engine) → it can offer
+        # the opt-in Power trial. The OSS/Pro build never sets voice_service_cmd.
+        "powerBuild": bool((cfg.get("voice_service_cmd") or "").strip()),
         "trialDaysLeft": trial_left,
         "onboardedPlan": cfg.get("onboarded_plan") or None,
         "agentConnected": _agent_connected(),
@@ -71,6 +74,14 @@ def _current_state() -> dict[str, Any]:
         "micGranted": _mic_granted(),
         "axGranted": _ax_granted(),
         "voice": cfg.get("voice") or None,
+        "speed": float(cfg.get("speed") or 1.0),
+        "verbosity": cfg.get("verbosity") or "normal",
+        "mode": cfg.get("mode") or "copilot",
+        "notify": {
+            "errors": bool(cfg.get("notify_errors", True)),
+            "blocked": bool(cfg.get("notify_blocked", True)),
+            "completions": bool(cfg.get("notify_completions", True)),
+        },
         "whisperOn": (cfg.get("voice_mode") or "off") != "off",
         "phonePaired": bool(cfg.get("phone_paired")),
         # Legacy onboarded flag — existing set-up users land on Home, not the
@@ -174,7 +185,18 @@ def _home_data() -> dict:
         st = client.get_status() or {}
     except Exception:
         st = {}
-    agents = st.get("agent_states") or []
+    # Recap island: live working-memory prose when the daemon has it; else the
+    # last spoken FINAL (a persisted summary — survives daemon restarts, so the
+    # island stays useful between agent bursts).
+    recap = (st.get("recap") or "").strip()
+    if not recap:
+        finals = [r for r in recs if r.get("kind") == "final" and _text(r)]
+        if finals:
+            recap = _text(finals[-1])[:400]
+    out["recap"] = recap
+    # Cards use the wider 3-min window so agents don't flicker out between
+    # tool bursts; fall back to the 30s active set if the daemon is older.
+    agents = st.get("mission_agents") or st.get("agent_states") or []
     speaking = bool(st.get("speaking"))
     speaking_repo = spoken[-1].get("repo_name") if (speaking and spoken) else None
 
@@ -184,13 +206,22 @@ def _home_data() -> dict:
         g = groups.setdefault(repo, {"agents": [], "area": a.get("area")})
         g["agents"].append(a)
 
+    import time as _time
+
     projects = []
+    now_wall = _time.time()
     for repo, g in groups.items():
         ags = g["agents"]
+        # "Recently active" = fired a tool in the last 3 min. Past that it's on
+        # the board (up to the daemon's 20-min window) but shown as idle, not
+        # building — Heard can't see a session that's open-but-quiet.
+        recently = any((now_wall - (a.get("last_event_wall") or 0)) < 180 for a in ags)
         if any((a.get("error_count") or 0) > 0 or a.get("salience_hint") == "blocked" for a in ags):
             status = "blocked"
         elif speaking_repo == repo:
             status = "speaking"
+        elif not recently:
+            status = "idle"
         elif any(a.get("current_tool") for a in ags):
             status = "building"
         elif any(a.get("salience_hint") == "active-decision" for a in ags):
@@ -198,6 +229,17 @@ def _home_data() -> dict:
         else:
             status = "building"
         lines = [[_fmt_ts(r.get("ts")), _text(r)[:80]] for r in spoken if r.get("repo_name") == repo][-2:]
+        if not lines:
+            # No narrated history for this repo yet — fall back to live state so
+            # the card isn't blank (a status pill with an empty body reads broken).
+            a0 = ags[0]
+            if any((a.get("error_count") or 0) > 0 for a in ags):
+                txt = "Hit an error — needs a look."
+            elif a0.get("current_tool"):
+                txt = f"{str(a0.get('current_tool')).title()} in progress…"
+            else:
+                txt = "Working…"
+            lines = [["", txt]]
         projects.append(
             {"name": g["area"] or repo, "agents": len(ags), "status": status, "lines": lines}
         )
@@ -420,7 +462,7 @@ def _build_controller_class():
                 | NSWindowStyleMaskMiniaturizable
                 | NSWindowStyleMaskResizable
             )
-            rect = NSMakeRect(0, 0, 1080, 720)
+            rect = NSMakeRect(0, 0, 1080, 800)
             win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
                 rect, style, NSBackingStoreBuffered, False
             )
@@ -544,16 +586,35 @@ def _build_controller_class():
                 _log_bridge_error("connect_codex", e)
 
         def _act_open_voice_picker(self, body):
+            # Voice lives in the onboarding voice screen + the menu-bar Persona
+            # submenu now (the old settings panel is retired). Navigate the
+            # window to the voice picker.
             try:
-                from heard import settings_window
-
-                for name in ("show_settings", "show"):
-                    fn = getattr(settings_window, name, None)
-                    if callable(fn):
-                        fn()
-                        break
+                self._pending_start = "voice"
+                self._push_state()
             except Exception as e:
                 _log_bridge_error("open_voice_picker", e)
+
+        def _act_signout(self, body):
+            # Same as the menu-bar Sign Out: clear the cloud token/plan/email and
+            # reload so the daemon falls back to local config.
+            try:
+                for key in ("heard_token", "heard_plan", "heard_email"):
+                    config.set_value(key, "")
+                config.set_value("heard_trial_expires_at", 0)
+                _reload_daemon()
+                self._push_state()
+            except Exception as e:
+                _log_bridge_error("signout", e)
+
+        def _act_manage_account(self, body):
+            # Open the browser to manage plan / payment / email on heard.dev.
+            try:
+                import webbrowser
+
+                webbrowser.open("https://heard.dev/account")
+            except Exception as e:
+                _log_bridge_error("manage_account", e)
 
         def _act_set_voice(self, body):
             # Pick a voice from the onboarding voice cards: persist it + let the
@@ -570,10 +631,71 @@ def _build_controller_class():
             mode = (body.get("mode") or "").strip()
             if mode:
                 try:
-                    config.set_value("listening_mode", mode)
+                    # The harness reads cfg["mode"] (copilot/companion/focus);
+                    # writing "listening_mode" was a dead key — the pick never
+                    # took effect. Write "mode".
+                    config.set_value("mode", mode)
+                    # Mode IS the verbosity choice now (the separate Verbosity
+                    # control was cut as a duplicate). Keep the fast-path tool
+                    # gating in step with the chosen mode.
+                    config.set_value(
+                        "verbosity",
+                        {"copilot": "normal", "companion": "verbose",
+                         "focus": "quiet"}.get(mode, "normal"),
+                    )
                     _reload_daemon()
                 except Exception as e:
                     _log_bridge_error("set_mode", e)
+
+        def _act_set_speed(self, body):
+            try:
+                speed = float(body.get("speed") or 0)
+                if 0.5 <= speed <= 2.5:
+                    config.set_value("speed", round(speed, 2))
+                    _reload_daemon()
+            except Exception as e:
+                _log_bridge_error("set_speed", e)
+
+        def _act_set_verbosity(self, body):
+            level = (body.get("verbosity") or "").strip()
+            if level in ("quiet", "brief", "normal", "verbose"):
+                try:
+                    config.set_value("verbosity", level)
+                    _reload_daemon()
+                except Exception as e:
+                    _log_bridge_error("set_verbosity", e)
+
+        def _act_set_notify(self, body):
+            key = (body.get("key") or "").strip()
+            if key in ("errors", "blocked", "completions", "idle"):
+                try:
+                    config.set_value(f"notify_{key}", bool(body.get("on")))
+                except Exception as e:
+                    _log_bridge_error("set_notify", e)
+
+        def _act_preview_line(self, body):
+            # Speak a sample line in the current voice — the mode screen's play
+            # buttons ("Heard would say …"). Reuses the greeting synth path.
+            text = (body.get("text") or "").strip()
+            if not text:
+                return
+            try:
+                cfg = config.load()
+                voice = (cfg.get("voice") or "jarvis").strip() or "jarvis"
+                from heard import persona as _persona
+                try:
+                    tts_voice = _persona.load(voice).voice or voice
+                except Exception:
+                    tts_voice = voice
+                tts = _build_tts(cfg)
+                if tts is None:
+                    return
+                import tempfile
+                path = Path(tempfile.mktemp(suffix=getattr(tts, "AUDIO_EXT", ".mp3")))
+                tts.synth_to_file(text, tts_voice, 1.0, "en", path)
+                _play_file(path)
+            except Exception as e:
+                _log_bridge_error("preview_line", e)
 
         def _act_preview_voice(self, body):
             voice = (body.get("voice") or "").strip()
@@ -593,6 +715,56 @@ def _build_controller_class():
             threading.Thread(
                 target=_speak_greeting, args=(voice,), daemon=True
             ).start()
+
+        def _act_start_power_trial(self, body):
+            # Explicit opt-in: the user clicked "Start Power trial". Call the
+            # managed endpoint (which flips the account to a 14-day Power trial
+            # and stamps power_trial_used_at server-side), then flip local plan
+            # to power + refresh so the onboarding switches to the Power (2b)
+            # flow. This REPLACES the old auto-enroll-on-sign-in — the trial is
+            # now a deliberate click, not automatic.
+            import threading
+
+            def _work():
+                try:
+                    import json
+                    import urllib.request
+
+                    from PyObjCTools import AppHelper
+
+                    cfg = config.load()
+                    token = (cfg.get("heard_token") or "").strip()
+                    if not token:
+                        return
+                    base = cfg.get("heard_api_base") or "https://api.heard.dev"
+                    req = urllib.request.Request(
+                        f"{base}/v1/power/trial/start",
+                        method="POST",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
+                        data = json.loads(r.read().decode() or "{}")
+                    if data.get("plan") == "power":
+                        config.set_value("heard_plan", "power")
+                        exp = int(data.get("trial_expires_at") or 0)
+                        if exp:
+                            config.set_value("heard_trial_expires_at", exp)
+                        _reload_daemon()
+                    else:
+                        # trial_used / ineligible — tell the user, stay put.
+                        from heard import notify
+
+                        AppHelper.callAfter(
+                            notify.notify,
+                            "Heard",
+                            "Your Power trial isn't available (already used).",
+                            "power_trial",
+                        )
+                    AppHelper.callAfter(self._push_state)
+                except Exception as e:
+                    _log_bridge_error("start_power_trial", e)
+
+            threading.Thread(target=_work, daemon=True).start()
 
         def _act_enable_whisper(self, body):
             try:

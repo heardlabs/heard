@@ -153,7 +153,9 @@ class HeardApp(rumps.App):
         # Account row at the top of the menu — shows email + plan when
         # the user is signed in, or "Sign in to Heard…" when not. Title
         # and callback are rebuilt every refresh from config state.
-        self.home_item = rumps.MenuItem("Open Heard…", callback=self.on_open_home)
+        # No more "Open Heard…" — the single entry point is "Settings…" below,
+        # which opens the persistent Heard home window (Mission Control /
+        # Transcript / Settings). The old native Settings panel is retired.
         self.account_item = rumps.MenuItem("Sign in to Heard…", callback=self.on_signin)
 
         # rumps keys menu items by the title at insertion time, so we
@@ -321,7 +323,7 @@ class HeardApp(rumps.App):
         # the rumps submenus below stay as quick toggles for users who
         # don't want to open a window.
         self.settings_item = rumps.MenuItem(
-            "Settings…", callback=self.on_open_settings, key=","
+            "Settings…", callback=self.on_open_home, key=","
         )
 
         # "Report a problem…" — the ONLY user-facing feedback surface
@@ -379,7 +381,6 @@ class HeardApp(rumps.App):
         # the version line — then a separator and the actions.
         self.menu = [
             self.status_item,
-            self.home_item,
             self.account_item,
             self.upgrade_item,
             self.usage_item,
@@ -1074,28 +1075,28 @@ class HeardApp(rumps.App):
         first-launch flow uses; just bypasses the welcome banner once
         ``onboarded`` is true."""
         try:
-            from heard import settings_window
-            settings_window.show(tab="account")
+            from heard import home_window
+            home_window.show_home()
         except Exception as e:
-            print(f"settings_window unavailable: {e}", file=sys.stderr)
+            print(f"home window unavailable: {e}", file=sys.stderr)
 
     def on_set_api_keys(self, _sender) -> None:
         # API keys live in the Settings → Keys tab now.
         try:
-            from heard import settings_window
-            settings_window.show(tab="keys")
+            from heard import home_window
+            home_window.show_home()
         except Exception as e:
-            print(f"settings_window unavailable: {e}", file=sys.stderr)
+            print(f"home window unavailable: {e}", file=sys.stderr)
 
     def on_signin(self, _sender) -> None:
         """Settings → Account is the new sign-in surface (the panel has
         a button that opens heard.dev/signup and a field for the
         returned install code)."""
         try:
-            from heard import settings_window
-            settings_window.show(tab="account")
+            from heard import home_window
+            home_window.show_home()
         except Exception as e:
-            print(f"settings_window unavailable: {e}", file=sys.stderr)
+            print(f"home window unavailable: {e}", file=sys.stderr)
 
     def on_signout(self, _sender) -> None:
         """Clear the cloud-voices token + plan + email and reload the

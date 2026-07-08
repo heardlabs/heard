@@ -447,7 +447,8 @@ class Daemon:
         _log("daemon_start", backend=type(self.tts).__name__, persona=self.persona.name)
         # Phase 1 analytics. mark_first_launch_if_new flips the persisted
         # marker so subsequent boots fire `app_launched` instead. Both
-        # events are Tier 1 (anonymous, no consent needed).
+        # events are anonymous (install_id) and, like all analytics, respect
+        # the `product_analytics` flag (on by default; silenced on opt-out).
         try:
             from heard import __version__ as _app_version
             from heard import analytics
@@ -1855,13 +1856,13 @@ class Daemon:
             # instead of re-synthesising. Best-effort — never affects playback.
             if cfg.get("narration_spool"):
                 self._spool_narration(path, chunk)
-            # Tier 1 "user actually used Heard today" signal. Fires once
-            # per local day per install, regardless of TTS backend
-            # (managed / BYOK / Kokoro), regardless of product_analytics
-            # opt-in (Tier 1 is anonymous + always-on). The DAU on this
-            # event is the cleanest "actively engaged users" line — it
-            # bypasses `app_launched` (false positive on auto-restarts)
-            # and `narration_spoken` (sampled + Tier 2).
+            # "user actually used Heard today" signal. Fires at most once
+            # per local day per install, across any TTS backend (managed /
+            # BYOK / Kokoro), anonymous, and — like all analytics — respects
+            # the `product_analytics` flag (on by default). The DAU on this event is
+            # the cleanest "actively engaged users" line — better than
+            # `app_launched` (false positive on auto-restarts) and
+            # `narration_spoken` (sampled).
             try:
                 from datetime import date
                 today = date.today().isoformat()
@@ -2779,6 +2780,32 @@ class Daemon:
             except Exception as e:
                 self._record_error("utterance_listener", str(e))
 
+    # "Speak up on" decision-question hints — a question that reads like it
+    # wants YOUR call (vs a routine clarification) counts as "blocked on your
+    # review" for the notify toggle.
+    _SPEAKUP_DECISION_HINTS = (
+        "approv", "review", "decid", "confirm", "should i", "want me to",
+        "sign off", "your call", "go ahead",
+    )
+
+    def _speakup_allows(self, cfg, kind: str, tag: str, neutral: str) -> bool:
+        """Settings → "Speak up on" toggles. Returns False ONLY when the event's
+        salient category is switched off. Every toggle defaults ON, so this is a
+        no-op for anyone who hasn't changed it — it can only ever REMOVE
+        narration, never add. Observations already ran upstream, so state /
+        memory / recap stay complete; we just don't speak this category."""
+        tl = (tag or "").lower()
+        if "failure" in tl or "failed" in tl:  # Errors & failures
+            return bool(cfg.get("notify_errors", True))
+        if tl == "tool_question":  # Blocked on your review (a decision question)
+            low = (neutral or "").lower()
+            if any(h in low for h in self._SPEAKUP_DECISION_HINTS):
+                return bool(cfg.get("notify_blocked", True))
+            return True
+        if kind == "final":  # Task completions
+            return bool(cfg.get("notify_completions", True))
+        return True
+
     def _handle_event(self, req: dict) -> None:
         kind = req.get("kind") or ""
         neutral = (req.get("neutral") or "").strip()
@@ -2839,6 +2866,12 @@ class Daemon:
             return
 
         cfg = config.load(cwd=cwd)
+        # "Speak up on" (Settings): skip SPEAKING a whole salient category the
+        # user switched off. No-op unless they changed a default. Observations
+        # above already ran, so nothing is blinded — only narration is skipped.
+        if not self._speakup_allows(cfg, kind, tag, neutral):
+            _log("event_drop", kind=kind, tag=tag, reason="speakup_off")
+            return
         persona = self._persona_for(cfg)
         self.sessions.touch(session_id, cwd=cwd)  # marks the session active
         # Note this event so the router knows the session is active.
@@ -3295,6 +3328,21 @@ class Daemon:
                 # for inspection today; will be read by the harness
                 # (Layer 5) on every meaningful event when that lands.
                 "agent_states": self.agent_states.summary(),
+                # Layer 3 — rolling "what's going on right now" prose. Powers the
+                # Mission Control recap island so the panel is useful even when
+                # no agent is mid-tool this instant.
+                "recap": (self.working_memory.snapshot() or "").strip(),
+                # Wider window for the Mission Control cards. Heard only sees
+                # TOOL events, not session presence, so an open-but-idle session
+                # (you're reading output / it's waiting on you) sends nothing and
+                # would vanish. A 20-min window keeps a session on the board as
+                # long as it did *anything* recently; the panel marks ones idle
+                # past ~3 min as "idle" rather than "building". The 30s
+                # `agent_states` window still drives salience.
+                "mission_agents": [
+                    a.to_dict()
+                    for a in self.agent_states.all_active(idle_after_s=1200.0)
+                ],
                 # Resume-from-pause UX: the UI needs to know whether
                 # the pending-narration buffer has anything in it so
                 # it can decide between (a) silent resume on click vs

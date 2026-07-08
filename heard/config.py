@@ -133,24 +133,21 @@ DEFAULTS: dict[str, Any] = {
     # 1H: report chars (never content) to api.heard.dev/v1/telemetry/usage
     # after every successful BYOK or local synth so the user's dashboard
     # heatmap reflects real usage. Managed-cloud synths are counted
-    # server-side already and skipped here regardless. Default on with
-    # a one-time disclosure in the dashboard; opt out via this flag.
+    # server-side already and skipped here regardless. Default ON with a
+    # one-time disclosure; opt out via this flag.
     "byok_telemetry": True,
-    # Product analytics (Tier 2) — opt-out. Default ON, matching the
-    # industry-norm posture (Linear / Notion / Vercel / GitHub all
-    # default on with a clear disclosure + a toggle to disable). Tier 2
-    # events are anonymized + categorical (no narration text, no
-    # project paths, no file / function names — same distillation rule
-    # from architecture-v2 applies to capture too), so the conservative
-    # opt-in posture wasn't earning meaningful privacy protection — only
-    # a near-empty dataset. Users who want full silence flip this off
-    # in Settings → Advanced → Privacy. Tier 1 anonymous health events
-    # fire regardless — see heard/analytics.py.
+    # Product analytics (PostHog) — opt-OUT. Default ON, matching the
+    # industry norm (Linear / Notion / Vercel / GitHub default on with a
+    # clear disclosure + a toggle). Events are anonymized + categorical
+    # (no narration text, no project paths, no file / function names).
+    # When a user opts out, NOTHING fires — no event bypasses this flag
+    # (see heard/analytics.py). Signed-in conversions are also counted
+    # server-side by api.heard.dev.
     "product_analytics": True,
-    # YYYY-MM-DD of the last day we fired `narration_played_today`. That
-    # Tier 1 event is the cleanest "user actively used it today" signal
-    # — fires once per local day per install, anonymous, regardless of
-    # TTS backend and regardless of opt-in. The daemon checks this date
+    # YYYY-MM-DD of the last day we fired `narration_played_today`. It's
+    # the cleanest "user actively used it today" signal — fires at most
+    # once per local day per install, anonymous, across any TTS backend,
+    # and (like all analytics) respects the product_analytics flag. The daemon checks this date
     # against today's date on each successful synth and only fires
     # the event if today's marker isn't already set.
     "last_active_day": "",
