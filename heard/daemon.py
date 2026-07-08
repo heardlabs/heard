@@ -974,11 +974,24 @@ class Daemon:
             except Exception:
                 pass
             self._ptt_monitor = None
-        if self.cfg.get("push_to_talk"):
+        # Only arm the hold-to-talk monitor/HUD when a voice backend is actually
+        # available (Power build + Power account). Otherwise leftover config
+        # (push_to_talk=True from prior Power testing) would surface a dead HUD
+        # on an OSS/Pro install with nothing behind the key.
+        if self.cfg.get("push_to_talk") and self._voice_backend_available():
             sock = (self.cfg.get("push_to_talk_socket")
                     or os.path.expanduser("~/.heard_power.sock"))
             self._ptt_monitor = push_to_talk.start(sock)
         self._sync_voice_service()
+
+    def _voice_backend_available(self) -> bool:
+        """True when a voice-input backend is actually usable: a Power build
+        (`voice_service_cmd` set) on a Power account (or `voice_input_unlocked`
+        dev escape). The PTT monitor and the voice service both gate on this, so
+        leftover `push_to_talk` config can't surface a dead HUD on OSS/Pro."""
+        cmd = (self.cfg.get("voice_service_cmd") or "").strip()
+        plan = (self.cfg.get("heard_plan") or "").strip().lower()
+        return bool(cmd) and (plan == "power" or bool(self.cfg.get("voice_input_unlocked")))
 
     def _sync_voice_service(self) -> None:
         """Start/stop Heard Power's voice-input service to match the current
@@ -994,10 +1007,8 @@ class Daemon:
             # (it substitutes a placeholder, it doesn't know the module name).
             if cmd:
                 cmd = cmd.replace("{python}", sys.executable)
-            plan = (self.cfg.get("heard_plan") or "").strip().lower()
-            powered = plan == "power" or bool(self.cfg.get("voice_input_unlocked"))
             mode = (self.cfg.get("voice_mode") or "off").strip().lower()
-            should_run = bool(cmd) and powered and mode != "off"
+            should_run = self._voice_backend_available() and mode != "off"
 
             if not cmd:
                 # No service configured (pure-OSS build) — tear down if we had one.
