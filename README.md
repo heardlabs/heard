@@ -44,7 +44,7 @@ The app is the **managed** experience: download, sign in, and you're narrating -
 
 Paste this into Claude Code, Codex, or any AI coding tool:
 
-> Install Heard so you narrate your responses to me. Run: `curl -L https://heard.dev/download/cc -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` - a window will pop up and I'll fill it in.
+> Install Heard so you can narrate your work to me out loud. Run: `curl -L https://heard.dev/download/cc -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app`, then hand it back to me - a quick setup window opens and I'll take it from there.
 
 ### Manual
 
