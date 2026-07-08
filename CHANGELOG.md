@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.12]
+
+### Added
+
+- Settings → API keys: bring-your-own ElevenLabs / Anthropic keys, gated by a
+  `byok_enabled` account entitlement (OSS self-hosters + granted accounts).
+
+### Changed
+
+- BYOK is enforced, not just UI-gated: an active managed account uses the
+  managed voices/brain it pays for; a stale key can't bypass it. Lapsed or
+  capped accounts still fall back to their own key.
+
 ## [1.1.11]
 
 ### Added
@@ -36,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.11...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.12...HEAD
+[1.1.12]: https://github.com/heardlabs/heard/releases/tag/v1.1.12
 [1.1.11]: https://github.com/heardlabs/heard/releases/tag/v1.1.11
 [1.1.10]: https://github.com/heardlabs/heard/releases/tag/v1.1.10
