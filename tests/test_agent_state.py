@@ -29,7 +29,7 @@ from heard.agent_state import (
 def _ev(
     *,
     sid: str = "s1",
-    cwd: str | None = "/Users/k31z/Desktop/Projects/heard/heard",
+    cwd: str | None = "/Users/dev/Desktop/Projects/heard/heard",
     kind: str,
     tag: str = "",
     neutral: str = "",

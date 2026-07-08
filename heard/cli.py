@@ -1120,7 +1120,7 @@ def config_path() -> None:
 # Per architecture-v2 + the ambient-utility product instinct, these
 # stay hidden from `heard --help`. The intended invocation path is via
 # Claude Code ("hey, set my register_formality to casual") which can
-# run them on K.'s behalf; the menu-bar UX is the user-facing surface.
+# run them on the maintainer's behalf; the menu-bar UX is the user-facing surface.
 
 
 def _format_pref_value(value: Any) -> str:

@@ -98,7 +98,7 @@ slots:
       immediate items plus a hook. `headline_only` reads the top
       line and stops.
 
-      This is the slot that emerged from K.'s 2026-05-31 "the
+      This is the slot that emerged from the maintainer's 2026-05-31 "the
       narration is too compressed" feedback.
 
   decision_surfacing:
@@ -133,7 +133,7 @@ slots:
       Tonal register WITHIN the active persona's range. Formal-
       Jarvis vs. casual-Jarvis vs. neutral-Jarvis; the persona's
       identity doesn't change, only how stiff vs. relaxed the
-      narration lands. K.'s 2026-05-31 "the spoken context is
+      narration lands. the maintainer's 2026-05-31 "the spoken context is
       too literal and complicated" feedback drove this slot.
 
   hook_endings:

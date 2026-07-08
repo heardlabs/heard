@@ -763,7 +763,7 @@ class _GhostSegment(NSStackView):
     boundary.
 
     This is the "track + sliding pill" pattern (iOS / Notion / Linear);
-    K.'s reference. Earlier iterations had each segment as its own
+    the maintainer's reference. Earlier iterations had each segment as its own
     outlined ghost button which read as separate widgets rather than
     one control.
 
@@ -784,7 +784,7 @@ class _GhostSegment(NSStackView):
     #   - "orange_gradient": warm orange pill with NSGradient top→bottom,
     #     white bold text, no border — used ONLY for the Tuning tab
     #     switcher (How much / How it sounds). Brand accent for navigation,
-    #     not for values. K.'s spec.
+    #     not for values. the maintainer's spec.
     _TRACK_BG_LIGHT = (0.0, 0.0, 0.0, 0.055)
     _TRACK_BG_DARK = (1.0, 1.0, 1.0, 0.06)
     _PILL_BG_LIGHT = (1.0, 1.0, 1.0, 1.0)
@@ -801,7 +801,7 @@ class _GhostSegment(NSStackView):
     # and sublayers paint over `contents`. drawRect captures into
     # `contents` itself, so the title naturally lands on top.
     # NOTE: both stops are light, so white text reads softer than ideal
-    # (~2-3:1 contrast). K.'s stylistic call — keeping it.
+    # (~2-3:1 contrast). the maintainer's stylistic call — keeping it.
     _PILL_GRAD_LEFT = (0.961, 0.647, 0.537, 1.0)    # #F5A589 peach (logo)
     _PILL_GRAD_RIGHT = (0.722, 0.643, 0.831, 1.0)   # #B8A4D4 lavender (logo)
     _PILL_TEXT_ON_ORANGE = (1.0, 1.0, 1.0, 1.0)
@@ -842,7 +842,7 @@ class _GhostSegment(NSStackView):
 
         # Layer-back the stack itself so we can draw the gray track.
         # Fully rounded ends (capsule shape) — corner radius = half the
-        # control height. K.'s pill-shaped reference.
+        # control height. the maintainer's pill-shaped reference.
         self.setWantsLayer_(True)
         track_bg = self._TRACK_BG_DARK if _THEME == "dark" else self._TRACK_BG_LIGHT
         layer = self.layer()

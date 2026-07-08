@@ -25,7 +25,7 @@ def _persona(name: str = "jarvis", system: str = "You are Jarvis.") -> SimpleNam
 def _ev(
     *,
     sid: str = "s1",
-    cwd: str | None = "/Users/k31z/Desktop/Projects/heard/heard",
+    cwd: str | None = "/Users/dev/Desktop/Projects/heard/heard",
     kind: str = "tool_post",
     tag: str = "tool_post_bash",
     neutral: str = "ran the tests",
@@ -49,15 +49,15 @@ def test_path_for_cwd_returns_none_when_no_cwd():
 
 
 def test_path_for_cwd_hashes_to_stable_filename():
-    p1 = pm._path_for_cwd("/Users/k31z/proj")
-    p2 = pm._path_for_cwd("/Users/k31z/proj")
+    p1 = pm._path_for_cwd("/Users/dev/proj")
+    p2 = pm._path_for_cwd("/Users/dev/proj")
     assert p1 == p2
     assert p1 is not None and p1.suffix == ".jsonl"
 
 
 def test_path_for_cwd_distinguishes_distinct_projects():
-    p1 = pm._path_for_cwd("/Users/k31z/proj-a")
-    p2 = pm._path_for_cwd("/Users/k31z/proj-b")
+    p1 = pm._path_for_cwd("/Users/dev/proj-a")
+    p2 = pm._path_for_cwd("/Users/dev/proj-b")
     assert p1 != p2
 
 
@@ -77,7 +77,7 @@ def test_record_writes_one_jsonl_line_per_event():
     pm.record(_ev(neutral="first"))
     pm.record(_ev(neutral="second"))
 
-    path = pm._path_for_cwd("/Users/k31z/Desktop/Projects/heard/heard")
+    path = pm._path_for_cwd("/Users/dev/Desktop/Projects/heard/heard")
     raw = path.read_text(encoding="utf-8")
     lines = [line for line in raw.split("\n") if line]
     assert len(lines) == 2
@@ -93,7 +93,7 @@ def test_record_skips_adjacent_duplicate_event():
     pm.record(ev)
     pm.record(dict(ev))
 
-    recs = pm.iter_recent(cwd="/Users/k31z/Desktop/Projects/heard/heard")
+    recs = pm.iter_recent(cwd="/Users/dev/Desktop/Projects/heard/heard")
     assert [r["text"] for r in recs] == [
         "Done. I updated the RedNote graphics package."
     ]
@@ -106,7 +106,7 @@ def test_record_schema_includes_required_fields():
         via="harness",
         agent_summary="working on auth bug",
     )
-    path = pm._path_for_cwd("/Users/k31z/Desktop/Projects/heard/heard")
+    path = pm._path_for_cwd("/Users/dev/Desktop/Projects/heard/heard")
     rec = json.loads(path.read_text(encoding="utf-8").strip())
 
     assert set(rec.keys()) == {
@@ -122,7 +122,7 @@ def test_record_schema_includes_required_fields():
 
 def test_record_trims_long_text():
     pm.record(_ev(neutral="x" * 5000))
-    path = pm._path_for_cwd("/Users/k31z/Desktop/Projects/heard/heard")
+    path = pm._path_for_cwd("/Users/dev/Desktop/Projects/heard/heard")
     rec = json.loads(path.read_text(encoding="utf-8").strip())
     assert len(rec["text"]) <= pm._TEXT_TRIM + 1  # +1 for ellipsis
     assert rec["text"].endswith("…")
@@ -135,7 +135,7 @@ def test_record_strips_large_blob_ctx_keys():
         "stdout": "y" * 10000,
         "command": "pytest",
     }))
-    path = pm._path_for_cwd("/Users/k31z/Desktop/Projects/heard/heard")
+    path = pm._path_for_cwd("/Users/dev/Desktop/Projects/heard/heard")
     rec = json.loads(path.read_text(encoding="utf-8").strip())
     # Useful fields kept.
     assert rec["ctx"]["abs_path"] == "/x/y/auth.py"
@@ -161,11 +161,11 @@ def test_record_write_failure_silently_dropped(monkeypatch):
 
 
 def test_record_different_projects_write_to_different_files():
-    pm.record(_ev(cwd="/Users/k31z/proj-a", neutral="a-event"))
-    pm.record(_ev(cwd="/Users/k31z/proj-b", neutral="b-event"))
+    pm.record(_ev(cwd="/Users/dev/proj-a", neutral="a-event"))
+    pm.record(_ev(cwd="/Users/dev/proj-b", neutral="b-event"))
 
-    a_records = pm.iter_recent(cwd="/Users/k31z/proj-a")
-    b_records = pm.iter_recent(cwd="/Users/k31z/proj-b")
+    a_records = pm.iter_recent(cwd="/Users/dev/proj-a")
+    b_records = pm.iter_recent(cwd="/Users/dev/proj-b")
     assert len(a_records) == 1 and a_records[0]["text"] == "a-event"
     assert len(b_records) == 1 and b_records[0]["text"] == "b-event"
 
@@ -184,7 +184,7 @@ def test_iter_recent_empty_when_no_cwd():
 def test_iter_recent_returns_in_write_order():
     for i in range(5):
         pm.record(_ev(neutral=f"event-{i}"))
-    recs = pm.iter_recent(cwd="/Users/k31z/Desktop/Projects/heard/heard")
+    recs = pm.iter_recent(cwd="/Users/dev/Desktop/Projects/heard/heard")
     assert [r["text"] for r in recs] == [f"event-{i}" for i in range(5)]
 
 
@@ -192,7 +192,7 @@ def test_iter_recent_respects_limit():
     for i in range(20):
         pm.record(_ev(neutral=f"event-{i}"))
     last_three = pm.iter_recent(
-        cwd="/Users/k31z/Desktop/Projects/heard/heard", limit=3
+        cwd="/Users/dev/Desktop/Projects/heard/heard", limit=3
     )
     assert [r["text"] for r in last_three] == ["event-17", "event-18", "event-19"]
 
@@ -200,12 +200,12 @@ def test_iter_recent_respects_limit():
 def test_iter_recent_skips_malformed_lines(tmp_path):
     """Append a garbage line, the parser shouldn't crash."""
     pm.record(_ev(neutral="ok"))
-    path = pm._path_for_cwd("/Users/k31z/Desktop/Projects/heard/heard")
+    path = pm._path_for_cwd("/Users/dev/Desktop/Projects/heard/heard")
     with path.open("a", encoding="utf-8") as f:
         f.write("{not valid json\n")
         f.write("\n")  # blank line
     pm.record(_ev(neutral="still ok"))
-    recs = pm.iter_recent(cwd="/Users/k31z/Desktop/Projects/heard/heard")
+    recs = pm.iter_recent(cwd="/Users/dev/Desktop/Projects/heard/heard")
     assert [r["text"] for r in recs] == ["ok", "still ok"]
 
 
@@ -233,7 +233,7 @@ def test_answer_calls_llm_with_assembled_prompt():
         with patch.object(persona_mod, "call_with_prompt", side_effect=_capture):
             out = pm.answer(
                 "what did you do with the auth tests?",
-                cwd="/Users/k31z/Desktop/Projects/heard/heard",
+                cwd="/Users/dev/Desktop/Projects/heard/heard",
                 persona=_persona(),
             )
 
@@ -265,7 +265,7 @@ def test_recap_calls_llm_with_recap_prompt_and_label():
     from heard import persona as persona_mod
     with patch.object(persona_mod, "call_with_prompt", side_effect=_capture):
         out = pm.recap(
-            cwd="/Users/k31z/Desktop/Projects/heard/heard",
+            cwd="/Users/dev/Desktop/Projects/heard/heard",
             persona=_persona(),
         )
 
@@ -312,7 +312,7 @@ def test_recap_turn_scopes_to_session_and_last_turn():
     from heard import persona as persona_mod
     with patch.object(persona_mod, "call_with_prompt", side_effect=_capture):
         out = pm.recap_turn(
-            cwd="/Users/k31z/Desktop/Projects/heard/heard",
+            cwd="/Users/dev/Desktop/Projects/heard/heard",
             session_id="s1", persona=_persona(),
         )
     assert out == "Caught you up on the auth essay."
@@ -325,7 +325,7 @@ def test_recap_turn_scopes_to_session_and_last_turn():
 def test_recap_turn_dedupes_existing_duplicate_records():
     """Old logs may already contain duplicate final rows. The recap
     prompt should not feed both copies to the LLM."""
-    cwd = "/Users/k31z/Desktop/Projects/heard/heard"
+    cwd = "/Users/dev/Desktop/Projects/heard/heard"
     path = pm._path_for_cwd(cwd)
     assert path is not None
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -372,7 +372,7 @@ def test_recap_returns_none_on_call_exception():
         raise RuntimeError("network blip")
     with patch.object(persona_mod, "call_with_prompt", side_effect=_boom):
         out = pm.recap(
-            cwd="/Users/k31z/Desktop/Projects/heard/heard",
+            cwd="/Users/dev/Desktop/Projects/heard/heard",
             persona=_persona(),
         )
     assert out is None
@@ -384,7 +384,7 @@ def test_answer_returns_none_on_call_failure():
     with patch.object(persona_mod, "call_with_prompt", return_value=None):
         out = pm.answer(
             "what happened?",
-            cwd="/Users/k31z/Desktop/Projects/heard/heard",
+            cwd="/Users/dev/Desktop/Projects/heard/heard",
             persona=_persona(),
         )
     assert out is None
@@ -399,7 +399,7 @@ def test_answer_returns_none_on_call_exception():
     with patch.object(persona_mod, "call_with_prompt", side_effect=_boom):
         out = pm.answer(
             "what happened?",
-            cwd="/Users/k31z/Desktop/Projects/heard/heard",
+            cwd="/Users/dev/Desktop/Projects/heard/heard",
             persona=_persona(),
         )
     assert out is None

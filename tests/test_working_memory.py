@@ -25,7 +25,7 @@ def _persona(name: str = "jarvis", system: str = "You are Jarvis.") -> SimpleNam
 def _ev(
     *,
     sid: str = "s1",
-    cwd: str = "/Users/k31z/Desktop/Projects/heard/heard",
+    cwd: str = "/Users/dev/Desktop/Projects/heard/heard",
     kind: str = "intermediate",
     tag: str = "",
     neutral: str = "ok",

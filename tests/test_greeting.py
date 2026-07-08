@@ -76,7 +76,7 @@ def test_greeting_fires_once_with_real_backend(tmp_path, monkeypatch):
     assert msg.startswith("Hi, I'm Jarvis.")
     # The greeting points the user at the menu bar — LSUIElement apps
     # have no Dock icon, and a window competing with a focused
-    # editor is exactly how onboarding got lost on K.'s v0.9.9 install.
+    # editor is exactly how onboarding got lost on the maintainer's v0.9.9 install.
     # Audio is the discovery fallback when the window doesn't pop.
     assert "menu bar" in msg
     # Wizard step count — previously "4 easy steps" but onboarding

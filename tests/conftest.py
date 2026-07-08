@@ -4,7 +4,7 @@ Goal: make test pollution of the user's real Heard installation
 *structurally impossible*. Several tests historically did not
 monkeypatch `heard.config.CONFIG_DIR`, which meant they read and (in
 some cases) WROTE into the user's actual
-`~/Library/Application Support/heard/config.yaml`. That left K.'s
+`~/Library/Application Support/heard/config.yaml`. That left the maintainer's
 config.yaml in an invalid state (mixed flow+block YAML with a
 half-stripped test value), which then bricked Heard.app launch — the
 daemon and the UI both call `config.load()` at startup and crash on
