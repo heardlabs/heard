@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.13]
+
+### Added
+
+- Self-serve Power trial: **Settings → Account → Try Power free** (the handler
+  existed but nothing ever called it), plus a "Get the Power app" prompt for
+  Power users still running the standard build.
+- Settings → API keys gains a **Groq** key (Power builds) for dictation cleanup.
+
+### Fixed
+
+- BYOK accounts no longer route dictation transcripts through Heard's servers:
+  cleanup uses their own Groq key, or returns the raw transcript. Never our proxy.
+- The voice service now self-heals when its gate opens after a reload, so
+  "Enable Whisper" can no longer leave push-to-talk silently dead.
+
 ## [1.1.12]
 
 ### Added
@@ -49,7 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.12...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.13...HEAD
+[1.1.13]: https://github.com/heardlabs/heard/releases/tag/v1.1.13
 [1.1.12]: https://github.com/heardlabs/heard/releases/tag/v1.1.12
 [1.1.11]: https://github.com/heardlabs/heard/releases/tag/v1.1.11
 [1.1.10]: https://github.com/heardlabs/heard/releases/tag/v1.1.10
