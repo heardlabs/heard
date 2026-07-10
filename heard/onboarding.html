@@ -256,6 +256,36 @@ function flow(){
   return [T.welcome, T.signin, T.connect, T.mode, T.voice, T.done];                            // 2a Pro
 }
 function planWord(){ return S.plan==='power'?'Power':S.plan==='pro'?'Pro':'Free'; }
+// The Power upsell row in the Account card. One block, four states, so the
+// journey reads in one place: trialing → keep it; trial ended → upgrade (Pro
+// users get Power only, Free users get Power+Pro); never trialed → start free;
+// on Power plan but wrong build → get the app. Returns '' when nothing applies
+// (paying Power, or not signed in).
+function _powerUpsell(){
+  const line = (t,s)=>`<div><div style="font-weight:600">${t}</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">${s}</div></div>`;
+  const payBtns = `<div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" style="padding:9px 16px;flex:1" onclick="bridge('upgrade_power',{interval:'monthly'})">$30 / month</button><button class="btn btn-primary" style="padding:9px 16px;flex:1" onclick="bridge('upgrade_power',{interval:'annual'})">$24 / mo · annual</button></div>`;
+  const wrap = (inner)=>`<div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0">${inner}</div>`;
+  if(!S.signedIn) return '';
+  // On Power plan but on the standard build → they need the Power app.
+  if(S.plan==='power' && !S.powerBuild)
+    return wrap(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">${line('Get the Power app',"You're on Power - install the Power app to unlock voice input.")}<button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('open_power_page')">Download</button></div>`);
+  // Trialing → keep it.
+  if(S.plan==='power' && S.trialDaysLeft!=null){
+    const d = S.trialDaysLeft===0?'Your trial ends today':S.trialDaysLeft+' day'+(S.trialDaysLeft===1?'':'s')+' left';
+    return wrap(line('Upgrade to Power', d+' in your trial - upgrade now to keep hands-free voice.')+payBtns);
+  }
+  if(!S.powerBuild) return '';   // OSS/Pro build, nothing Power to offer here
+  // Trial ended (reverted off Power).
+  if(S.plan!=='power' && S.powerTrialUsed){
+    if(S.plan==='pro'||S.plan==='pro_plus')
+      return wrap(line('Your Power trial ended',"You're back on Pro. Add Power for hands-free voice control.")+payBtns);
+    return wrap(line('Your Power trial ended','Get Power for hands-free voice, or Pro for managed cloud voices.')+payBtns+`<button class="btn" style="padding:9px 16px;margin-top:8px;width:100%" onclick="bridge('manage_account')">Or upgrade to Pro - $15/mo</button>`);
+  }
+  // Never trialed, still eligible → start the free trial.
+  if(S.plan!=='power' && !S.powerTrialUsed)
+    return wrap(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">${line('Try Power free','14 days of hands-free voice control. No card.')}<button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('start_power_trial')">Start trial</button></div>`);
+  return '';
+}
 
 // ------------------------------------------------------------------ render
 let current = null;
@@ -481,9 +511,7 @@ function renderHome(){
         <div><div style="font-weight:600">Manage on heard.dev</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">Plan, payment, and email in the browser.</div></div>
         <button class="btn btn-ghost" style="padding:9px 16px" onclick="bridge('manage_account')">Open</button>
       </div>
-      ${S.signedIn && S.plan!=='power' ? `<div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:12px"><div><div style="font-weight:600">Try Power free</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">14 days of hands-free voice control. No card.</div></div><button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('start_power_trial')">Start trial</button></div>` : ''}
-      ${S.plan==='power' && !S.powerBuild ? `<div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:12px"><div><div style="font-weight:600">Get the Power app</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">You're on Power - install the Power app to unlock voice input.</div></div><button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('open_power_page')">Download</button></div>` : ''}
-      ${S.plan==='power' && S.trialDaysLeft!=null ? `<div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><div><div style="font-weight:600">Keep Power</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">${S.trialDaysLeft===0?'Your trial ends today':S.trialDaysLeft+' day'+(S.trialDaysLeft===1?'':'s')+' left in your trial'} - upgrade to keep hands-free voice.</div></div></div><div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" style="padding:9px 16px;flex:1" onclick="bridge('upgrade_power',{interval:'monthly'})">$30 / month</button><button class="btn btn-primary" style="padding:9px 16px;flex:1" onclick="bridge('upgrade_power',{interval:'annual'})">$24 / mo · annual</button></div></div>` : ''}
+      ${_powerUpsell()}
     </div>
     ${S.byokEnabled ? `${_HD('API keys')}
     <div style="font:400 12.5px/1.5 var(--sans);color:var(--ink-2);margin:-6px 0 10px">Bring your own keys. Heard sends narration <b>straight to these providers</b> using your key - never through our servers. Leave blank to use your plan’s cloud voices, or the local Kokoro voice for zero cloud.</div>

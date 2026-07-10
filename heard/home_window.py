@@ -73,6 +73,9 @@ def _current_state() -> dict[str, Any]:
         # the opt-in Power trial. The OSS/Pro build never sets voice_service_cmd.
         "powerBuild": bool((cfg.get("voice_service_cmd") or "").strip()),
         "trialDaysLeft": trial_left,
+        # Has this account ever used its one Power trial? Synced from /v1/me.
+        # Distinguishes "trial ended → upgrade" from "never trialed → start free".
+        "powerTrialUsed": bool(cfg.get("power_trial_used")),
         "onboardedPlan": cfg.get("onboarded_plan") or None,
         "agentConnected": _agent_connected(),
         "claudeConnected": _claude_connected(),

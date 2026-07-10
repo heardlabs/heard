@@ -1245,6 +1245,15 @@ class Daemon:
                 changed = True
             except Exception:
                 pass
+        server_used = me.get("power_trial_used")
+        if isinstance(server_used, bool) and server_used != bool(
+            self.cfg.get("power_trial_used")
+        ):
+            try:
+                config.set_value("power_trial_used", server_used)
+                changed = True
+            except Exception:
+                pass
         if changed:
             _log("plan_synced_from_me", plan=server_plan)
             self._reload_config()
