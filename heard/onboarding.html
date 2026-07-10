@@ -487,6 +487,7 @@ function renderHome(){
     <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:2px 18px 14px">
       ${_keyRow('elevenlabs','ElevenLabs · voice','xi-api-key…')}
       ${_keyRow('anthropic','Anthropic · narration brain','sk-ant-…')}
+      ${S.powerBuild ? _keyRow('groq','Groq · dictation cleanup','gsk_…') : ''}
     </div>` : ''}
   </div>`;
 }

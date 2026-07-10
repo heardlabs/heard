@@ -104,6 +104,9 @@ DEFAULTS: dict[str, Any] = {
     "anthropic_api_key": "",
     "openai_api_key": "",
     "elevenlabs_api_key": "",
+    # Groq key for Power's dictation cleanup. BYOK accounts use THIS key;
+    # without it they get the raw transcript (we never proxy their text).
+    "groq_api_key": "",
     # BYOK entitlement (mirrors the account's byok_enabled, refreshed from
     # /v1/me at sign-in). Gates the Settings → API keys section AND the daemon's
     # honoring of BYOK keys. Off for normal managed accounts; on for OSS

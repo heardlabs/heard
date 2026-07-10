@@ -87,6 +87,9 @@ def _current_state() -> dict[str, Any]:
         "keys": {
             "elevenlabs": bool((cfg.get("elevenlabs_api_key") or "").strip()),
             "anthropic": bool((cfg.get("anthropic_api_key") or "").strip()),
+            # Dictation cleanup (Power). Without their own key a BYOK account
+            # gets the raw transcript — we never proxy their text through us.
+            "groq": bool((cfg.get("groq_api_key") or "").strip()),
         },
         # BYOK entitlement. The Keys section shows only for OSS self-hosters
         # (not signed in) or granted accounts. Server-set, carried in the token
@@ -690,7 +693,8 @@ def _build_controller_class():
             which = (body.get("which") or "").strip()
             value = (body.get("value") or "").strip()
             ck = {"elevenlabs": "elevenlabs_api_key",
-                  "anthropic": "anthropic_api_key"}.get(which)
+                  "anthropic": "anthropic_api_key",
+                  "groq": "groq_api_key"}.get(which)
             if not ck or not value:
                 return
             try:
