@@ -156,6 +156,20 @@ OPTIONS = {
         "pytest",
         "scipy",
         "torch",
+        # onnxruntime imports protobuf only in its transformers/conversion
+        # tooling, never to run a session (an InferenceSession parses .onnx in
+        # C++). Excluding it removes google/_upb/_message.abi3.so, the last
+        # Mach-O binary py2app traps inside python313.zip — inner binaries are
+        # unreachable by codesign and get the app rejected by Apple.
+        "google",
+        "protobuf",
+        # Pulled only by librosa, which parakeet-mlx no longer imports (the
+        # Power build supplies the mel filterbank directly). llvmlite is a JIT:
+        # bundling it would force the allow-jit entitlement back.
+        "librosa",
+        "numba",
+        "llvmlite",
+        "sklearn",
     ],
     "iconfile": os.path.join(HERE, "heard.icns"),
     # py2app + Python 3.12/3.13 can miss libffi (used by ctypes). We pin
