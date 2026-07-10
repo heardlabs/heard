@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.16]
+
+### Fixed
+
+- Heard Power's phone and audio-streaming features now locate ffmpeg wherever
+  it is installed, instead of assuming one fixed path. No change to the
+  open-source narration engine.
+
 ## [1.1.15]
 
 ### Changed
@@ -86,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.15...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.16...HEAD
+[1.1.16]: https://github.com/heardlabs/heard/releases/tag/v1.1.16
 [1.1.15]: https://github.com/heardlabs/heard/releases/tag/v1.1.15
 [1.1.14]: https://github.com/heardlabs/heard/releases/tag/v1.1.14
 [1.1.13]: https://github.com/heardlabs/heard/releases/tag/v1.1.13
