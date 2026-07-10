@@ -25,6 +25,12 @@ from heard import config
 
 _HTML = Path(__file__).with_name("onboarding.html")
 
+# Power subscription checkout (public Stripe payment links). Opened from the
+# in-app "Keep Power" upgrade; the account is bound via prefilled email +
+# client_reference_id. Paying flips the plan to 'power' through the webhook.
+_POWER_MONTHLY_BUY_URL = "https://buy.stripe.com/3cIfZa2X13We0g6eac77O03"  # $30/mo
+_POWER_ANNUAL_BUY_URL = "https://buy.stripe.com/00w6oAeFJ2Sad2S8PS77O08"  # $288/yr
+
 _controller = None       # window-controller singleton (reused on re-open)
 _HeardHomeClass = None    # ObjC class, built lazily on first use
 
@@ -630,6 +636,25 @@ def _build_controller_class():
                 webbrowser.open("https://heard.dev/power")
             except Exception as e:
                 _log_bridge_error("open_power_page", e)
+
+        def _act_upgrade_power(self, body):
+            # Convert a Power TRIAL to a paid subscription (Wispr model: pay in
+            # the app, not on a marketing page). Opens the Stripe checkout for the
+            # chosen interval, prefilled + client_reference_id'd with the user's
+            # email so the webhook binds the payment to this account.
+            try:
+                import urllib.parse
+                import webbrowser
+
+                interval = (body.get("interval") or "monthly").strip().lower()
+                url = _POWER_ANNUAL_BUY_URL if interval == "annual" else _POWER_MONTHLY_BUY_URL
+                email = (config.load().get("heard_email") or "").strip()
+                if email:
+                    q = urllib.parse.quote(email, safe="")
+                    url = f"{url}?prefilled_email={q}&client_reference_id={q}"
+                webbrowser.open(url)
+            except Exception as e:
+                _log_bridge_error("upgrade_power", e)
 
         def _act_manage_account(self, body):
             # Open the browser to manage plan / payment / email on heard.dev.
