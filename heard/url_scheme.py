@@ -163,10 +163,14 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
         except Exception:
             pass
     config.set_value("heard_trial_expires_at", int(trial_expires_at or 0))
-    # NOTE: the Power trial is now OPT-IN — the user clicks "Start Power trial"
-    # on the Power-build welcome (home_window._act_start_power_trial), which
-    # calls /v1/power/trial/start. We no longer auto-enroll on sign-in, so a Pro
-    # user on the Power build keeps their plan until they explicitly opt in.
+    # Power build: auto-start the 14-day trial on sign-in. Possessing the Power
+    # build already means they came through the gated download, so signing in IS
+    # the opt-in. Safe on every sign-in — the server no-ops if they're already
+    # Power and refuses if the one trial was used (power_trial_used_at). A paying
+    # Pro user is preserved via base_plan and reverts to Pro at expiry, not Free.
+    # OSS builds skip it (no voice_service_cmd). The "Try Power free" button
+    # remains as a fallback if this call fails (offline at sign-in).
+    _maybe_start_power_trial(token)
     _reload_and_selftest()
     _bring_onboarding_forward_signed_in(email or "your account")
     # Also refresh the persistent Heard window (the new WebView home/onboarding)
