@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.14]
+
+### Changed
+
+- The Power build no longer bundles librosa, numba, or llvmlite. `parakeet-mlx`
+  imported librosa for a single constant mel matrix; Heard now supplies that
+  matrix directly, bit-identical. This removes the `allow-jit` and
+  `allow-unsigned-executable-memory` entitlements and about 290 MB.
+- Attribution: NVIDIA's Parakeet weights (CC-BY-4.0) and Silero VAD (MIT) are
+  now credited in `THIRD-PARTY-NOTICES.md`, shipped inside the app bundle.
+- `protobuf` is excluded from the packaged runtime; ONNX Runtime does not need
+  it to run a session.
+
 ## [1.1.13]
 
 ### Added
@@ -65,7 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.13...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.14...HEAD
+[1.1.14]: https://github.com/heardlabs/heard/releases/tag/v1.1.14
 [1.1.13]: https://github.com/heardlabs/heard/releases/tag/v1.1.13
 [1.1.12]: https://github.com/heardlabs/heard/releases/tag/v1.1.12
 [1.1.11]: https://github.com/heardlabs/heard/releases/tag/v1.1.11
