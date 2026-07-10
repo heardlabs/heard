@@ -983,6 +983,53 @@ class Daemon:
                     or os.path.expanduser("~/.heard_power.sock"))
             self._ptt_monitor = push_to_talk.start(sock)
         self._sync_voice_service()
+        self._start_voice_service_watch()
+
+    @staticmethod
+    def _voice_gate_open(cfg) -> bool:
+        """Should the voice service be running, per this config snapshot?"""
+        cmd = (cfg.get("voice_service_cmd") or "").strip()
+        plan = (cfg.get("heard_plan") or "").strip().lower()
+        powered = plan == "power" or bool(cfg.get("voice_input_unlocked"))
+        mode = (cfg.get("voice_mode") or "off").strip().lower()
+        return bool(cmd) and powered and mode != "off"
+
+    def _start_voice_service_watch(self) -> None:
+        """Self-heal: re-evaluate the voice-service GATE on a timer, off FRESH
+        config. Started once; safe to call on every reload.
+
+        The supervisor's keepalive already respawns a *dead* serve with backoff.
+        The hole it can't cover: nothing re-checks `should_run` between daemon
+        reloads. So if the gate was false the last time we synced — the classic
+        race where "Enable Whisper" writes voice_mode/plan and the reload
+        evaluates before both land — `_want_running` stays False, the keepalive
+        has nothing to keep alive, and PTT is silently dead until a manual
+        reload. (Shipped bug: users hit "Enable Whisper" and nothing happens.)
+
+        We sync ONLY when the desired state differs from what the supervisor is
+        already trying, so a genuinely crash-looping serve keeps its backoff
+        instead of being hot-restarted every tick.
+        """
+        if getattr(self, "_voice_watch_started", False):
+            return
+        self._voice_watch_started = True
+
+        def _watch() -> None:
+            while True:
+                time.sleep(10.0)
+                try:
+                    cfg = config.load()
+                    want = self._voice_gate_open(cfg)
+                    vs = self._voice_service
+                    trying = bool(vs and vs.want_running)
+                    if want != trying:
+                        _log("voice_service_gate_changed", want=want, trying=trying)
+                        self.cfg = cfg          # adopt the config we decided on
+                        self._sync_voice_service()
+                except Exception as e:
+                    _log("voice_service_watch_error", err=str(e))
+
+        threading.Thread(target=_watch, daemon=True).start()
 
     def _voice_backend_available(self) -> bool:
         """True when a voice-input backend is actually usable: a Power build

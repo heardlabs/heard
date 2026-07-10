@@ -109,6 +109,14 @@ class VoiceServiceSupervisor:
         except Exception as e:  # never propagate into the daemon
             self._log("voice_service_sync_error", err=str(e))
 
+    @property
+    def want_running(self) -> bool:
+        """The desired state the supervisor is currently holding. The daemon's
+        gate-watch compares against this so it calls `sync()` only when the
+        DESIRED state changed — calling `sync(True)` while a serve is crash-
+        looping resets `_backoff` and turns it into a hot restart loop."""
+        return self._want_running
+
     def stop(self) -> None:
         """Stop the process + keepalive thread. Called on daemon shutdown."""
         with self._lock:
