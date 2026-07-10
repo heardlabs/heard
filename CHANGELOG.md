@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.15]
+
+### Changed
+
+- Latency work in the Heard Power voice loop (proprietary): dictation cleanup
+  now runs while Heard is still waiting to confirm you finished speaking,
+  rather than after. No change to the open-source narration engine.
+
 ## [1.1.14]
 
 ### Changed
@@ -78,7 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.14...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.15...HEAD
+[1.1.15]: https://github.com/heardlabs/heard/releases/tag/v1.1.15
 [1.1.14]: https://github.com/heardlabs/heard/releases/tag/v1.1.14
 [1.1.13]: https://github.com/heardlabs/heard/releases/tag/v1.1.13
 [1.1.12]: https://github.com/heardlabs/heard/releases/tag/v1.1.12
