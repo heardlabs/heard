@@ -30,6 +30,10 @@ APP_BUNDLE_ID = "dev.heard.menubar"
 APP = [os.path.join(HERE, "app_entry.py")]
 
 DATA_FILES = [
+    # Attribution shipped INSIDE the bundle, not just in the repo. Silero VAD is
+    # MIT and is redistributed in the Power build, which obliges us to include
+    # its license text with the binary; the Parakeet weights are CC-BY-4.0.
+    ("", [os.path.join(ROOT, "LICENSE"), os.path.join(ROOT, "THIRD-PARTY-NOTICES.md")]),
     (
         "heard/personas",
         [

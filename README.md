@@ -173,3 +173,9 @@ v1.0.x - cross-event-judgment narration via the Heard brain (one Haiku call per 
 ## License
 
 Apache 2.0.
+
+Heard runs speech recognition locally using NVIDIA's
+[Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+(CC-BY-4.0) and [Silero VAD](https://github.com/snakers4/silero-vad) (MIT).
+Full credits and license texts are in
+[`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md).
