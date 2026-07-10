@@ -481,6 +481,8 @@ function renderHome(){
         <div><div style="font-weight:600">Manage on heard.dev</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">Plan, payment, and email in the browser.</div></div>
         <button class="btn btn-ghost" style="padding:9px 16px" onclick="bridge('manage_account')">Open</button>
       </div>
+      ${S.signedIn && S.plan!=='power' ? `<div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:12px"><div><div style="font-weight:600">Try Power free</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">14 days of hands-free voice control. No card.</div></div><button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('start_power_trial')">Start trial</button></div>` : ''}
+      ${S.plan==='power' && !S.powerBuild ? `<div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:12px"><div><div style="font-weight:600">Get the Power app</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">You're on Power - install the Power app to unlock voice input.</div></div><button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('open_power_page')">Download</button></div>` : ''}
     </div>
     ${S.byokEnabled ? `${_HD('API keys')}
     <div style="font:400 12.5px/1.5 var(--sans);color:var(--ink-2);margin:-6px 0 10px">Bring your own keys. Heard sends narration <b>straight to these providers</b> using your key - never through our servers. Leave blank to use your plan’s cloud voices, or the local Kokoro voice for zero cloud.</div>

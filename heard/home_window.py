@@ -621,6 +621,16 @@ def _build_controller_class():
             except Exception as e:
                 _log_bridge_error("signout", e)
 
+        def _act_open_power_page(self, body):
+            # A Power-plan user on the standard build needs the Power app to get
+            # voice input. Send them to the gated download page.
+            try:
+                import webbrowser
+
+                webbrowser.open("https://heard.dev/power")
+            except Exception as e:
+                _log_bridge_error("open_power_page", e)
+
         def _act_manage_account(self, body):
             # Open the browser to manage plan / payment / email on heard.dev.
             try:
