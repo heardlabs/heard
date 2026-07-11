@@ -625,6 +625,13 @@ def _build_controller_class():
                     config.set_value(key, "")
                 config.set_value("heard_trial_expires_at", 0)
                 config.set_value("byok_enabled", False)
+                # Onboarding + trial state are PER-ACCOUNT. Clearing them on sign-
+                # out means the next email always re-onboards (new users were
+                # skipping the wizard because the previous account's onboarded=True
+                # persisted) and can start its own trial.
+                config.set_value("onboarded", False)
+                config.set_value("onboarded_plan", "")
+                config.set_value("power_trial_used", False)
                 _reload_daemon()
                 self._push_state()
             except Exception as e:
@@ -661,10 +668,11 @@ def _build_controller_class():
 
         def _act_manage_account(self, body):
             # Open the browser to manage plan / payment / email on heard.dev.
+            # /account is not a route (blank page) — the dashboard is /dashboard.
             try:
                 import webbrowser
 
-                webbrowser.open("https://heard.dev/account")
+                webbrowser.open("https://heard.dev/dashboard")
             except Exception as e:
                 _log_bridge_error("manage_account", e)
 
@@ -830,7 +838,20 @@ def _build_controller_class():
                         )
                     AppHelper.callAfter(self._push_state)
                 except Exception as e:
+                    # Don't fail silently — a dead-looking button is worse than an
+                    # error. Tell the user so it's clear the click registered.
                     _log_bridge_error("start_power_trial", e)
+                    try:
+                        from heard import notify
+
+                        AppHelper.callAfter(
+                            notify.notify,
+                            "Heard",
+                            "Couldn't start your Power trial - check your connection and try again.",
+                            "power_trial",
+                        )
+                    except Exception:
+                        pass
 
             threading.Thread(target=_work, daemon=True).start()
 

@@ -102,8 +102,14 @@ def _maybe_start_power_trial(token: str) -> None:
             exp = int(data.get("trial_expires_at") or 0)
             if exp:
                 config.set_value("heard_trial_expires_at", exp)
-    except Exception:
-        pass
+            print(f"[power_trial] sign-in autostart OK (exp={exp})")
+        else:
+            # Not power — usually a brand-new-account race (account not queryable
+            # yet). The daemon's /v1/me poll retries this within ~5 min, so it
+            # self-heals. Logged so it's never a silent mystery again.
+            print(f"[power_trial] sign-in autostart no-op: {data.get('reason') or data}")
+    except Exception as e:
+        print(f"[power_trial] sign-in autostart failed: {e}")
 
 
 def _refresh_byok_enabled(token: str) -> None:

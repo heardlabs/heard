@@ -1215,6 +1215,62 @@ class Daemon:
                 pass
             self._audio_monitor = None
 
+    def _maybe_autostart_power_trial(self, me: dict) -> None:
+        """Self-healing Power-trial enrollment, run on every /v1/me poll.
+
+        The sign-in-time enroll (url_scheme._maybe_start_power_trial) is a
+        one-shot that can miss — a brand-new account isn't queryable the instant
+        it's created, or a transient network blip drops the call — and it leaves
+        the user stuck on the generic trial. This backstops it: if this is the
+        Power build, they're signed in, they aren't already Power, and they
+        haven't used their one trial, enroll them. Server-idempotent (no-ops if
+        already power / trial used), so calling it every poll is safe."""
+        try:
+            if not (self.cfg.get("voice_service_cmd") or "").strip():
+                return  # not the Power build
+            token = (self.cfg.get("heard_token") or "").strip()
+            if not token:
+                return
+            if (me.get("plan") or "").strip().lower() == "power":
+                return  # already Power (paid or trialing)
+            if me.get("power_trial_used"):
+                return  # used their one trial — don't retry forever
+            import json as _json
+            import ssl as _ssl
+            import urllib.request as _urlreq
+
+            try:
+                import certifi  # type: ignore
+
+                ctx = _ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                ctx = _ssl.create_default_context()
+            base_url = (
+                self.cfg.get("heard_api_base") or "https://api.heard.dev"
+            ).rstrip("/")
+            req = _urlreq.Request(
+                f"{base_url}/v1/power/trial/start",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "User-Agent": "Heard-daemon/1.0",
+                },
+            )
+            with _urlreq.urlopen(req, timeout=8.0, context=ctx) as resp:
+                data = _json.loads(resp.read().decode("utf-8") or "{}")
+            if data.get("plan") == "power":
+                config.set_value("heard_plan", "power")
+                exp = int(data.get("trial_expires_at") or 0)
+                if exp:
+                    config.set_value("heard_trial_expires_at", exp)
+                config.set_value("power_trial_used", True)
+                _log("power_trial_autostarted", via="daemon_poll")
+                self._reload_config()
+            else:
+                _log("power_trial_autostart_noop", reason=str(data.get("reason") or "not_power"))
+        except Exception as e:
+            _log("power_trial_autostart_error", err=str(e))
+
     def _sync_plan_from_me(self, me: dict) -> None:
         """Persist plan + trial-expiry from a /v1/me snapshot when they've
         drifted from local config, then reload so the change takes effect.
@@ -3816,6 +3872,7 @@ class Daemon:
                 self._account_usage = data
                 self._account_usage_at = _time.time()
                 self._sync_plan_from_me(data)
+                self._maybe_autostart_power_trial(data)
                 self._maybe_announce_friend_joined(data)
         except (_urlerr.HTTPError, _urlerr.URLError, TimeoutError, OSError, ValueError):
             # Stay quiet; menu bar shows the previous value (or nothing).
