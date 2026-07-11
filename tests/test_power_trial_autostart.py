@@ -9,7 +9,6 @@ side: it fires for a Power build and never for an OSS build.
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
 
