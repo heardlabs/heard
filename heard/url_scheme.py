@@ -93,7 +93,9 @@ def _maybe_start_power_trial(token: str) -> None:
         req = urllib.request.Request(
             f"{base}/v1/power/trial/start",
             method="POST",
-            headers={"Authorization": f"Bearer {token}"},
+            # User-Agent is REQUIRED: Cloudflare (in front of api.heard.dev) 403s
+            # a bare urllib request. Without it the trial silently never starts.
+            headers={"Authorization": f"Bearer {token}", "User-Agent": "Heard-app/1.0"},
         )
         with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
             data = json.loads(r.read().decode() or "{}")
@@ -124,7 +126,8 @@ def _refresh_byok_enabled(token: str) -> None:
 
         base = config.load().get("heard_api_base") or "https://api.heard.dev"
         req = urllib.request.Request(
-            f"{base}/v1/me", headers={"Authorization": f"Bearer {token}"}
+            f"{base}/v1/me",
+            headers={"Authorization": f"Bearer {token}", "User-Agent": "Heard-app/1.0"}
         )
         with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
             data = json.loads(r.read().decode() or "{}")

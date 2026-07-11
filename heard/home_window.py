@@ -816,7 +816,12 @@ def _build_controller_class():
                     req = urllib.request.Request(
                         f"{base}/v1/power/trial/start",
                         method="POST",
-                        headers={"Authorization": f"Bearer {token}"},
+                        # User-Agent REQUIRED — Cloudflare 403s a bare urllib
+                        # request, which made this button silently do nothing.
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "User-Agent": "Heard-app/1.0",
+                        },
                     )
                     with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310
                         data = json.loads(r.read().decode() or "{}")
