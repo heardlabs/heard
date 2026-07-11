@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.17]
+
+### Added
+
+- Power trial lifecycle: the trial now starts automatically on sign-in (Power
+  builds), and Settings > Account shows a clear upgrade path through the whole
+  journey - keep Power during the trial, or re-subscribe after it ends, with
+  monthly and annual options. No change to the open-source narration engine.
+
 ## [1.1.16]
 
 ### Fixed
@@ -94,7 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.16...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.17...HEAD
+[1.1.17]: https://github.com/heardlabs/heard/releases/tag/v1.1.17
 [1.1.16]: https://github.com/heardlabs/heard/releases/tag/v1.1.16
 [1.1.15]: https://github.com/heardlabs/heard/releases/tag/v1.1.15
 [1.1.14]: https://github.com/heardlabs/heard/releases/tag/v1.1.14
