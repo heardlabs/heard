@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.18]
+
+### Fixed
+
+- Signing into a new account always shows onboarding again (sign-out now
+  clears the previous account's onboarding + trial state).
+- The Power trial reliably enrolls after sign-in: a self-healing check retries
+  it on the account poll if the sign-in attempt missed, so no one gets stuck
+  on the wrong plan.
+- 'Manage on heard.dev' opens the dashboard instead of a blank page, and a
+  failed 'Start trial' now shows an error instead of doing nothing.
+
 ## [1.1.17]
 
 ### Added
@@ -103,7 +115,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.17...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.18...HEAD
+[1.1.18]: https://github.com/heardlabs/heard/releases/tag/v1.1.18
 [1.1.17]: https://github.com/heardlabs/heard/releases/tag/v1.1.17
 [1.1.16]: https://github.com/heardlabs/heard/releases/tag/v1.1.16
 [1.1.15]: https://github.com/heardlabs/heard/releases/tag/v1.1.15
