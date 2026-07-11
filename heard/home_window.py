@@ -830,6 +830,12 @@ def _build_controller_class():
                         exp = int(data.get("trial_expires_at") or 0)
                         if exp:
                             config.set_value("heard_trial_expires_at", exp)
+                        try:
+                            from heard import analytics
+
+                            analytics.capture("power_trial_started", {"method": "button"})
+                        except Exception:
+                            pass
                         _reload_daemon()
                     else:
                         # trial_used / ineligible — tell the user, stay put.

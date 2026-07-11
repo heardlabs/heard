@@ -105,6 +105,12 @@ def _maybe_start_power_trial(token: str) -> None:
             if exp:
                 config.set_value("heard_trial_expires_at", exp)
             print(f"[power_trial] sign-in autostart OK (exp={exp})")
+            try:
+                from heard import analytics
+
+                analytics.capture("power_trial_started", {"method": "signin"})
+            except Exception:
+                pass
         else:
             # Not power — usually a brand-new-account race (account not queryable
             # yet). The daemon's /v1/me poll retries this within ~5 min, so it

@@ -1265,6 +1265,12 @@ class Daemon:
                     config.set_value("heard_trial_expires_at", exp)
                 config.set_value("power_trial_used", True)
                 _log("power_trial_autostarted", via="daemon_poll")
+                try:
+                    from heard import analytics
+
+                    analytics.capture("power_trial_started", {"method": "daemon_net"})
+                except Exception:
+                    pass
                 self._reload_config()
             else:
                 _log("power_trial_autostart_noop", reason=str(data.get("reason") or "not_power"))
