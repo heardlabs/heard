@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.19]
+
+### Fixed
+
+- 'Start trial' and the sign-in trial enrollment now work: requests to the
+  account API include a User-Agent, without which they were being blocked
+  (403) before reaching the server.
+
 ## [1.1.18]
 
 ### Fixed
@@ -115,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.18...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.19...HEAD
+[1.1.19]: https://github.com/heardlabs/heard/releases/tag/v1.1.19
 [1.1.18]: https://github.com/heardlabs/heard/releases/tag/v1.1.18
 [1.1.17]: https://github.com/heardlabs/heard/releases/tag/v1.1.17
 [1.1.16]: https://github.com/heardlabs/heard/releases/tag/v1.1.16
