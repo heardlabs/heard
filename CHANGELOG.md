@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.21]
+
+### Fixed
+
+- Upgrading to Power now runs the Power setup (Accessibility + Whisper) instead
+  of leaving you on Power with a dead hotkey and no prompt.
+- After a manual re-install, Heard notices the bundle changed under it and
+  nudges you to relaunch, so the menu doesn't show a stale plan.
+- The Whisper setup demo shows your dictation as you speak it.
+
 ## [1.1.20]
 
 ### Fixed
@@ -133,7 +143,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.20...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.21...HEAD
+[1.1.21]: https://github.com/heardlabs/heard/releases/tag/v1.1.21
 [1.1.20]: https://github.com/heardlabs/heard/releases/tag/v1.1.20
 [1.1.19]: https://github.com/heardlabs/heard/releases/tag/v1.1.19
 [1.1.18]: https://github.com/heardlabs/heard/releases/tag/v1.1.18
