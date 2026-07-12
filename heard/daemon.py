@@ -1298,6 +1298,42 @@ class Daemon:
         except Exception as e:
             _log("power_trial_autostart_error", err=str(e))
 
+    def _check_bundle_drift(self) -> None:
+        """Notice when the app bundle on disk was replaced under the running
+        process — a MANUAL DMG re-install over a running Heard. The in-app
+        updater relaunches itself, but a drag-to-Applications leaves the OLD
+        daemon running with stale code + stale plan (Toma saw 'trial / upgrade to
+        Power' while already Power). Compare the running __version__ against the
+        installed bundle's Info.plist; if they differ, nudge a relaunch once."""
+        if getattr(self, "_bundle_drift_notified", False):
+            return
+        try:
+            import plistlib
+            import sys as _sys
+
+            from heard import __version__ as running
+
+            info = None
+            for parent in Path(_sys.executable).resolve().parents:
+                cand = parent / "Info.plist"
+                if cand.exists() and (parent / "MacOS").exists():
+                    info = cand
+                    break
+            if info is None:
+                return
+            with open(info, "rb") as f:
+                disk = (plistlib.load(f).get("CFBundleShortVersionString") or "").strip()
+            if disk and disk != running:
+                self._bundle_drift_notified = True
+                _log("bundle_drift_detected", running=running, disk=disk)
+                notify.notify(
+                    "Heard was updated",
+                    f"Heard {disk} is installed — quit and reopen to finish updating.",
+                    kind="update_applied",
+                )
+        except Exception as e:
+            _log("bundle_drift_check_error", err=str(e))
+
     def _sync_plan_from_me(self, me: dict) -> None:
         """Persist plan + trial-expiry from a /v1/me snapshot when they've
         drifted from local config, then reload so the change takes effect.
@@ -1439,6 +1475,19 @@ class Daemon:
             )
         except Exception:
             pass
+        # An upgrade TO Power needs its own setup (Accessibility + Whisper). On an
+        # in-place upgrade nothing else opens onboarding — the user just lands on
+        # Power with a dead hotkey (Toma). Surface the home window so the Power
+        # onboarding runs. Fires once per transition (guarded old != new above).
+        if new == "power" and old != "power":
+            try:
+                from PyObjCTools import AppHelper  # noqa: PLC0415
+
+                from heard import home_window  # noqa: PLC0415
+
+                AppHelper.callAfter(home_window.show_home)
+            except Exception as e:
+                _log("open_home_on_power_upgrade_failed", err=str(e))
 
     def _managed_capped_today(self) -> bool:
         """True if we hit the managed daily-char cap (429) during the
@@ -3692,6 +3741,16 @@ class Daemon:
             ok = accessibility.inject_text(
                 req.get("text") or "", submit=bool(req.get("submit", False))
             )
+            # Mirror the dictation into the Whisper onboarding demo box if it's
+            # open — keystroke injection into a WebView input is unreliable, so
+            # the daemon (which has the text here) pushes it directly. No-op when
+            # the window isn't on that step, and skipped for submit-only presses.
+            try:
+                from heard import home_window  # noqa: PLC0415
+
+                home_window.push_dictation(req.get("text") or "")
+            except Exception:
+                pass
             return json.dumps({"ok": ok}).encode("utf-8")
         if cmd == "ask":
             # Layer 4 Q&A — answer a question about recent agent work
@@ -3871,6 +3930,11 @@ class Daemon:
         import time as _time
         import urllib.error as _urlerr
         import urllib.request as _urlreq
+
+        # Local check, independent of sign-in: did a manual re-install swap the
+        # bundle under us? Run it every poll (before the token gate) so even a
+        # signed-out user gets nudged to relaunch after an update.
+        self._check_bundle_drift()
 
         token = (self.cfg.get("heard_token") or "").strip()
         if not token:

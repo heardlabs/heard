@@ -114,7 +114,14 @@ def _current_state() -> dict[str, Any]:
     # Home (Mission Control / Transcript) data — only when the window is in Home
     # mode (signed in + set up), so onboarding doesn't pay the status socket
     # round-trip. Best-effort; the page falls back to a sample if absent.
-    setup_done = (cfg.get("onboarded_plan") or "") == plan or bool(cfg.get("onboarded"))
+    # Power has its OWN setup (Accessibility + Whisper) that the legacy
+    # `onboarded` flag never covered — so an existing free/pro user who upgrades
+    # to Power must still run the Power onboarding, or they land on a dead hotkey
+    # (Toma's exact experience). Require onboarded_plan=="power" for Power; the
+    # legacy flag only satisfies non-Power plans.
+    setup_done = (cfg.get("onboarded_plan") or "") == plan or (
+        bool(cfg.get("onboarded")) and plan != "power"
+    )
     if signed_in and setup_done and plan != "free":
         try:
             state["home"] = _home_data()
@@ -537,6 +544,13 @@ def _build_controller_class():
                 self._web.evaluateJavaScript_completionHandler_(
                     "window.__micListening&&window.__micListening(%s)"
                     % ("true" if on else "false"),
+                    None,
+                )
+
+        def _push_dictation(self, text):
+            if self._web is not None and text:
+                self._web.evaluateJavaScript_completionHandler_(
+                    f"window.__pushDictation&&window.__pushDictation({json.dumps(text)})",
                     None,
                 )
 
@@ -989,6 +1003,19 @@ def refresh_if_open() -> None:
             from PyObjCTools import AppHelper
 
             AppHelper.callAfter(_controller._push_state)
+    except Exception:
+        pass
+
+
+def push_dictation(text: str) -> None:
+    """Show a live dictation transcript in the Whisper onboarding demo box. The
+    daemon calls this on the utterance seam; it no-ops unless the window is open
+    on the whisper step (the JS only fills #mic-in when it exists). Best-effort."""
+    try:
+        if _controller is not None and text:
+            from PyObjCTools import AppHelper
+
+            AppHelper.callAfter(_controller._push_dictation, text)
     except Exception:
         pass
 

@@ -398,6 +398,14 @@ window.__micListening = function(on){
     wave.querySelectorAll('.wf-bar').forEach(b=>b.style.animationPlayState=on?'running':'paused'); }
   if(on){ const i=document.getElementById('mic-in'); if(i) i.focus(); }
 };
+// Native pushes the transcript straight into the demo box. Push-to-talk types
+// via synthetic keystrokes at the cursor, which a WebView <input> receives
+// unreliably — so the daemon (which already has the transcript on the utterance
+// seam) fills the box directly. No-op unless the whisper step is showing.
+window.__pushDictation = function(t){
+  const i=document.getElementById('mic-in');
+  if(i && t){ i.value=t; micHeard(t); }
+};
 function next(){
   // Step to the NEXT screen in sequence — even already-completed ones — so the
   // user always walks the whole list (and can click through fast). Don't skip.
