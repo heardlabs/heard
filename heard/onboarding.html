@@ -683,7 +683,12 @@ const SCREENS = {
       <div class="eyebrow">Heard Whisper</div>
       <h1 class="hero" style="font-size:44px">Speak, don’t type.</h1>
       ${on
-        ? `<p class="lede" style="max-width:500px;margin-top:12px">Whisper’s on. Read the line below to try it.</p>${test}`
+        ? (S.axGranted
+            ? `<p class="lede" style="max-width:500px;margin-top:12px">Whisper’s on. Read the line below to try it.</p>${test}`
+            : `<p class="lede" style="max-width:500px;margin-top:12px">Whisper’s on — one last permission.</p>
+               <div style="max-width:500px;margin-top:12px;font:400 14px/1.6 var(--sans);color:var(--ink-2)">Heard needs <strong>Accessibility</strong> access to catch the <span class="kbd">Right ⌘</span> key anywhere you type. Without it, push-to-talk can’t work.</div>
+               <div class="row" style="margin-top:16px"><button class="btn btn-primary" onclick="bridge('grant_accessibility')">Enable Accessibility</button></div>
+               <p style="margin-top:12px;font:400 12px var(--sans);color:var(--ink-3)">Toggle <strong>Heard</strong> on in System Settings → Privacy & Security → Accessibility. This screen updates once it’s granted.</p>`)
         : `<p class="lede" style="max-width:500px;margin-top:12px">Heard’s voice-to-text. Two ways to dictate to your agents instead of typing:</p>
            <div style="max-width:540px;margin-top:18px;display:flex;flex-direction:column;gap:12px">${rows}</div>
            <p style="margin-top:20px;font:400 13px var(--sans);color:var(--ink-2)">Press below to enable Heard Whisper.</p>`}

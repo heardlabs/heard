@@ -875,6 +875,19 @@ def _build_controller_class():
                 # voice-mode radio, which sets both.
                 config.set_value("push_to_talk", True)
                 _reload_daemon()
+                # PTT needs TWO permissions: Microphone (below) AND Accessibility
+                # (the global Right ⌘ monitor can't see the key without it). The
+                # AX prompt was wired (_act_grant_accessibility) but nothing ever
+                # fired it during onboarding, so users enabled Whisper, got the
+                # "hold Right ⌘" demo, and no HUD ever appeared. Fire it here so
+                # enabling Whisper asks for both. The daemon's watch re-arms the
+                # hotkey once the grant lands (no restart needed).
+                try:
+                    from heard import accessibility
+
+                    accessibility.ensure_trusted(prompt=True)
+                except Exception as e:
+                    _log_bridge_error("enable_whisper_ax", e)
                 # CRITICAL: the serve is a subprocess with no UI, so it can't
                 # show the mic TCC prompt — macOS silently KILLS it the moment it
                 # opens the mic (a native crash, no traceback → the serve

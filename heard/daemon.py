@@ -945,6 +945,14 @@ class Daemon:
         # daemon-spawn path passes prompt_for_accessibility=False so the
         # system dialog doesn't fire alongside the onboarding card.
         trusted = accessibility.ensure_trusted(prompt=prompt_for_accessibility)
+        # Remember whether we armed the hotkey WHILE trusted. A global event
+        # monitor created before Accessibility is granted receives no key events,
+        # and granting it later does NOT wake the existing monitor — it must be
+        # RE-created. The watch loop (_start_voice_service_watch) reads this and
+        # re-arms once trust flips true, so PTT starts working without an app
+        # restart. (Before this, granting Accessibility mid-session left the HUD
+        # dead until relaunch.)
+        self._hotkey_trusted = trusted
         if not trusted:
             print(
                 "heard: Accessibility permission pending — hotkeys will start "
@@ -1026,6 +1034,19 @@ class Daemon:
                         _log("voice_service_gate_changed", want=want, trying=trying)
                         self.cfg = cfg          # adopt the config we decided on
                         self._sync_voice_service()
+                    # Accessibility granted AFTER launch: the hotkey monitor was
+                    # armed while untrusted (deaf) and needs re-creating. Re-arm
+                    # once trust flips true so the Right ⌘ HUD starts without a
+                    # restart. Only when we know we armed untrusted, and only if
+                    # the hotkey is enabled, so we don't thrash.
+                    if (
+                        getattr(self, "_hotkey_trusted", True) is False
+                        and cfg.get("hotkey_enabled", True)
+                        and accessibility.is_trusted()
+                    ):
+                        _log("accessibility_granted_rearming_hotkey")
+                        self.cfg = cfg
+                        self._start_hotkey()
                 except Exception as e:
                     _log("voice_service_watch_error", err=str(e))
 
