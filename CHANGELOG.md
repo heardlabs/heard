@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.20]
+
+### Fixed
+
+- Onboarding now asks for Accessibility permission when you enable Whisper,
+  and shows an 'Enable Accessibility' step before the push-to-talk demo - so
+  the Right ⌘ hotkey works instead of silently doing nothing.
+- Granting Accessibility now takes effect immediately; the hotkey no longer
+  needs an app restart to start working.
+
 ## [1.1.19]
 
 ### Fixed
@@ -123,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Current released version.
 
-[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.19...HEAD
+[Unreleased]: https://github.com/heardlabs/heard/compare/v1.1.20...HEAD
+[1.1.20]: https://github.com/heardlabs/heard/releases/tag/v1.1.20
 [1.1.19]: https://github.com/heardlabs/heard/releases/tag/v1.1.19
 [1.1.18]: https://github.com/heardlabs/heard/releases/tag/v1.1.18
 [1.1.17]: https://github.com/heardlabs/heard/releases/tag/v1.1.17
