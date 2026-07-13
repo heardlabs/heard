@@ -3948,14 +3948,25 @@ class Daemon:
                 ssl_ctx = _ssl.create_default_context(cafile=certifi.where())
             except ImportError:
                 ssl_ctx = _ssl.create_default_context()
+            # Report our macOS Accessibility grant so the web dashboard checklist
+            # auto-ticks (the browser can't see the Mac's TCC state; we can).
+            try:
+                from heard import accessibility  # noqa: PLC0415
+
+                ax = "1" if accessibility.is_trusted() else "0"
+            except Exception:
+                ax = None
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "Heard-daemon/1.0",
+            }
+            if ax is not None:
+                headers["X-Heard-Accessibility"] = ax
             req = _urlreq.Request(
                 f"{base_url}/v1/me",
                 method="GET",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
-                    "User-Agent": "Heard-daemon/1.0",
-                },
+                headers=headers,
             )
             with _urlreq.urlopen(req, timeout=5.0, context=ssl_ctx) as resp:
                 data = _json.loads(resp.read().decode("utf-8") or "{}")
