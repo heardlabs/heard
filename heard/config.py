@@ -212,6 +212,20 @@ DEFAULTS: dict[str, Any] = {
     # situations, every spoken line is prefixed with "Agent <name>: "
     # so you still know which agent it's reporting on.
     "multi_agent_auto_voices": False,
+    # What a "voice" is keyed to when auto-assigning:
+    #   "project" — default, historical behaviour. One voice per
+    #               repo_name, deterministic, stable across restarts
+    #               ("api is always Rachel"). Two windows on the SAME
+    #               repo share a voice, and the focus agent keeps the
+    #               configured persona voice.
+    #   "window"  — one voice per session. Every window gets its own,
+    #               focus included, handed out round-robin as windows
+    #               appear so concurrent agents never collide (the
+    #               project hash does collide — 7 voices, and 10
+    #               projects land on 4). NOT stable across restarts:
+    #               session IDs are per-run, so voices reshuffle.
+    # `agent_voices` still wins over both.
+    "multi_agent_voice_scope": "project",
     # Manual repo_name → ElevenLabs voice_id overrides. Always wins
     # over the auto-pick. Edit YAML directly:
     #   agent_voices:

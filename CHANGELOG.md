@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `multi_agent_voice_scope: window` — give every agent window its own
+  voice instead of one per project. Assigned round-robin as windows appear,
+  so concurrent agents never collide (the project hash does: 10 projects can
+  land on 4 voices). Covers the focused window too, which project scope
+  deliberately leaves on the default voice. Voices reset when the daemon
+  restarts — inherent to keying on per-run session IDs. `agent_voices` still
+  overrides both.
+
 - Speechify (Simba 3.2) as a bring-your-own-key voice provider. Paste a
   Speechify key in Settings → API keys and Heard narrates through it. Pick a
   voice with `speechify_voice` — Simba 3.2's set is `beatrice_32`,
