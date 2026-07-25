@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Speechify (Simba 3.2) as a bring-your-own-key voice provider. Paste a
+  Speechify key in Settings → API keys and Heard narrates through it. Set
+  `speechify_voice` to a voice ID from the Speechify console to pick a voice;
+  leave it blank for the default. If you already have an ElevenLabs key, that
+  one keeps winning — clear it to switch over.
+
 ## [1.1.21]
 
 ### Fixed
