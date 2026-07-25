@@ -2520,6 +2520,24 @@ class Daemon:
         if bool(self.cfg.get("muted")) and not self.cfg.get("narration_spool"):
             _log("speech_skipped", reason="muted", session=session_id)
             return
+        # Per-window voices. Every narration path funnels through here
+        # — fastpath templates, harness text, the no-LLM floor — so this
+        # is the one place that catches them all. The project-scoped
+        # auto-pool deliberately exempts the focus agent (see
+        # _resolve_focused_voice), which is right for "api is always
+        # Rachel" but leaves the window you're driving on the shared
+        # default. Window scope is the opposite intent: tell windows
+        # apart, including the one in front of you.
+        # (cfg is optional on this signature — callers on the floor path
+        # pass None, so read through self.cfg rather than assuming.)
+        _vcfg = cfg or self.cfg
+        if (
+            voice_override is None
+            and session_id
+            and bool(_vcfg.get("multi_agent_auto_voices", False))
+            and (_vcfg.get("multi_agent_voice_scope") or "project") == "window"
+        ):
+            voice_override = self.router.voice_for_session(session_id)
         # Record what we're about to say so the harness can avoid repeating it
         # (anti-repeat: prompt hint + near-dup backstop). All narration paths
         # funnel through here, so this captures harness + floor + opener lines.
