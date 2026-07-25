@@ -342,6 +342,22 @@ def test_speechify_does_not_import_kokoro(tmp_path, monkeypatch):
     assert "heard.tts.kokoro" not in sys.modules
 
 
+def test_daemon_points_router_at_the_speechify_voice_pool(tmp_path, monkeypatch):
+    """End of the wire: picking Speechify must also swap the swarm
+    voice pool, or per-agent voices silently collapse onto one."""
+    daemon = _make_daemon(tmp_path, monkeypatch, {"speechify_api_key": "sk_x"})
+    from heard.tts.speechify import AUTO_VOICE_POOL
+
+    assert daemon.router._voice_pool == AUTO_VOICE_POOL
+
+
+def test_daemon_keeps_elevenlabs_pool_for_elevenlabs(tmp_path, monkeypatch):
+    daemon = _make_daemon(tmp_path, monkeypatch, {"elevenlabs_api_key": "sk_x"})
+    from heard.multi_agent import _AUTO_VOICE_POOL
+
+    assert daemon.router._voice_pool == _AUTO_VOICE_POOL
+
+
 def test_speechify_audio_extension_is_mp3(tmp_path, monkeypatch):
     daemon = _make_daemon(tmp_path, monkeypatch, {"speechify_api_key": "sk_x"})
     assert daemon.tts.AUDIO_EXT == ".mp3"

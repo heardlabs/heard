@@ -256,7 +256,14 @@ class Daemon:
         # drop, or defer to a digest summary, based on how many
         # sessions are active. Single-session use case is unchanged
         # (router falls through to "speak" on every event).
-        self.router = multi_agent_mod.MultiAgentRouter()
+        # Voice pool follows the TTS backend — provider voice-ID
+        # namespaces don't overlap, so a pool from the wrong provider
+        # collapses every agent onto one voice (see
+        # multi_agent.voice_pool_for_backend). Re-set on every re-pick
+        # in _reload_config.
+        self.router = multi_agent_mod.MultiAgentRouter(
+            voice_pool=multi_agent_mod.voice_pool_for_backend(type(self.tts).__name__)
+        )
         # Layer 2 — Agent State (the "scoreboard"). Per-agent facts +
         # cheap heuristic hints, updated on every event. Read by
         # `heard status` for human inspection today; will be read by
@@ -1648,6 +1655,10 @@ class Daemon:
             repick = True
         if repick:
             self.tts = self._make_tts()
+            # Swapping provider swaps the voice-ID namespace with it.
+            self.router.set_voice_pool(
+                multi_agent_mod.voice_pool_for_backend(type(self.tts).__name__)
+            )
         new_sig = self._hotkey_signature(self.cfg)
         if new_sig != old_sig:
             if self._hotkey_listener is not None:

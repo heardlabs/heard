@@ -55,14 +55,40 @@ _AUTO_VOICE_POOL = (
 )
 
 
-def _auto_voice_for(repo_name: str) -> str:
+def voice_pool_for_backend(backend_name: str) -> tuple[str, ...]:
+    """Auto-assignment pool for the ACTIVE TTS backend.
+
+    Voice IDs are per-provider namespaces with no overlap, so the pool
+    has to follow the backend. Handing ElevenLabs IDs to Speechify used
+    to collapse every agent onto one voice: the Speechify backend maps
+    unrecognised (ElevenLabs-shaped) IDs to its default rather than
+    404ing, so swarm mode silently lost per-agent voices instead of
+    failing loudly. Kokoro/Null keep the ElevenLabs pool — Kokoro
+    resolves its own voice upstream in ``Daemon._voice``.
+    """
+    if backend_name == "SpeechifyTTS":
+        from heard.tts.speechify import AUTO_VOICE_POOL  # noqa: PLC0415
+
+        return AUTO_VOICE_POOL
+    return _AUTO_VOICE_POOL
+
+
+def _auto_voice_for(repo_name: str, pool: tuple[str, ...] = _AUTO_VOICE_POOL) -> str:
     """Deterministic per-repo voice from the pool. SHA-1 — Python's
     builtin hash() is salted per-process, which would give the same
-    repo a different voice every time the daemon restarts. Bad."""
+    repo a different voice every time the daemon restarts. Bad.
+
+    The hash is taken over the repo name only, so a project keeps its
+    position in whichever pool is active — switching TTS provider
+    reshuffles which voice you hear, but two projects that differed
+    before still differ after.
+    """
+    if not pool:
+        pool = _AUTO_VOICE_POOL
     if not repo_name:
-        return _AUTO_VOICE_POOL[0]
+        return pool[0]
     digest = hashlib.sha1(repo_name.encode("utf-8")).hexdigest()
-    return _AUTO_VOICE_POOL[int(digest, 16) % len(_AUTO_VOICE_POOL)]
+    return pool[int(digest, 16) % len(pool)]
 
 # How long after the last event a session counts as "active". Used
 # both for the SOLO/SWARM mode decision and for the menu's active-
@@ -403,8 +429,13 @@ def _label_for(info: SessionInfo) -> str:
 
 
 class MultiAgentRouter:
-    def __init__(self) -> None:
+    def __init__(self, voice_pool: tuple[str, ...] | None = None) -> None:
         self._lock = threading.Lock()
+        # Auto-assignment pool for the active TTS backend. Defaults to
+        # the ElevenLabs pool; the daemon calls set_voice_pool() with
+        # the pool matching whichever backend _make_tts picked, and
+        # again whenever a config reload re-picks it.
+        self._voice_pool: tuple[str, ...] = voice_pool or _AUTO_VOICE_POOL
         self._sessions: dict[str, SessionInfo] = {}
         self._pinned: str | None = None
         self._event_counter = 0  # monotonic; assigned to SessionInfo.event_seq
@@ -413,6 +444,15 @@ class MultiAgentRouter:
         # the speaker *changes* — narrating ten lines in a row from the
         # agent you're driving shouldn't read its name ten times.
         self._last_narrated_session: str | None = None
+
+    def set_voice_pool(self, pool: tuple[str, ...]) -> None:
+        """Point auto-assignment at the pool for the active backend.
+
+        Called by the daemon after every ``_make_tts``. Cheap and
+        idempotent; an empty pool is ignored by ``_auto_voice_for``.
+        """
+        with self._lock:
+            self._voice_pool = tuple(pool) or _AUTO_VOICE_POOL
 
     # --- session tracking --------------------------------------------------
 
@@ -657,7 +697,7 @@ class MultiAgentRouter:
         if manual:
             return manual
         if auto_voices and not is_focus and info.repo_name:
-            return _auto_voice_for(info.repo_name)
+            return _auto_voice_for(info.repo_name, self._voice_pool)
         return None
 
     # --- project channel scheduler ----------------------------------------
@@ -743,7 +783,7 @@ class MultiAgentRouter:
                 is_primary = project_key == primary_key
                 voice_override: str | None = None
                 if auto_voices and not is_primary and speaker.repo_name:
-                    voice_override = _auto_voice_for(speaker.repo_name)
+                    voice_override = _auto_voice_for(speaker.repo_name, self._voice_pool)
                 out.append(
                     ProjectFlush(
                         project_key=project_key,
@@ -906,7 +946,7 @@ class MultiAgentRouter:
                 is_primary = project_key == primary_key
                 voice_override: str | None = None
                 if auto_voices and not is_primary and speaker.repo_name:
-                    voice_override = _auto_voice_for(speaker.repo_name)
+                    voice_override = _auto_voice_for(speaker.repo_name, self._voice_pool)
                 out.append(
                     ProjectFlush(
                         project_key=project_key,

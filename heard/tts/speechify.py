@@ -55,6 +55,22 @@ DEFAULT_MODEL_ID = "simba-3.2"  # streaming-native, lowest TTFB, English-only
 # hard-coded list would start rejecting valid ones. It's the documented
 # menu for `speechify_voice`; anything unset lands on the default below.
 DEFAULT_VOICE_ID = "geffen_32"
+
+# Pool for per-agent auto-assignment in swarm mode (see multi_agent.py).
+# Mirrors the ElevenLabs pool's contract: a spread of male/female voices
+# so the listener can tell who's speaking on the first syllable, and
+# DEFAULT_VOICE_ID is deliberately absent — the focus agent keeps the
+# configured voice, so a background agent that hashed onto it would be
+# indistinguishable from the one you're driving.
+AUTO_VOICE_POOL = (
+    "beatrice_32",
+    "dominic_32",
+    "edmund_32",
+    "harper_32",
+    "hugh_32",
+    "imogen_32",
+    "wyatt_32",
+)
 DEFAULT_TIMEOUT_S = 8.0
 
 # ElevenLabs voice IDs are 20-char alphanumeric. A user switching from the
