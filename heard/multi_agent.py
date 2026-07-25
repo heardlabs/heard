@@ -63,8 +63,15 @@ def voice_pool_for_backend(backend_name: str) -> tuple[str, ...]:
     to collapse every agent onto one voice: the Speechify backend maps
     unrecognised (ElevenLabs-shaped) IDs to its default rather than
     404ing, so swarm mode silently lost per-agent voices instead of
-    failing loudly. Kokoro/Null keep the ElevenLabs pool — Kokoro
-    resolves its own voice upstream in ``Daemon._voice``.
+    failing loudly.
+
+    Kokoro/Null keep the ElevenLabs pool, which is NOT because Kokoro is
+    safe here — a pool override bypasses ``Daemon._voice`` (and so its
+    Kokoro branch) and reaches ``synth_to_file`` directly, where an
+    ElevenLabs ID means nothing to Kokoro's ``<accent_gender>_<name>``
+    namespace. That mismatch predates this function and is a live bug on
+    the Kokoro path today; fixing it needs a Kokoro pool and is out of
+    scope for adding a backend. Tracked in heardlabs/heard#22.
     """
     if backend_name == "SpeechifyTTS":
         from heard.tts.speechify import AUTO_VOICE_POOL  # noqa: PLC0415
