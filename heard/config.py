@@ -104,6 +104,17 @@ DEFAULTS: dict[str, Any] = {
     "anthropic_api_key": "",
     "openai_api_key": "",
     "elevenlabs_api_key": "",
+    # Speechify (Simba 3.2) — the other BYOK voice provider. Sits BELOW
+    # elevenlabs_api_key in the daemon's backend ladder, so an existing
+    # ElevenLabs key keeps winning; clear that key to switch over. Same
+    # BYOK gate as every other key here (see Daemon._make_tts).
+    "speechify_api_key": "",
+    # Speechify voice ID (e.g. "geffen_32"). Separate from `voice`, which
+    # holds an ElevenLabs alias or 20-char ID — the two catalogues share
+    # no identifiers, so reusing one key for both would send every synth
+    # a voice the other provider has never heard of. Mirrors the
+    # `kokoro_voice` split. Empty → the backend's curated default.
+    "speechify_voice": "",
     # Groq key for Power's dictation cleanup. BYOK accounts use THIS key;
     # without it they get the raw transcript (we never proxy their text).
     "groq_api_key": "",

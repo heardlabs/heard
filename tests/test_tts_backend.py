@@ -253,6 +253,133 @@ def test_selector_falls_back_to_byok_when_managed_token_expired(
     assert daemon.tts.api_key == "sk_legacy_byok"
 
 
+def test_selector_picks_speechify_when_only_speechify_key(tmp_path, monkeypatch):
+    """A Speechify key alone gets the Simba 3.2 backend."""
+    daemon = _make_daemon(
+        tmp_path, monkeypatch, {"speechify_api_key": "sk_speechify_123"}
+    )
+    from heard.tts.speechify import SpeechifyTTS
+
+    assert isinstance(daemon.tts, SpeechifyTTS)
+    assert daemon.tts.api_key == "sk_speechify_123"
+    assert daemon.tts.model_id == "simba-3.2"
+
+
+def test_selector_prefers_elevenlabs_over_speechify(tmp_path, monkeypatch):
+    """Speechify sits BELOW ElevenLabs deliberately: adding this backend
+    must not change what an install with an existing EL key hears. The
+    user clears the EL key to switch over."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {"elevenlabs_api_key": "sk_el", "speechify_api_key": "sk_speechify"},
+    )
+    from heard.tts.elevenlabs import ElevenLabsTTS
+
+    assert isinstance(daemon.tts, ElevenLabsTTS)
+
+
+def test_selector_speechify_loses_to_active_managed_plan(tmp_path, monkeypatch):
+    """Same BYOK gate as every other key: an active paid plan keeps the
+    managed voices it pays for. Speechify doesn't get a side door."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok_pro",
+            "heard_plan": "pro",
+            "speechify_api_key": "sk_speechify",
+        },
+    )
+    from heard.tts.managed import ManagedTTS
+
+    assert isinstance(daemon.tts, ManagedTTS)
+
+
+def test_selector_speechify_honored_when_plan_expired(tmp_path, monkeypatch):
+    """Trial over with a Speechify key on file: use it rather than
+    dropping to Kokoro/silence — same treatment ElevenLabs gets."""
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok_was_trial",
+            "heard_plan": "expired",
+            "speechify_api_key": "sk_speechify",
+        },
+    )
+    from heard.tts.speechify import SpeechifyTTS
+
+    assert isinstance(daemon.tts, SpeechifyTTS)
+
+
+def test_selector_speechify_honored_when_byok_granted(tmp_path, monkeypatch):
+    daemon = _make_daemon(
+        tmp_path,
+        monkeypatch,
+        {
+            "heard_token": "tok_pro",
+            "heard_plan": "power",
+            "byok_enabled": True,
+            "speechify_api_key": "sk_own_speechify",
+        },
+    )
+    from heard.tts.speechify import SpeechifyTTS
+
+    assert isinstance(daemon.tts, SpeechifyTTS)
+    assert daemon.tts.api_key == "sk_own_speechify"
+
+
+def test_speechify_does_not_import_kokoro(tmp_path, monkeypatch):
+    """Same lazy-import contract as the ElevenLabs path — a cloud user
+    never pays the kokoro_onnx / onnxruntime memory cost."""
+    for mod in list(sys.modules):
+        if mod.startswith("kokoro_onnx") or mod == "heard.tts.kokoro":
+            sys.modules.pop(mod, None)
+
+    _ = _make_daemon(tmp_path, monkeypatch, {"speechify_api_key": "sk_speechify"})
+    assert "kokoro_onnx" not in sys.modules
+    assert "heard.tts.kokoro" not in sys.modules
+
+
+def test_speechify_audio_extension_is_mp3(tmp_path, monkeypatch):
+    daemon = _make_daemon(tmp_path, monkeypatch, {"speechify_api_key": "sk_x"})
+    assert daemon.tts.AUDIO_EXT == ".mp3"
+
+
+def test_selector_re_picks_when_speechify_key_pasted(tmp_path, monkeypatch):
+    """Pasting a Speechify key in Settings swaps the backend on the next
+    reload, without a daemon restart — same as the ElevenLabs path."""
+    state = {"key": ""}
+    monkeypatch.setattr("heard.config.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("heard.config.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("heard.config.MODELS_DIR", tmp_path / "models")
+    monkeypatch.setattr("heard.config.SOCKET_PATH", tmp_path / "daemon.sock")
+    monkeypatch.setattr("heard.config.LOG_PATH", tmp_path / "daemon.log")
+    monkeypatch.setattr("heard.config.PID_PATH", tmp_path / "daemon.pid")
+
+    real_load = __import__("heard.config", fromlist=["load"]).load
+
+    def _load(*a, **kw):
+        cfg = real_load(*a, **kw)
+        cfg["speechify_api_key"] = state["key"]
+        return cfg
+
+    monkeypatch.setattr("heard.config.load", _load)
+
+    from heard.daemon import Daemon
+    from heard.tts.null import NullTTS
+    from heard.tts.speechify import SpeechifyTTS
+
+    daemon = Daemon()
+    assert isinstance(daemon.tts, NullTTS)
+
+    state["key"] = "sk_just_pasted"
+    daemon._reload_config()
+    assert isinstance(daemon.tts, SpeechifyTTS)
+    assert daemon.tts.api_key == "sk_just_pasted"
+
+
 def test_selector_re_picks_on_config_reload(tmp_path, monkeypatch):
     """When the user pastes their key in onboarding mid-session, the
     next reload should swap the backend without needing a restart."""
