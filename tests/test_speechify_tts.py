@@ -141,6 +141,15 @@ def test_unset_voice_uses_curated_default():
     assert _resolve_voice_id(None) == DEFAULT_VOICE_ID
 
 
+def test_default_voice_is_a_real_simba_32_voice():
+    """Pinned deliberately. `geffen_32` was confirmed present in the
+    live `GET /v1/voices` response with `simba-3.2` in its `models` — it
+    is one of the 8 voices that set supports. A default that isn't in the
+    curated set would 404 on every utterance for anyone who hasn't set
+    `speechify_voice`, and no mocked test would catch it."""
+    assert DEFAULT_VOICE_ID == "geffen_32"
+
+
 def test_speechify_voice_slug_passes_through():
     assert _resolve_voice_id("geffen_32") == "geffen_32"
     assert _resolve_voice_id("  oliver  ") == "oliver"

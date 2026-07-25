@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Speechify (Simba 3.2) as a bring-your-own-key voice provider. Paste a
-  Speechify key in Settings → API keys and Heard narrates through it. Set
-  `speechify_voice` to a voice ID from the Speechify console to pick a voice;
-  leave it blank for the default. If you already have an ElevenLabs key, that
-  one keeps winning — clear it to switch over.
+  Speechify key in Settings → API keys and Heard narrates through it. Pick a
+  voice with `speechify_voice` — Simba 3.2's set is `beatrice_32`,
+  `dominic_32`, `edmund_32`, `geffen_32`, `harper_32`, `hugh_32`, `imogen_32`,
+  `wyatt_32` (default `geffen_32`). Speed is handled natively across the whole
+  0.5×–2× slider, so nothing gets resampled on playback. If you already have an
+  ElevenLabs key, that one keeps winning — clear it to switch over.
 
 ## [1.1.21]
 

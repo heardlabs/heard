@@ -44,10 +44,16 @@ except ImportError:  # pragma: no cover - dev installs without certifi
 
 API_BASE = "https://api.speechify.ai/v1"
 DEFAULT_MODEL_ID = "simba-3.2"  # streaming-native, lowest TTFB, English-only
-# Documented curated voice for simba-3.2. Simba 3.2 ships a curated voice
-# set rather than the full shared library, so we don't carry an alias
-# table of guessed slugs — users paste an ID from the Speechify console
-# into `speechify_voice` and anything unset lands here.
+# Simba 3.2 ships a curated voice set rather than the full shared
+# library — as of 2026-07 exactly 8 of the ~950 voices on /v1/voices list
+# `simba-3.2` in their `models`:
+#
+#   beatrice_32  dominic_32  edmund_32  geffen_32
+#   harper_32    hugh_32     imogen_32  wyatt_32
+#
+# Deliberately NOT a validation whitelist — Speechify adds voices and a
+# hard-coded list would start rejecting valid ones. It's the documented
+# menu for `speechify_voice`; anything unset lands on the default below.
 DEFAULT_VOICE_ID = "geffen_32"
 DEFAULT_TIMEOUT_S = 8.0
 
