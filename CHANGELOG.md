@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   0.5×–2× slider, so nothing gets resampled on playback. If you already have an
   ElevenLabs key, that one keeps winning — clear it to switch over.
 
+### Fixed
+
+- Per-agent voices work on Speechify. The swarm voice pool now follows the
+  active TTS backend; previously it always handed out ElevenLabs voice IDs,
+  which Speechify maps to its default rather than rejecting — so every agent
+  in a multi-agent session spoke in the same voice, with nothing in the log
+  to say why.
+
 ## [1.1.21]
 
 ### Fixed
