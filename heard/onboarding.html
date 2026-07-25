@@ -522,9 +522,10 @@ function renderHome(){
       ${_powerUpsell()}
     </div>
     ${S.byokEnabled ? `${_HD('API keys')}
-    <div style="font:400 12.5px/1.5 var(--sans);color:var(--ink-2);margin:-6px 0 10px">Bring your own keys. Heard sends narration <b>straight to these providers</b> using your key - never through our servers. Leave blank to use your plan’s cloud voices, or the local Kokoro voice for zero cloud.</div>
+    <div style="font:400 12.5px/1.5 var(--sans);color:var(--ink-2);margin:-6px 0 10px">Bring your own keys. Heard sends narration <b>straight to these providers</b> using your key - never through our servers. Leave blank to use your plan’s cloud voices, or the local Kokoro voice for zero cloud. Set both voice keys and ElevenLabs wins — clear it to speak through Speechify.</div>
     <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:2px 18px 14px">
       ${_keyRow('elevenlabs','ElevenLabs · voice','xi-api-key…')}
+      ${_keyRow('speechify','Speechify · voice (Simba 3.2)','sk_…')}
       ${_keyRow('anthropic','Anthropic · narration brain','sk-ant-…')}
       ${S.powerBuild ? _keyRow('groq','Groq · dictation cleanup','gsk_…') : ''}
     </div>` : ''}
