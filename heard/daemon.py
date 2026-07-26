@@ -218,6 +218,7 @@ class Daemon:
         config.ensure_dirs()
         _maybe_rotate_log()
         self.cfg = config.load()
+        self._reconcile_ptt(self.cfg)
         # Day-31 silent downgrade: if the trial is over and we still
         # have plan="trial" cached in config, flip to "expired" before
         # picking the backend. The server enforces this regardless
@@ -1052,6 +1053,28 @@ class Daemon:
 
         threading.Thread(target=_watch, daemon=True).start()
 
+    @staticmethod
+    def _reconcile_ptt(cfg: dict) -> None:
+        """Keep ``push_to_talk`` a derived shadow of ``voice_mode`` so the two can
+        never desync. The hold-to-talk hotkey/HUD monitor gates on
+        ``push_to_talk``, but historically that key was set separately from
+        ``voice_mode`` — so any path that wrote ``voice_mode: ptt`` without also
+        writing ``push_to_talk`` left the HUD silently dead (recurring
+        "PTT doesn't work" reports; see heard-power ptt-troubleshooting Row 1b).
+
+        Derive it on every (re)load: True iff ``voice_mode == "ptt"``
+        (``off``/``ambient`` → False; ambient uses its own always-on path, not the
+        hotkey). Persist when it changes so the on-disk config self-heals too. The
+        monitor still ANDs ``_voice_backend_available()``, so this can't surface a
+        HUD on OSS/Pro. Single source of truth = ``voice_mode``."""
+        desired = (cfg.get("voice_mode") or "off").strip().lower() == "ptt"
+        if bool(cfg.get("push_to_talk")) != desired:
+            cfg["push_to_talk"] = desired
+            try:
+                config.set_value("push_to_talk", desired)
+            except Exception:
+                pass
+
     def _voice_backend_available(self) -> bool:
         """True when a voice-input backend is actually usable: a Power build
         (`voice_service_cmd` set) on a Power account (or `voice_input_unlocked`
@@ -1577,6 +1600,7 @@ class Daemon:
         old_plan = self.cfg.get("heard_plan", "")
         old_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
         self.cfg = config.load()
+        self._reconcile_ptt(self.cfg)
         # Reload typically means the user changed plan, pasted a key, or
         # an admin manually reset their daily counter. Whatever set the
         # cap-cache flags is no longer authoritative — drop them so the
