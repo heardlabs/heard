@@ -80,6 +80,16 @@ def _current_state() -> dict[str, Any]:
         "agentConnected": _agent_connected(),
         "claudeConnected": _claude_connected(),
         "codexConnected": _codex_connected(),
+        # A supported agent is present on this machine (its config dir exists)
+        # but Heard's hook isn't installed → we can gently offer to connect it.
+        "claudeDetected": _claude_present(),
+        "codexDetected": _codex_present(),
+        # Per-agent "don't remind me". Not connecting an agent can be a
+        # deliberate choice, so a dismissed hint never comes back.
+        "connectHintDismissed": {
+            "claude": bool(cfg.get("connect_hint_dismissed_claude")),
+            "codex": bool(cfg.get("connect_hint_dismissed_codex")),
+        },
         "micGranted": _mic_granted(),
         "axGranted": _ax_granted(),
         "voice": cfg.get("voice") or None,
@@ -296,6 +306,24 @@ def _codex_connected() -> bool:
 def _agent_connected() -> bool:
     """True if a Heard hook is installed in Claude Code or Codex."""
     return _claude_connected() or _codex_connected()
+
+
+def _claude_present() -> bool:
+    """True if Claude Code is used on this machine (its config dir exists),
+    regardless of whether Heard's hook is installed. Lets us nudge a user who
+    ran Claude Code but never connected it — the #1 'I hear nothing' cause."""
+    try:
+        return (Path.home() / ".claude").is_dir()
+    except Exception:
+        return False
+
+
+def _codex_present() -> bool:
+    """True if Codex is used on this machine (its config dir exists)."""
+    try:
+        return (Path.home() / ".codex").is_dir()
+    except Exception:
+        return False
 
 
 # Persona → the website's sample file (served at heard.dev/audio/intro_<key>.mp3).
@@ -620,6 +648,18 @@ def _build_controller_class():
                 _notify_connected("Codex")
             except Exception as e:
                 _log_bridge_error("connect_codex", e)
+
+        def _act_dismiss_connect_hint(self, body):
+            """User dismissed the 'installed but not connected' nudge for one
+            agent. Persist per-agent so Heard never mentions it again."""
+            try:
+                agent = str(body.get("agent") or "").strip()
+                if agent in ("claude", "codex"):
+                    from heard import config
+
+                    config.set_value(f"connect_hint_dismissed_{agent}", True)
+            except Exception as e:
+                _log_bridge_error("dismiss_connect_hint", e)
 
         def _act_open_voice_picker(self, body):
             # Voice lives in the onboarding voice screen + the menu-bar Persona
