@@ -781,8 +781,8 @@ class _GhostSegment(NSStackView):
     #   - "default": white pill, hairline border, dark text — used inside
     #     cards (the 9 tuning rows + Voice tab Speed). Reads as neutral
     #     control affordance, doesn't pull eye away from row labels.
-    #   - "orange_gradient": warm orange pill with NSGradient top→bottom,
-    #     white bold text, no border — used ONLY for the Tuning tab
+    #   - "orange_gradient": light sky pill with NSGradient top→bottom,
+    #     dark bold text, no border — used ONLY for the Tuning tab
     #     switcher (How much / How it sounds). Brand accent for navigation,
     #     not for values. the maintainer's spec.
     _TRACK_BG_LIGHT = (0.0, 0.0, 0.0, 0.055)
@@ -791,8 +791,8 @@ class _GhostSegment(NSStackView):
     _PILL_BG_DARK = (1.0, 1.0, 1.0, 0.12)
     _PILL_BORDER_LIGHT = (0.0, 0.0, 0.0, 0.08)
     _PILL_BORDER_DARK = (1.0, 1.0, 1.0, 0.08)
-    # Brand gradient endpoints — peach LEFT → lavender RIGHT, taken
-    # verbatim from the heard.dev logo SVG (docs/assets/logo/*).
+    # Brand gradient endpoints — Ziggurat LEFT → Sage RIGHT,
+    # aligned with the heard.dev marketing palette.
     # NSGradient draws angle=0 (left→right). Matte by construction — no
     # specular, no inner highlight layer. Drawn in _SegButton.drawRect_
     # (NSGradient via NSBezierPath, then super draws the title on top)
@@ -802,9 +802,9 @@ class _GhostSegment(NSStackView):
     # `contents` itself, so the title naturally lands on top.
     # NOTE: both stops are light, so white text reads softer than ideal
     # (~2-3:1 contrast). the maintainer's stylistic call — keeping it.
-    _PILL_GRAD_LEFT = (0.961, 0.647, 0.537, 1.0)    # #F5A589 peach (logo)
-    _PILL_GRAD_RIGHT = (0.722, 0.643, 0.831, 1.0)   # #B8A4D4 lavender (logo)
-    _PILL_TEXT_ON_ORANGE = (1.0, 1.0, 1.0, 1.0)
+    _PILL_GRAD_LEFT = (0.725, 0.835, 0.886, 1.0)    # #B9D5E2 Ziggurat
+    _PILL_GRAD_RIGHT = (0.557, 0.631, 0.494, 1.0)   # #8EA17E Sage
+    _PILL_TEXT_ON_ORANGE = (0.067, 0.067, 0.067, 1.0)
 
     # Internal padding so the white pill sits INSIDE the gray track with
     # a thin gray border showing around it. Matches the Notion-style
@@ -824,7 +824,7 @@ class _GhostSegment(NSStackView):
         self._action = action
         self._buttons = []
         # "default" → white pill, dark text (in-card use).
-        # "orange_gradient" → orange-gradient pill, white text, used ONLY
+        # "orange_gradient" → sky-gradient pill, dark text, used ONLY
         # for the Tuning tab switcher (How much / How it sounds).
         self._accent = str(accent or "default")
 
@@ -926,7 +926,7 @@ class _GhostSegment(NSStackView):
                     layer.setBorderWidth_(0.0)
                     b._grad_selected = True
                     b.setNeedsDisplay_(True)
-                    # Subtle drop shadow gives the orange pill some lift.
+                    # Subtle drop shadow gives the sky pill some lift.
                     layer.setShadowOpacity_(0.20)
                     layer.setShadowRadius_(3.0)
                     from Foundation import NSMakeSize

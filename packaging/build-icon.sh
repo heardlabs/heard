@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turns packaging/icon-concepts/05-soundwave-circle.svg (or $1 if passed)
+# Turns packaging/icon-concepts/06-soft-signal.svg (or $1 if passed)
 # into packaging/heard.icns — the Dock/Finder icon used by py2app.
 #
 # Requires: rsvg-convert (brew install librsvg), iconutil (macOS built-in).
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-SRC=${1:-$HERE/icon-concepts/05-soundwave-circle.svg}
+SRC=${1:-$HERE/icon-concepts/06-soft-signal.svg}
 OUT=$HERE/heard.icns
 ICONSET=$(mktemp -d)/heard.iconset
 mkdir -p "$ICONSET"

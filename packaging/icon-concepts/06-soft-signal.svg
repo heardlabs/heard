@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect x="48" y="48" width="928" height="928" rx="224" fill="#FFFFFF"/>
+  <defs>
+    <rect id="ray" x="486" y="174" width="52" height="252" rx="26"/>
+  </defs>
+  <g fill="#111111">
+    <use href="#ray"/>
+    <use href="#ray" transform="rotate(45 512 512)"/>
+    <use href="#ray" transform="rotate(90 512 512)"/>
+    <use href="#ray" transform="rotate(135 512 512)"/>
+    <use href="#ray" transform="rotate(180 512 512)"/>
+    <use href="#ray" transform="rotate(225 512 512)"/>
+    <use href="#ray" transform="rotate(270 512 512)"/>
+    <use href="#ray" transform="rotate(315 512 512)"/>
+  </g>
+</svg>
