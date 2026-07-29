@@ -926,7 +926,7 @@ class HeardApp(rumps.App):
         self._voice_mode_items = {}
         if not powered:
             return rumps.MenuItem(
-                "Voice input — upgrade to Power", callback=self.on_upgrade)
+                "Voice input — upgrade to Power", callback=self.on_upgrade_power)
         vm = rumps.MenuItem("Voice input")
         for label, mode in (
             ("Off", "off"),
@@ -1147,6 +1147,17 @@ class HeardApp(rumps.App):
         + cancel."""
         import webbrowser
         webbrowser.open("https://heard.dev/dashboard")
+
+    def on_upgrade_power(self, _sender) -> None:
+        """Open the Power page. Used by the voice-input teaser — Power is a
+        feature unlock (hands-free voice), not the Pro Stripe checkout, so it
+        must NOT reuse on_upgrade's Pro payment link."""
+        import webbrowser
+
+        try:
+            webbrowser.open("https://heard.dev/power")
+        except Exception:
+            pass
 
     def on_upgrade(self, _sender) -> None:
         """Open the Stripe Payment Link with the user's email prefilled.

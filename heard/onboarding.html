@@ -278,7 +278,7 @@ function flow(){
   if (S.plan==='power') return [T.welcome, T.signin, T.connect, T.voice, T.whisper, T.phone, T.done]; // 2b Power
   return [T.welcome, T.signin, T.connect, T.mode, T.voice, T.done];                            // 2a Pro
 }
-function planWord(){ return S.plan==='power'?'Power':S.plan==='pro'?'Pro':'Free'; }
+function planWord(){ return S.plan==='power'?'Power':S.plan==='pro_plus'?'Pro+':S.plan==='pro'?'Pro':S.plan==='trial'?'Power':'Free'; }
 // The Power upsell row in the Account card. One block, four states, so the
 // journey reads in one place: trialing → keep it; trial ended → upgrade (Pro
 // users get Power only, Free users get Power+Pro); never trialed → start free;
