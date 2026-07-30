@@ -4025,6 +4025,10 @@ class Daemon:
         if new_count <= last_n:
             return
         self._set_friends_announced(new_count)
+        # The invite reward is managed voice — moot for an unlimited paid
+        # account. Keep the baseline current but stay silent for pro/power.
+        if (self.cfg.get("heard_plan") or "").strip().lower() in ("pro", "power"):
+            return
         # Ladder: each activated friend earns ~2h of managed voice; every 5th
         # also earns a free month of Pro (mirrors FREE_MONTH_MILESTONE=5 in
         # heard-api). Announce the month only on a milestone.

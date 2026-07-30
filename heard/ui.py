@@ -421,6 +421,11 @@ class HeardApp(rumps.App):
         self._refresh_voice_menu(cfg)
         self._refresh_api_key_labels(cfg, status or {})
         self._refresh_usage_item(cfg, status or {})
+        # The invite reward is managed voice — useless to an unlimited paid
+        # account. Show it only to free/expired/trial users (the ones burning
+        # through their free usage and looking for more without paying).
+        _plan = (cfg.get("heard_plan") or "").strip().lower()
+        self._set_item_hidden(self.invite_item, _plan in ("pro", "power"))
 
         # First-launch onboarding: open the Settings window (it shows the
         # welcome checklist) the first time, once the daemon's up. The
