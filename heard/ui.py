@@ -48,7 +48,7 @@ _HOTKEY_GLYPHS = {
 
 
 def _cap_reached_label(plan: str) -> str:
-    """Managed cap-reached banner. All plans (trial/pro/pro_plus/power)
+    """Managed cap-reached banner. All plans (trial/pro/power)
     now reset DAILY at UTC midnight — see nextResetForPlan in the API —
     so the wording is the same for everyone: back tomorrow."""
     return "Daily cloud limit reached — back tomorrow"
@@ -1230,9 +1230,9 @@ class HeardApp(rumps.App):
         - trial in last 5 days: "Upgrade to Pro — N days left", clickable.
         - trial otherwise: plain "Upgrade to Pro", clickable.
         """
-        if plan in ("pro", "pro_plus", "power"):
+        if plan in ("pro", "power"):
             # Top-tier plans have nothing to upgrade to — hide the CTA. (power
-            # + pro_plus previously fell through to the trial branch and wrongly
+            # previously fell through to the trial branch and wrongly
             # showed "Upgrade to Pro".) The email row above already shows the plan.
             # Hide the row entirely when pro — the email row above
             # already says "… · pro" AND is now clickable (opens the

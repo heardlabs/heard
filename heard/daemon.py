@@ -1369,7 +1369,7 @@ class Daemon:
         Upgrade to Pro'. The 5-minute /v1/me poll already had the truth;
         it just never wrote it back. Now it does."""
         server_plan = (me.get("plan") or "").strip().lower()
-        if server_plan not in ("trial", "pro", "pro_plus", "power", "expired"):
+        if server_plan not in ("trial", "pro", "power", "expired"):
             return
         changed = False
         if server_plan != (self.cfg.get("heard_plan") or "").strip().lower():
@@ -1913,7 +1913,7 @@ class Daemon:
                     else:
                         # Cap-hit → the NEXT tier up (no hardcoded char counts —
                         # they drift from the server caps). trial → Pro,
-                        # pro → Pro+, top tiers → BYOK only.
+                        # pro + top tiers → BYOK only.
                         plan = (self.cfg.get("heard_plan") or "").strip().lower()
                         if plan == "trial":
                             notify.notify(
@@ -1924,16 +1924,6 @@ class Daemon:
                                 "your own ElevenLabs key in Settings → Keys. "
                                 "Cloud voice returns at UTC midnight.",
                                 kind="cloud_daily_cap_trial",
-                            )
-                        elif plan == "pro":
-                            notify.notify(
-                                "Heard daily limit reached",
-                                "You've used today's Pro voice. Upgrade to Pro+ "
-                                "for more every day: "
-                                "buy.stripe.com/6oUfZabtxboG6Eugik77O0a — or add "
-                                "your own ElevenLabs key in Settings → Keys. "
-                                "Cloud voice returns at UTC midnight.",
-                                kind="cloud_daily_cap_pro",
                             )
                         else:
                             notify.notify(
