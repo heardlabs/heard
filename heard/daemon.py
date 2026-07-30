@@ -4006,9 +4006,10 @@ class Daemon:
 
     def _maybe_announce_friend_joined(self, data: dict) -> None:
         """#15 — diff /v1/me `friends_activated` across polls; on an increase,
-        speak + notify once that an invited friend joined (free month earned
-        for both). The FIRST poll just records the baseline so we never
-        announce pre-existing activations on a fresh daemon start."""
+        speak + notify once that an invited friend joined (the inviter earns
+        ~2h of managed voice, plus a free month of Pro every 5th friend). The
+        FIRST poll just records the baseline so we never announce pre-existing
+        activations on a fresh daemon start."""
         try:
             new_count = int(data.get("friends_activated") or 0)
         except (TypeError, ValueError):
@@ -4024,18 +4025,22 @@ class Daemon:
         if new_count <= last_n:
             return
         self._set_friends_announced(new_count)
+        # Ladder: each activated friend earns ~2h of managed voice; every 5th
+        # also earns a free month of Pro (mirrors FREE_MONTH_MILESTONE=5 in
+        # heard-api). Announce the month only on a milestone.
+        extra = " and a free month of Pro" if new_count % 5 == 0 else ""
         try:
             notify.notify(
                 "A friend joined Heard",
-                "Someone you invited just started using Heard — you've both "
-                "earned a free month of Pro.",
+                "Someone you invited just started using Heard — you've earned "
+                f"about 2 more hours of managed voice{extra}.",
                 kind="referral_friend_joined",
             )
         except Exception:
             pass
         self._enqueue_announcement(
-            "Good news. A friend you invited just started using Heard, "
-            "so you've both earned a free month of Pro.",
+            "Good news. A friend you invited just started using Heard, so "
+            f"you've earned about two more hours of managed voice{extra}.",
             event="referral_announce",
         )
 
