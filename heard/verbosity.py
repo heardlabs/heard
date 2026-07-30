@@ -37,6 +37,13 @@ _ALWAYS_NARRATE_PRE = (
     "tool_question",
 )
 _FAILURE_TAGS = ("tool_post_failure", "tool_post_command_failed")
+# Routine per-file operations. Voicing each one is a repetitive, low-signal
+# stream ("Editing X." "Editing Y." "Searching the codebase.") that tells the
+# listener nothing actionable — the milestones (tests/builds/errors/questions/
+# completions) are what matter. So these are NOT narrated individually except
+# in Verbose, the explicit play-by-play mode. They still count toward burst
+# density and still route to the digest under a digest profile (Brief).
+_LOW_SIGNAL_PRE = ("tool_edit", "tool_write", "tool_glob", "tool_grep")
 
 
 def _resolve_profile(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -83,7 +90,13 @@ def _classify_pre_with_profile(prof: dict[str, Any], tag: str, density: int) -> 
         return "speak" if is_long_running else "drop"
     if pre_tool == "digest":
         return "speak" if is_long_running else "digest"
-    # per_tool: speak each, with burst overflow routed to digest.
+    # per_tool: speak each meaningful tool. Routine per-file operations
+    # (edits/writes/searches) are dropped here — voicing every one is the
+    # repetitive "Editing X." stream that doesn't help. Verbose keeps them
+    # (it's the explicit play-by-play mode).
+    if tag in _LOW_SIGNAL_PRE and prof.get("name") != "verbose":
+        return "drop"
+    # burst overflow routed to digest.
     threshold = int(prof.get("burst_threshold", 5))
     if density > threshold and not is_long_running:
         return "digest"

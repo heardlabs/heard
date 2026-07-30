@@ -28,17 +28,37 @@ def test_classify_pre_question_always_speaks():
 
 
 def test_classify_pre_normal_routes_burst_to_digest():
-    """At normal verbosity, density >5 in 30s routes routine pre-tool
+    """At normal verbosity, density >5 in 30s routes meaningful pre-tool
     announcements to the multi-agent digest queue so they're summarised
-    on the next prose arrival ("3 edits, ran tests."), not lost.
-    classify_pre returns 'speak'/'drop'/'digest' explicitly."""
+    on the next prose arrival, not lost. classify_pre returns
+    'speak'/'drop'/'digest' explicitly."""
     cfg = {"narrate_tools": True, "verbosity": "normal"}
-    # Below threshold: speak each tool.
-    assert verbosity.classify_pre(cfg, "tool_edit", density=3) == "speak"
+    # Below threshold: speak a meaningful tool.
+    assert verbosity.classify_pre(cfg, "tool_bash_generic", density=3) == "speak"
     # Above threshold for a regular tool: digest.
-    assert verbosity.classify_pre(cfg, "tool_edit", density=10) == "digest"
+    assert verbosity.classify_pre(cfg, "tool_bash_generic", density=10) == "digest"
     # Long-running tools always speak — even at high density.
     assert verbosity.classify_pre(cfg, "tool_bash_test", density=10) == "speak"
+
+
+def test_classify_pre_normal_drops_routine_file_ops():
+    """Normal no longer voices routine per-file operations individually —
+    edits/writes/searches are the repetitive 'Editing X.' stream that
+    doesn't help. They drop (Verbose keeps them). Milestones still speak."""
+    cfg = {"narrate_tools": True, "verbosity": "normal"}
+    for tag in ("tool_edit", "tool_write", "tool_glob", "tool_grep"):
+        assert verbosity.classify_pre(cfg, tag, density=0) == "drop"
+    # Meaningful beats still speak.
+    assert verbosity.classify_pre(cfg, "tool_bash_test", density=0) == "speak"
+    assert verbosity.classify_pre(cfg, "tool_question", density=0) == "speak"
+
+
+def test_verbose_keeps_the_play_by_play():
+    """Verbose is the explicit play-by-play mode — it still voices every
+    routine edit/search."""
+    cfg = {"narrate_tools": True, "verbosity": "verbose"}
+    for tag in ("tool_edit", "tool_write", "tool_glob", "tool_grep"):
+        assert verbosity.classify_pre(cfg, tag, density=0) == "speak"
 
 
 def test_brief_profile_digests_routine_speaks_long_running():

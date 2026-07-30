@@ -1,8 +1,9 @@
-# Normal — per-tool announcements, prose voiced, bursts summarised.
+# Normal — milestone announcements, prose voiced, bursts summarised.
 #
-# Default for solo mode. Each tool call narrates ("Editing auth.py")
-# unless 5+ events fire in 30 s — overflow goes to the digest queue
-# and emits a summary on the next prose arrival.
+# Default for solo mode. Meaningful tool calls narrate (tests, builds,
+# installs, delegation) but routine per-file ops (edits/writes/searches)
+# stay quiet — Verbose is the play-by-play mode. Prose is voiced; bursts of
+# 5+ tools in 30 s route to a digest summary on the next prose arrival.
 
 name: normal
 description: Per-tool announcements; prose voiced; bursts summarised.
