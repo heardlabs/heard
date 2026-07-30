@@ -125,6 +125,7 @@ pip install -e .
 
 # bring your own keys - used directly by the daemon, nothing through our servers
 heard config set elevenlabs_api_key <your-key>   # voice (skip this → local Kokoro)
+heard config set speechify_api_key <your-key>    # voice, alternative (Simba 3.2)
 heard config set anthropic_api_key <your-key>    # narration brain (skip → neutral templates)
 
 # wire up your coding agent - the daemon auto-starts on the first tool call
@@ -140,7 +141,7 @@ That's the DIY path: you own keys, updates, and config. Everything's configurabl
 
 Depends on which backends you opt into.
 
-- **Voice synth.** ElevenLabs sends spoken text over HTTPS. **Kokoro** runs fully locally - nothing leaves the machine.
+- **Voice synth.** ElevenLabs and Speechify send spoken text over HTTPS. **Kokoro** runs fully locally - nothing leaves the machine.
 - **Narration.** Heard sends compact event summaries (what tool ran, the agent's response text, recent context) to Claude Haiku 4.5 to decide what to say and shape it in your persona's voice. Either through your own Anthropic key, through Heard's managed proxy if you're signed in, or - with no key and no sign-in - falls back to neutral templates locally.
 </details>
 

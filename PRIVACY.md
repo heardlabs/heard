@@ -35,6 +35,8 @@ depends on your configuration:
   provider so it can be synthesized into audio:
   - **ElevenLabs** directly, if you configured a BYOK
     `elevenlabs_api_key`; or
+  - **Speechify** directly, if you configured a BYOK
+    `speechify_api_key` (used only when no `elevenlabs_api_key` is set); or
   - the **managed proxy at `api.heard.dev`** when you're signed in
     (which forwards to the TTS provider on your behalf); or
   - **nothing leaves** if you use the local **Kokoro** voice — it runs
@@ -48,8 +50,8 @@ depends on your configuration:
   plan / usage lookups.
 
 **Plainly: your agent's output text is sent to the TTS provider
-(ElevenLabs, or the managed proxy) and to the narration LLM (Anthropic,
-or the managed proxy).** If that is not acceptable for a given project,
+(ElevenLabs, Speechify, or the managed proxy) and to the narration LLM
+(Anthropic, or the managed proxy).** If that is not acceptable for a given project,
 use the local Kokoro voice and a BYOK LLM you trust — or pause Heard.
 
 ## Telemetry & analytics

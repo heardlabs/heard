@@ -105,6 +105,7 @@ def _current_state() -> dict[str, Any]:
         # the actual key is never sent back to the WebView.
         "keys": {
             "elevenlabs": bool((cfg.get("elevenlabs_api_key") or "").strip()),
+            "speechify": bool((cfg.get("speechify_api_key") or "").strip()),
             "anthropic": bool((cfg.get("anthropic_api_key") or "").strip()),
             # Dictation cleanup (Power). Without their own key a BYOK account
             # gets the raw transcript — we never proxy their text through us.
@@ -382,6 +383,11 @@ def _build_tts(cfg):
         from heard.tts.elevenlabs import ElevenLabsTTS
 
         return ElevenLabsTTS(api_key=key)
+    speechify_key = (cfg.get("speechify_api_key") or "").strip()
+    if speechify_key:
+        from heard.tts.speechify import SpeechifyTTS
+
+        return SpeechifyTTS(api_key=speechify_key)
     token = (cfg.get("heard_token") or "").strip()
     plan = (cfg.get("heard_plan") or "").strip().lower()
     if token and plan != "expired":
@@ -394,12 +400,30 @@ def _build_tts(cfg):
     return None
 
 
+def _voice_for(tts, persona_name: str, cfg) -> str:
+    """Voice ID to hand the backend ``_build_tts`` just returned.
+
+    Mirrors ``Daemon._voice``: the provider catalogues share no
+    identifiers, so the active backend dictates which persona field to
+    read. Without this, a Speechify user would audition one voice in the
+    greeting / preview and hear a different one in real narration.
+    """
+    from heard import persona as _persona
+
+    try:
+        p = _persona.load(persona_name)
+    except Exception:
+        p = None
+    if type(tts).__name__ == "SpeechifyTTS":
+        speechify_voice = p.speechify_voice if p else None
+        return speechify_voice or cfg.get("speechify_voice") or ""
+    return (p.voice if p else None) or persona_name
+
+
 def _speak_greeting(voice_name: str) -> None:
     """The original welcome hello — synth 'Hi, I'm <persona>. I'm up in your
     menu bar…' in the persona's real voice (matches the first-launch greeting)."""
     try:
-        from heard import persona as _persona
-
         # 1. Bundled fixed MP3 — Jarvis ships `assets/welcome-jarvis.mp3`,
         # pre-synthed at build time (the SAME file the daemon's first-launch
         # greeting plays). Preferred: identical every play, no synth, no API.
@@ -415,13 +439,10 @@ def _speak_greeting(voice_name: str) -> None:
             _play_file(cache)
             return
         cfg = config.load()
-        try:
-            tts_voice = _persona.load(voice_name).voice or voice_name
-        except Exception:
-            tts_voice = voice_name
         tts = _build_tts(cfg)
         if tts is None:
             return
+        tts_voice = _voice_for(tts, voice_name, cfg)
         name = voice_name.capitalize()
         line = (
             f"Hi! I'm {name}. I'm up in your menu bar, at the top of your screen. "
@@ -793,6 +814,7 @@ def _build_controller_class():
             which = (body.get("which") or "").strip()
             value = (body.get("value") or "").strip()
             ck = {"elevenlabs": "elevenlabs_api_key",
+                  "speechify": "speechify_api_key",
                   "anthropic": "anthropic_api_key",
                   "groq": "groq_api_key"}.get(which)
             if not ck or not value:
@@ -812,14 +834,10 @@ def _build_controller_class():
             try:
                 cfg = config.load()
                 voice = (cfg.get("voice") or "jarvis").strip() or "jarvis"
-                from heard import persona as _persona
-                try:
-                    tts_voice = _persona.load(voice).voice or voice
-                except Exception:
-                    tts_voice = voice
                 tts = _build_tts(cfg)
                 if tts is None:
                     return
+                tts_voice = _voice_for(tts, voice, cfg)
                 import tempfile
                 path = Path(tempfile.mktemp(suffix=getattr(tts, "AUDIO_EXT", ".mp3")))
                 tts.synth_to_file(text, tts_voice, 1.0, "en", path)

@@ -143,6 +143,13 @@ class Persona:
     # in preference to `voice` (which is always an ElevenLabs alias or
     # 20-char voice_id). Optional — falls back to cfg["kokoro_voice"].
     kokoro_voice: str | None = None
+    # Speechify (Simba 3.2) voices are readable slugs (`geffen_32`) — a
+    # third namespace, disjoint from both of the above. Same deal as
+    # `kokoro_voice`: the daemon reads this when Speechify is the active
+    # backend. Optional — falls back to cfg["speechify_voice"], then to
+    # the backend's curated default. Bundled personas leave it unset;
+    # Simba 3.2 ships a curated voice set we don't mirror locally.
+    speechify_voice: str | None = None
     address: str = ""
     system_prompt: str = ""
     templates: dict[str, str] = field(default_factory=dict)
@@ -257,6 +264,7 @@ def _persona_from_md(path: Path, name_hint: str) -> Persona:
         name=str(meta.get("name", name_hint)),
         voice=meta.get("voice"),
         kokoro_voice=meta.get("kokoro_voice"),
+        speechify_voice=meta.get("speechify_voice"),
         address=str(meta.get("address", "") or ""),
         system_prompt=body or str(meta.get("system_prompt", "") or ""),
         templates=meta.get("templates") or {},
@@ -270,6 +278,7 @@ def _persona_from_yaml(path: Path, name_hint: str) -> Persona:
         name=str(data.get("name", name_hint)),
         voice=data.get("voice"),
         kokoro_voice=data.get("kokoro_voice"),
+        speechify_voice=data.get("speechify_voice"),
         address=str(data.get("address", "") or ""),
         system_prompt=str(data.get("system_prompt", "") or ""),
         templates=data.get("templates") or {},

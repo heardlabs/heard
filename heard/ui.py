@@ -64,15 +64,17 @@ def _resolve_onboarded(cfg: dict) -> tuple[bool, bool]:
     "clicking install makes me re-onboard" report.
 
     A user with ANY "already set up" signal — a managed sign-in token, a
-    BYOK ElevenLabs key, or a prior greeting — has plainly finished
-    setup, so we treat them as onboarded and flag the drifted value for
-    healing. A genuine first-timer has none of these and still onboards.
+    BYOK voice key (ElevenLabs or Speechify), or a prior greeting — has
+    plainly finished setup, so we treat them as onboarded and flag the
+    drifted value for healing. A genuine first-timer has none of these
+    and still onboards.
     """
     if cfg.get("onboarded"):
         return True, False
     already_set_up = bool(
         (cfg.get("heard_token") or "").strip()
         or (cfg.get("elevenlabs_api_key") or "").strip()
+        or (cfg.get("speechify_api_key") or "").strip()
         or cfg.get("greeted")
     )
     if already_set_up:
@@ -733,6 +735,10 @@ class HeardApp(rumps.App):
             "elevenlabs_rate": "ElevenLabs out of credits",
             "ssl": "TLS handshake failed",
             "elevenlabs_network": "ElevenLabs unreachable",
+            "speechify_auth": "Speechify key invalid",
+            "speechify_rate": "Speechify out of credits",
+            "speechify_network": "Speechify unreachable",
+            "speechify_voice": "Speechify voice ID not found",
             "synth_generic": "couldn't synthesise",
             "memory_pressure": "system memory low",
         }.get(kind, kind or "synth failed")
@@ -1413,6 +1419,8 @@ class HeardApp(rumps.App):
             return f"Voice path: cloud · {self._plan_suffix(plan, cfg)}"
         if backend == "ElevenLabsTTS":
             return "Voice path: ElevenLabs (BYOK)"
+        if backend == "SpeechifyTTS":
+            return "Voice path: Speechify · Simba 3.2 (BYOK)"
         if backend == "KokoroTTS":
             return "Voice path: offline (Kokoro)"
         # Defensive: a backend the menu doesn't know about. Show the
