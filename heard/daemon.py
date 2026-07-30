@@ -2047,9 +2047,11 @@ class Daemon:
                 # first-run mistake that 404s on EVERY utterance. Without
                 # this branch it reads as "unreachable" and sends the user
                 # debugging their network instead of their config.
-                is_bad_voice = is_speechify and not is_auth and (
-                    "404" in msg or "voice" in msg_l
-                )
+                # Gate strictly on the 404 status: a bad `speechify_voice` 404s on
+                # every utterance. Matching bare "voice" in the body would also flag a
+                # 5xx "voice service down" as a config error and wrongly suppress the
+                # Kokoro fallback for a transient outage.
+                is_bad_voice = is_speechify and not is_auth and "404" in msg
                 # Auth + rate + bad-voice failures are user-fixable config
                 # bugs; don't paper over them with a Kokoro fallback. Other
                 # transient errors (network blips, 5xx) get the silent

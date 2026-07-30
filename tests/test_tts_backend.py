@@ -429,3 +429,48 @@ def test_selector_re_picks_on_config_reload(tmp_path, monkeypatch):
     daemon._reload_config()
     assert isinstance(daemon.tts, ElevenLabsTTS)
     assert daemon.tts.api_key == "sk_just_pasted"
+
+
+def test_speechify_402_stays_rate_and_skips_kokoro_fallback(tmp_path, monkeypatch):
+    """A Speechify 402 (out of credits) is a user-fixable rate condition: it must be
+    recorded as a rate error and MUST NOT silently downgrade to the Kokoro fallback
+    (which would hide the billing problem). Pins the daemon-level ROUTING that the
+    backend's error-message format feeds — the backend tests only pin the message."""
+    import threading
+
+    from heard.tts.speechify import SpeechifyError
+
+    monkeypatch.setattr("heard.notify.notify", lambda *a, **kw: True)
+    monkeypatch.setattr("heard.audio_monitor.start", lambda *a, **kw: None)
+
+    daemon = _make_daemon(
+        tmp_path, monkeypatch, {"speechify_api_key": "sk_x", "greeted": True}
+    )
+
+    class _Boom402:
+        AUDIO_EXT = ".mp3"
+        MAX_NATIVE_SPEED = 2.0
+
+        def is_configured(self):
+            return True
+
+        def synth_to_file(self, *a, **kw):
+            raise SpeechifyError('Speechify HTTP 402: {"error":"out of credits"}')
+
+    daemon.tts = _Boom402()
+
+    fell_back = {"n": 0}
+
+    def _spy_fallback(*a, **kw):
+        fell_back["n"] += 1
+        return True  # pretend Kokoro is on disk, so a wrong route would be observable
+
+    monkeypatch.setattr(daemon, "_kokoro_fallback_to", _spy_fallback)
+
+    recorded: list[str] = []
+    monkeypatch.setattr(daemon, "_record_error", lambda kind, msg: recorded.append(kind))
+
+    daemon._speak("hello", threading.Event())
+
+    assert fell_back["n"] == 0, "402 (out of credits) must not fall back to Kokoro"
+    assert "speechify_rate" in recorded
