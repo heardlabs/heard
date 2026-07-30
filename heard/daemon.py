@@ -1368,7 +1368,10 @@ class Daemon:
         a paying Pro user stayed stuck showing 'trial · N days left ·
         Upgrade to Pro'. The 5-minute /v1/me poll already had the truth;
         it just never wrote it back. Now it does."""
-        server_plan = (me.get("plan") or "").strip().lower()
+        # Prefer effective_plan: a referral comp (free week) reads as "pro" so
+        # the menu shows "Pro · unlimited" instead of "trial expired". Falls
+        # back to raw plan for older API responses.
+        server_plan = (me.get("effective_plan") or me.get("plan") or "").strip().lower()
         if server_plan not in ("trial", "pro", "power", "expired"):
             return
         changed = False
