@@ -1279,7 +1279,7 @@ class HeardApp(rumps.App):
         if plan != "trial":
             if plan == "expired":
                 return "trial expired — add keys or upgrade"
-            return plan
+            return {"pro": "Pro", "power": "Power"}.get(plan, plan)
         try:
             expires_at_ms = int(cfg.get("heard_trial_expires_at") or 0)
         except (TypeError, ValueError):
@@ -1327,8 +1327,8 @@ class HeardApp(rumps.App):
         """Update the managed-cloud usage line from the daemon's cached
         /v1/me snapshot. Hidden (empty title) when no token, no data
         yet, or on the expired plan (the upgrade row is the only thing
-        worth showing in that state). Window word matches the plan —
-        'today' for trial, 'this month' for pro."""
+        worth showing in that state). Paid tiers (Pro/Power) show
+        '· unlimited'; the trial shows its daily taste."""
         usage = status.get("account_usage") if isinstance(status, dict) else None
         token = (cfg.get("heard_token") or "").strip()
         # An empty title still renders as a blank, space-reserving row, so
@@ -1354,10 +1354,20 @@ class HeardApp(rumps.App):
             self.usage_item.set_callback(None)
             self._set_item_hidden(self.usage_item, True)
             return
+        # Paid tiers are effectively unlimited — we don't meter payers. Showing
+        # "X / 2.0M today" reads as a limit that isn't there; mirror the
+        # maintainer line and just affirm "unlimited".
+        if plan in ("pro", "power"):
+            label = "Pro" if plan == "pro" else "Power"
+            self.usage_item.title = f"{label} · unlimited"
+            self.usage_item.set_callback(None)
+            self._set_item_hidden(self.usage_item, False)
+            return
         self._set_item_hidden(self.usage_item, False)
         used = usage.get("usage_today_chars") or 0
         cap = usage.get("daily_cap") or 0
-        window = "this month" if plan == "pro" else "today"
+        # Only the trial reaches here now; it's a daily taste.
+        window = "today"
         if cap > 0:
             self.usage_item.title = (
                 f"{self._fmt_chars(used)} / {self._fmt_chars(cap)} {window}"

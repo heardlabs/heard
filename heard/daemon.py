@@ -1432,14 +1432,16 @@ class Daemon:
             pass
 
     _UPGRADE_URL = "buy.stripe.com/fZu14gapteAS4wm7LO77O09"
+    _REWARDS_URL = "heard.dev/dashboard/rewards"
 
     def _trial_ended_blurb(self) -> str:
         """Accurate, actionable trial-ended message. Branches on what
         voice (if any) is ACTUALLY available now — so we never claim
         "switched to local voices" when narration actually went silent.
         Silence with no explanation reads as a product bug; this names
-        the cause and gives every path back to sound (free + paid).
-        No day-count: existing accounts had 30-day trials, new ones 14."""
+        the cause and gives every path back to sound. The invite path is
+        the "don't pay upfront" option: each activated friend earns ~2h of
+        the managed cloud voice, free."""
         if (self.cfg.get("elevenlabs_api_key") or "").strip():
             return ("Your Heard trial ended. You're on your own ElevenLabs "
                     "key, so narration keeps playing — nothing else to do.")
@@ -1449,15 +1451,16 @@ class Daemon:
             if KokoroTTS(config.MODELS_DIR).is_downloaded():
                 return ("Your Heard trial ended — switched to your free local "
                         "voice, so narration keeps going. Want the cloud voice "
-                        f"back? Upgrade to Pro: {self._UPGRADE_URL}")
+                        f"back? Invite friends to earn it free — ~2 hours each "
+                        f"({self._REWARDS_URL}) — or upgrade to Pro.")
         except Exception:
             pass
         # No voice left → narration is now SILENT. Say WHY (not a bug)
-        # and give all three ways back to sound.
+        # and lead with the invite path (free, no upfront cost).
         return ("Your Heard trial ended — that's why narration went quiet "
-                "(not a bug). To get the voice back: download a free local "
-                "voice (Options → Download voice), add your own ElevenLabs "
-                f"key, or upgrade to Pro for cloud voices: {self._UPGRADE_URL}")
+                "(not a bug). Get the cloud voice back free by inviting "
+                f"friends (~2 hours each: {self._REWARDS_URL}), add a free "
+                "local voice, use your own key, or upgrade to Pro.")
 
     def _emit_plan_change(self, old_plan: str, new_plan: str) -> None:
         """Fire a `plan_changed` analytics event on a real transition.
