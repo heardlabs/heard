@@ -337,10 +337,10 @@ class HeardApp(rumps.App):
 
         # "Invite friends…" — opens the Rewards page (heard.dev/dashboard/
         # rewards) where the user copies their invite link + a ready-made
-        # message. Each activated friend earns ~9 hours of managed voice (a
-        # free month of Pro every 5th). Web handles auth if they're not signed in.
+        # message. Each activated friend earns the inviter one free week of Pro
+        # (stacking). Web handles auth if they're not signed in.
         self.invite_item = rumps.MenuItem(
-            "Invite a friend, get 9 hours free", callback=self.on_invite
+            "Invite a friend, get a free week", callback=self.on_invite
         )
 
         options_menu = rumps.MenuItem("Options")
@@ -1530,8 +1530,7 @@ class HeardApp(rumps.App):
 
     def on_invite(self, _sender) -> None:
         """Open the Rewards page — copy your invite link / message there. Each
-        activated friend earns you ~9h of managed voice; every 5th, a free
-        month of Pro."""
+        activated friend earns you one free week of Pro (stacking)."""
         webbrowser.open("https://heard.dev/dashboard/rewards")
 
     def on_update_clicked(self, _sender) -> None:
