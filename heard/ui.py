@@ -48,7 +48,7 @@ _HOTKEY_GLYPHS = {
 
 
 def _cap_reached_label(plan: str) -> str:
-    """Managed cap-reached banner. All plans (trial/pro/pro_plus/power)
+    """Managed cap-reached banner. All plans (trial/pro/power)
     now reset DAILY at UTC midnight — see nextResetForPlan in the API —
     so the wording is the same for everyone: back tomorrow."""
     return "Daily cloud limit reached — back tomorrow"
@@ -337,12 +337,12 @@ class HeardApp(rumps.App):
             "Report a problem…", callback=self.on_report_problem
         )
 
-        # "Invite a friend…" — opens the Rewards page (heard.dev/dashboard/
+        # "Invite friends…" — opens the Rewards page (heard.dev/dashboard/
         # rewards) where the user copies their invite link + a ready-made
-        # message. Each friend who starts using Heard earns both a free month
-        # of Pro. Web handles auth if they're not signed in.
+        # message. Each activated friend earns the inviter one free week of Pro
+        # (stacking). Web handles auth if they're not signed in.
         self.invite_item = rumps.MenuItem(
-            "Invite friends for a free month", callback=self.on_invite
+            "Invite a friend, get a free week", callback=self.on_invite
         )
 
         options_menu = rumps.MenuItem("Options")
@@ -423,6 +423,19 @@ class HeardApp(rumps.App):
         self._refresh_voice_menu(cfg)
         self._refresh_api_key_labels(cfg, status or {})
         self._refresh_usage_item(cfg, status or {})
+        # The invite reward is managed voice — useless to an unlimited paid
+        # account, and premature for a free/trial user who still has plenty
+        # left. Show it ONLY when a non-paid user is out of / nearly out of
+        # managed voice (Dropbox-style: nudge at the moment more actually
+        # helps). cap<=0 = no managed voice at all (expired/free without a pool).
+        _plan = (cfg.get("heard_plan") or "").strip().lower()
+        _show_invite = False
+        if _plan not in ("pro", "power"):
+            _u = (status or {}).get("account_usage") or {}
+            _used = _u.get("usage_today_chars") or 0
+            _cap = _u.get("daily_cap") or 0
+            _show_invite = _cap <= 0 or _used >= 0.8 * _cap
+        self._set_item_hidden(self.invite_item, not _show_invite)
 
         # First-launch onboarding: open the Settings window (it shows the
         # welcome checklist) the first time, once the daemon's up. The
@@ -932,7 +945,7 @@ class HeardApp(rumps.App):
         self._voice_mode_items = {}
         if not powered:
             return rumps.MenuItem(
-                "Voice input — upgrade to Power", callback=self.on_upgrade)
+                "Voice input — upgrade to Power", callback=self.on_upgrade_power)
         vm = rumps.MenuItem("Voice input")
         for label, mode in (
             ("Off", "off"),
@@ -1154,6 +1167,17 @@ class HeardApp(rumps.App):
         import webbrowser
         webbrowser.open("https://heard.dev/dashboard")
 
+    def on_upgrade_power(self, _sender) -> None:
+        """Open the Power page. Used by the voice-input teaser — Power is a
+        feature unlock (hands-free voice), not the Pro Stripe checkout, so it
+        must NOT reuse on_upgrade's Pro payment link."""
+        import webbrowser
+
+        try:
+            webbrowser.open("https://heard.dev/power")
+        except Exception:
+            pass
+
     def on_upgrade(self, _sender) -> None:
         """Open the Stripe Payment Link with the user's email prefilled.
         Used by the menu-bar Upgrade item when trial is expiring or has
@@ -1225,9 +1249,9 @@ class HeardApp(rumps.App):
         - trial in last 5 days: "Upgrade to Pro — N days left", clickable.
         - trial otherwise: plain "Upgrade to Pro", clickable.
         """
-        if plan in ("pro", "pro_plus", "power"):
+        if plan in ("pro", "power"):
             # Top-tier plans have nothing to upgrade to — hide the CTA. (power
-            # + pro_plus previously fell through to the trial branch and wrongly
+            # previously fell through to the trial branch and wrongly
             # showed "Upgrade to Pro".) The email row above already shows the plan.
             # Hide the row entirely when pro — the email row above
             # already says "… · pro" AND is now clickable (opens the
@@ -1274,7 +1298,7 @@ class HeardApp(rumps.App):
         if plan != "trial":
             if plan == "expired":
                 return "trial expired — add keys or upgrade"
-            return plan
+            return {"pro": "Pro", "power": "Power"}.get(plan, plan)
         try:
             expires_at_ms = int(cfg.get("heard_trial_expires_at") or 0)
         except (TypeError, ValueError):
@@ -1322,8 +1346,8 @@ class HeardApp(rumps.App):
         """Update the managed-cloud usage line from the daemon's cached
         /v1/me snapshot. Hidden (empty title) when no token, no data
         yet, or on the expired plan (the upgrade row is the only thing
-        worth showing in that state). Window word matches the plan —
-        'today' for trial, 'this month' for pro."""
+        worth showing in that state). Paid tiers (Pro/Power) show
+        '· unlimited'; the trial shows its daily taste."""
         usage = status.get("account_usage") if isinstance(status, dict) else None
         token = (cfg.get("heard_token") or "").strip()
         # An empty title still renders as a blank, space-reserving row, so
@@ -1349,10 +1373,20 @@ class HeardApp(rumps.App):
             self.usage_item.set_callback(None)
             self._set_item_hidden(self.usage_item, True)
             return
+        # Paid tiers are effectively unlimited — we don't meter payers. Showing
+        # "X / 2.0M today" reads as a limit that isn't there; mirror the
+        # maintainer line and just affirm "unlimited".
+        if plan in ("pro", "power"):
+            label = "Pro" if plan == "pro" else "Power"
+            self.usage_item.title = f"{label} · unlimited"
+            self.usage_item.set_callback(None)
+            self._set_item_hidden(self.usage_item, False)
+            return
         self._set_item_hidden(self.usage_item, False)
         used = usage.get("usage_today_chars") or 0
         cap = usage.get("daily_cap") or 0
-        window = "this month" if plan == "pro" else "today"
+        # Only the trial reaches here now; it's a daily taste.
+        window = "today"
         if cap > 0:
             self.usage_item.title = (
                 f"{self._fmt_chars(used)} / {self._fmt_chars(cap)} {window}"
@@ -1504,7 +1538,7 @@ class HeardApp(rumps.App):
 
     def on_invite(self, _sender) -> None:
         """Open the Rewards page — copy your invite link / message there. Each
-        friend who starts using Heard earns you both a free month of Pro."""
+        activated friend earns you one free week of Pro (stacking)."""
         webbrowser.open("https://heard.dev/dashboard/rewards")
 
     def on_update_clicked(self, _sender) -> None:

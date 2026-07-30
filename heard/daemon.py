@@ -219,6 +219,7 @@ class Daemon:
         config.ensure_dirs()
         _maybe_rotate_log()
         self.cfg = config.load()
+        self._reconcile_ptt(self.cfg)
         # Day-31 silent downgrade: if the trial is over and we still
         # have plan="trial" cached in config, flip to "expired" before
         # picking the backend. The server enforces this regardless
@@ -1060,6 +1061,28 @@ class Daemon:
 
         threading.Thread(target=_watch, daemon=True).start()
 
+    @staticmethod
+    def _reconcile_ptt(cfg: dict) -> None:
+        """Keep ``push_to_talk`` a derived shadow of ``voice_mode`` so the two can
+        never desync. The hold-to-talk hotkey/HUD monitor gates on
+        ``push_to_talk``, but historically that key was set separately from
+        ``voice_mode`` — so any path that wrote ``voice_mode: ptt`` without also
+        writing ``push_to_talk`` left the HUD silently dead (recurring
+        "PTT doesn't work" reports; see heard-power ptt-troubleshooting Row 1b).
+
+        Derive it on every (re)load: True iff ``voice_mode == "ptt"``
+        (``off``/``ambient`` → False; ambient uses its own always-on path, not the
+        hotkey). Persist when it changes so the on-disk config self-heals too. The
+        monitor still ANDs ``_voice_backend_available()``, so this can't surface a
+        HUD on OSS/Pro. Single source of truth = ``voice_mode``."""
+        desired = (cfg.get("voice_mode") or "off").strip().lower() == "ptt"
+        if bool(cfg.get("push_to_talk")) != desired:
+            cfg["push_to_talk"] = desired
+            try:
+                config.set_value("push_to_talk", desired)
+            except Exception:
+                pass
+
     def _voice_backend_available(self) -> bool:
         """True when a voice-input backend is actually usable: a Power build
         (`voice_service_cmd` set) on a Power account (or `voice_input_unlocked`
@@ -1353,8 +1376,11 @@ class Daemon:
         a paying Pro user stayed stuck showing 'trial · N days left ·
         Upgrade to Pro'. The 5-minute /v1/me poll already had the truth;
         it just never wrote it back. Now it does."""
-        server_plan = (me.get("plan") or "").strip().lower()
-        if server_plan not in ("trial", "pro", "pro_plus", "power", "expired"):
+        # Prefer effective_plan: a referral comp (free week) reads as "pro" so
+        # the menu shows "Pro · unlimited" instead of "trial expired". Falls
+        # back to raw plan for older API responses.
+        server_plan = (me.get("effective_plan") or me.get("plan") or "").strip().lower()
+        if server_plan not in ("trial", "pro", "power", "expired"):
             return
         changed = False
         if server_plan != (self.cfg.get("heard_plan") or "").strip().lower():
@@ -1417,14 +1443,16 @@ class Daemon:
             pass
 
     _UPGRADE_URL = "buy.stripe.com/fZu14gapteAS4wm7LO77O09"
+    _REWARDS_URL = "heard.dev/dashboard/rewards"
 
     def _trial_ended_blurb(self) -> str:
         """Accurate, actionable trial-ended message. Branches on what
         voice (if any) is ACTUALLY available now — so we never claim
         "switched to local voices" when narration actually went silent.
         Silence with no explanation reads as a product bug; this names
-        the cause and gives every path back to sound (free + paid).
-        No day-count: existing accounts had 30-day trials, new ones 14."""
+        the cause and gives every path back to sound. The invite path is
+        the "don't pay upfront" option: each activated friend earns ~2h of
+        the managed cloud voice, free."""
         # Either BYOK voice key keeps narration alive once the managed
         # path drops out — name the one that's actually taking over, or
         # the promise ("keeps playing") won't match what the user hears.
@@ -1442,15 +1470,16 @@ class Daemon:
             if KokoroTTS(config.MODELS_DIR).is_downloaded():
                 return ("Your Heard trial ended — switched to your free local "
                         "voice, so narration keeps going. Want the cloud voice "
-                        f"back? Upgrade to Pro: {self._UPGRADE_URL}")
+                        f"back? Invite friends — a free week of Pro each "
+                        f"({self._REWARDS_URL}) — or upgrade to Pro.")
         except Exception:
             pass
         # No voice left → narration is now SILENT. Say WHY (not a bug)
-        # and give all three ways back to sound.
+        # and lead with the invite path (free, no upfront cost).
         return ("Your Heard trial ended — that's why narration went quiet "
-                "(not a bug). To get the voice back: download a free local "
-                "voice (Options → Download voice), add your own ElevenLabs "
-                f"key, or upgrade to Pro for cloud voices: {self._UPGRADE_URL}")
+                "(not a bug). Get the cloud voice back free by inviting "
+                f"friends (a free week of Pro each: {self._REWARDS_URL}), add a free "
+                "local voice, use your own key, or upgrade to Pro.")
 
     def _emit_plan_change(self, old_plan: str, new_plan: str) -> None:
         """Fire a `plan_changed` analytics event on a real transition.
@@ -1605,6 +1634,7 @@ class Daemon:
         old_plan = self.cfg.get("heard_plan", "")
         old_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
         self.cfg = config.load()
+        self._reconcile_ptt(self.cfg)
         # Reload typically means the user changed plan, pasted a key, or
         # an admin manually reset their daily counter. Whatever set the
         # cap-cache flags is no longer authoritative — drop them so the
@@ -1928,7 +1958,7 @@ class Daemon:
                     else:
                         # Cap-hit → the NEXT tier up (no hardcoded char counts —
                         # they drift from the server caps). trial → Pro,
-                        # pro → Pro+, top tiers → BYOK only.
+                        # pro + top tiers → BYOK only.
                         plan = (self.cfg.get("heard_plan") or "").strip().lower()
                         if plan == "trial":
                             notify.notify(
@@ -1939,16 +1969,6 @@ class Daemon:
                                 "your own ElevenLabs key in Settings → Keys. "
                                 "Cloud voice returns at UTC midnight.",
                                 kind="cloud_daily_cap_trial",
-                            )
-                        elif plan == "pro":
-                            notify.notify(
-                                "Heard daily limit reached",
-                                "You've used today's Pro voice. Upgrade to Pro+ "
-                                "for more every day: "
-                                "buy.stripe.com/6oUfZabtxboG6Eugik77O0a — or add "
-                                "your own ElevenLabs key in Settings → Keys. "
-                                "Cloud voice returns at UTC midnight.",
-                                kind="cloud_daily_cap_pro",
                             )
                         else:
                             notify.notify(
@@ -4059,9 +4079,10 @@ class Daemon:
 
     def _maybe_announce_friend_joined(self, data: dict) -> None:
         """#15 — diff /v1/me `friends_activated` across polls; on an increase,
-        speak + notify once that an invited friend joined (free month earned
-        for both). The FIRST poll just records the baseline so we never
-        announce pre-existing activations on a fresh daemon start."""
+        speak + notify once that an invited friend joined (the inviter earns
+        one free week of Pro, stacking). The
+        FIRST poll just records the baseline so we never announce pre-existing
+        activations on a fresh daemon start."""
         try:
             new_count = int(data.get("friends_activated") or 0)
         except (TypeError, ValueError):
@@ -4077,18 +4098,23 @@ class Daemon:
         if new_count <= last_n:
             return
         self._set_friends_announced(new_count)
+        # The invite reward is managed voice — moot for an unlimited paid
+        # account. Keep the baseline current but stay silent for pro/power.
+        if (self.cfg.get("heard_plan") or "").strip().lower() in ("pro", "power"):
+            return
+        # Each activated friend earns the inviter one free week of Pro (stacks).
         try:
             notify.notify(
                 "A friend joined Heard",
-                "Someone you invited just started using Heard — you've both "
-                "earned a free month of Pro.",
+                "Someone you invited just started using Heard — you've earned "
+                "a free week of Pro.",
                 kind="referral_friend_joined",
             )
         except Exception:
             pass
         self._enqueue_announcement(
-            "Good news. A friend you invited just started using Heard, "
-            "so you've both earned a free month of Pro.",
+            "Good news. A friend you invited just started using Heard, so "
+            "you've earned a free week of Pro.",
             event="referral_announce",
         )
 

@@ -351,7 +351,7 @@ def list_bundled(plan: str = "pro") -> list[str]:
         available.add(p.stem)
     for p in BUNDLED_DIR.glob("*.yaml"):
         available.add(p.stem)
-    if plan not in ("pro", "pro_plus", "power", "trial"):
+    if plan not in ("pro", "power", "trial"):
         available = available - _PRO_PERSONAS
     ordered = [n for n in _PERSONA_ORDER if n in available]
     extras = sorted(available - set(_PERSONA_ORDER))

@@ -151,6 +151,17 @@
   .now .q{font-family:var(--serif);font-style:italic;font-size:20px;line-height:1.3;color:var(--ink);}
   .now .wv{display:flex;align-items:flex-end;gap:3px;height:30px;flex:0 0 auto;}
   .now .wv i{width:3px;border-radius:3px;background:linear-gradient(180deg,#cf7d64,#8c93d6);}
+  /* quiet "installed but not connected" nudge — dismissible, per-agent */
+  .connect-hint{margin:18px 18px 0;padding:12px 15px;border-radius:12px;display:flex;align-items:center;gap:12px;
+    background:#fff;border:1px solid #ececec;}
+  .connect-hint .ch-dot{width:7px;height:7px;border-radius:50%;background:#e2c878;flex:0 0 auto;}
+  .connect-hint .ch-txt{flex:1;min-width:0;font:400 12.5px/1.4 var(--sans);color:var(--ink-2);}
+  .connect-hint .ch-txt b{color:var(--ink);font-weight:600;}
+  .connect-hint .ch-connect{padding:6px 14px;border-radius:8px;border:none;background:var(--ink);color:#fff;
+    font:500 12px var(--sans);cursor:pointer;flex:0 0 auto;}
+  .connect-hint .ch-x{width:26px;height:26px;border-radius:7px;border:1px solid #eee;background:#fafafa;
+    color:#a49f98;font-size:11px;cursor:pointer;flex:0 0 auto;line-height:1;}
+  .connect-hint .ch-x:hover{color:var(--ink-2);border-color:#e0e0e0;}
   .cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:0 18px 18px;}
   .pcard{background:#fff;border:1px solid #ececec;border-radius:13px;padding:15px 16px;}
   .pcard .top{display:flex;align-items:center;gap:8px;margin-bottom:11px;}
@@ -223,8 +234,16 @@ function bridge(action, extra){
 let S = {
   signedIn:false, email:'', plan:'free', trialDaysLeft:null, onboardedPlan:null,
   agentConnected:false, micGranted:false, axGranted:false,
+  claudeConnected:false, codexConnected:false,
+  claudeDetected:false, codexDetected:false, connectHintDismissed:{},
   voice:null, whisperOn:false, phonePaired:false,
 };
+// Dismiss the "installed but not connected" nudge for one agent, for good.
+function dismissHint(agent){
+  S.connectHintDismissed = Object.assign({}, S.connectHintDismissed, {[agent]:true});
+  bridge('dismiss_connect_hint',{agent});
+  renderHome();
+}
 window.__heard = {
   setState(patch){ Object.assign(S, patch||{}); render(); },
   goto(taskId){ current = taskId || null; render(); },
@@ -234,6 +253,10 @@ window.__heard = {
   if(q.get('plan')){ S.plan=q.get('plan'); S.signedIn=q.get('plan')!=='free'; S.email='you@example.com'; }
   if(q.get('upgrade')){ S.plan='power'; S.onboardedPlan='pro'; S.signedIn=true; }
   if(q.get('trial')){ S.trialDaysLeft=14; }
+  // ?view=home&connect=codex|claude|both — preview the "installed but not
+  // connected" nudge without a backend.
+  if(q.get('connect')){ const c=q.get('connect');
+    S.claudeDetected=(c==='claude'||c==='both'); S.codexDetected=(c==='codex'||c==='both'); }
 })();
 
 // ------------------------------------------------------------------ tasks
@@ -255,7 +278,7 @@ function flow(){
   if (S.plan==='power') return [T.welcome, T.signin, T.connect, T.voice, T.whisper, T.phone, T.done]; // 2b Power
   return [T.welcome, T.signin, T.connect, T.mode, T.voice, T.done];                            // 2a Pro
 }
-function planWord(){ return S.plan==='power'?'Power':S.plan==='pro'?'Pro':'Free'; }
+function planWord(){ return S.plan==='power'?'Power':S.plan==='pro'?'Pro':S.plan==='trial'?'Power':'Free'; }
 // The Power upsell row in the Account card. One block, four states, so the
 // journey reads in one place: trialing → keep it; trial ended → upgrade (Pro
 // users get Power only, Free users get Power+Pro); never trialed → start free;
@@ -277,7 +300,7 @@ function _powerUpsell(){
   if(!S.powerBuild) return '';   // OSS/Pro build, nothing Power to offer here
   // Trial ended (reverted off Power).
   if(S.plan!=='power' && S.powerTrialUsed){
-    if(S.plan==='pro'||S.plan==='pro_plus')
+    if(S.plan==='pro')
       return wrap(line('Your Power trial ended',"You're back on Pro. Add Power for hands-free voice control.")+payBtns);
     return wrap(line('Your Power trial ended','Get Power for hands-free voice, or Pro for managed cloud voices.')+payBtns+`<button class="btn" style="padding:9px 16px;margin-top:8px;width:100%" onclick="bridge('manage_account')">Or upgrade to Pro - $15/mo</button>`);
   }
@@ -462,7 +485,20 @@ function renderHome(){
   const wv = [40,75,100,60,85].map(h=>`<i style="height:${h}%"></i>`).join('');
   const now = H.now;
   const recap = H.recap;
+  // Quiet nudge: agent installed on this machine but not connected to Heard.
+  // Dismissible per-agent — someone may deliberately not want it narrated.
+  const _dq = S.connectHintDismissed || {};
+  const _hints = [];
+  if(S.claudeDetected && !S.claudeConnected && !_dq.claude) _hints.push(['claude','Claude Code','connect_agent']);
+  if(S.codexDetected && !S.codexConnected && !_dq.codex) _hints.push(['codex','Codex','connect_codex']);
+  const _hintHtml = _hints.map(h=>`<div class="connect-hint">
+      <span class="ch-dot"></span>
+      <div class="ch-txt"><b>${h[1]}</b> is installed but not connected — Heard won't narrate it until you do.</div>
+      <button class="ch-connect" onclick="bridge('${h[2]}')">Connect</button>
+      <button class="ch-x" title="Don't remind me" onclick="dismissHint('${h[0]}')">✕</button>
+    </div>`).join('');
   document.getElementById('v-mission').innerHTML = `
+    ${_hintHtml}
     ${recap?`<div class="now"><div class="o"></div>
       <div style="flex:1;min-width:0"><div class="k">✻ Recap</div><div class="q" style="font-size:17px;line-height:1.4">${recap}</div></div>
       <div class="wv">${wv}</div></div>`:''}

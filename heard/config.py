@@ -135,7 +135,7 @@ DEFAULTS: dict[str, Any] = {
     # Plan for the active heard_token, mirrored locally so the menu
     # bar can render "Trial · 12 days left" without polling the proxy
     # on every refresh. The daemon refreshes this on token validation.
-    # Values: "trial" | "pro" | "pro_plus" | "power" | "expired" | "" (unknown / never signed up)
+    # Values: "trial" | "pro" | "power" | "expired" | "" (unknown / never signed up)
     "heard_plan": "",
     # Epoch ms when the trial expires. Used by the menu bar countdown
     # and the day-31 silent downgrade. Ignored when plan == "pro".
@@ -244,6 +244,11 @@ DEFAULTS: dict[str, Any] = {
     # file existing. Default on so upgraded users get Codex Desktop
     # narration without also installing the CLI hook.
     "codex_enabled": True,
+    # Per-agent dismissal of the Home "installed but not connected" nudge.
+    # Set True when the user × the hint — not connecting an agent can be a
+    # deliberate choice, so the nudge never comes back for that agent.
+    "connect_hint_dismissed_claude": False,
+    "connect_hint_dismissed_codex": False,
     # One-shot first-launch greeting. Flips True after the daemon
     # speaks the welcome line the first time it comes up with a real
     # TTS backend (i.e. *after* sign-in / key paste — a no-voice user

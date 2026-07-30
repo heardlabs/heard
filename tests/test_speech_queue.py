@@ -171,11 +171,13 @@ def test_trial_ended_blurb_matches_actual_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(k.KokoroTTS, "is_downloaded", lambda self: True)
     assert "free local voice" in daemon._trial_ended_blurb()
 
-    # 3. No key, no Kokoro → SILENT: explain it's not a bug + all 3 paths.
+    # 3. No key, no Kokoro → SILENT: explain it's not a bug + every path back,
+    # including the invite path (the free "don't pay upfront" option).
     monkeypatch.setattr(k.KokoroTTS, "is_downloaded", lambda self: False)
     b = daemon._trial_ended_blurb()
     assert "not a bug" in b
-    assert "Download voice" in b and "own ElevenLabs key" in b and "upgrade to Pro" in b
+    assert "invit" in b.lower() and daemon._REWARDS_URL in b
+    assert "local voice" in b and "your own key" in b and "upgrade to Pro" in b
 
 
 def test_mute_session_adds_flushes_and_unmute_clears(tmp_path, monkeypatch):
