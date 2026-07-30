@@ -53,6 +53,7 @@ from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
 from heard.tts.managed import ManagedError
 from heard.tts.null import NullTTS
+from heard.tts.speechify import SpeechifyError, SpeechifyTTS
 
 DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # Rotate the daemon log when it crosses this size. Heard runs for
@@ -256,7 +257,14 @@ class Daemon:
         # drop, or defer to a digest summary, based on how many
         # sessions are active. Single-session use case is unchanged
         # (router falls through to "speak" on every event).
-        self.router = multi_agent_mod.MultiAgentRouter()
+        # Voice pool follows the TTS backend — provider voice-ID
+        # namespaces don't overlap, so a pool from the wrong provider
+        # collapses every agent onto one voice (see
+        # multi_agent.voice_pool_for_backend). Re-set on every re-pick
+        # in _reload_config.
+        self.router = multi_agent_mod.MultiAgentRouter(
+            voice_pool=multi_agent_mod.voice_pool_for_backend(type(self.tts).__name__)
+        )
         # Layer 2 — Agent State (the "scoreboard"). Per-agent facts +
         # cheap heuristic hints, updated on every event. Read by
         # `heard status` for human inspection today; will be read by
@@ -1445,8 +1453,16 @@ class Daemon:
         the cause and gives every path back to sound. The invite path is
         the "don't pay upfront" option: each activated friend earns ~2h of
         the managed cloud voice, free."""
+        # Either BYOK voice key keeps narration alive once the managed
+        # path drops out — name the one that's actually taking over, or
+        # the promise ("keeps playing") won't match what the user hears.
+        byok_provider = ""
         if (self.cfg.get("elevenlabs_api_key") or "").strip():
-            return ("Your Heard trial ended. You're on your own ElevenLabs "
+            byok_provider = "ElevenLabs"
+        elif (self.cfg.get("speechify_api_key") or "").strip():
+            byok_provider = "Speechify"
+        if byok_provider:
+            return (f"Your Heard trial ended. You're on your own {byok_provider} "
                     "key, so narration keeps playing — nothing else to do.")
         try:
             from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415
@@ -1537,17 +1553,23 @@ class Daemon:
            bothered to paste a key, use it — it's their bill, not ours.
            Mirrors the Haiku ladder, which already prefers a BYOK
            Anthropic key over the managed proxy.
-        2. ``heard_token`` set + plan != ``"expired"`` + not capped today
+        2. ``speechify_api_key`` set → SpeechifyTTS (BYOK — Simba 3.2).
+           Deliberately BELOW ElevenLabs: an install that already had an
+           EL key keeps the voice it has, so adding Speechify support
+           can't silently change what an existing user hears. Clear the
+           EL key to switch over.
+        3. ``heard_token`` set + plan != ``"expired"`` + not capped today
            → ManagedTTS (proxies through api.heard.dev; the EL key lives
            on our edge so OSS / no-key users still get a voice).
-        3. Local Kokoro, only if already downloaded.
-        4. Otherwise → NullTTS (no audio + a one-time "add a voice" nudge).
+        4. Local Kokoro, only if already downloaded.
+        5. Otherwise → NullTTS (no audio + a one-time "add a voice" nudge).
 
         Kokoro stays a lazy import so paying / BYOK users never load
         ``kokoro_onnx`` / ``onnxruntime`` — keeps the daemon tiny on
         the cloud path.
         """
         api_key = (self.cfg.get("elevenlabs_api_key") or "").strip()
+        speechify_key = (self.cfg.get("speechify_api_key") or "").strip()
         heard_token = (self.cfg.get("heard_token") or "").strip()
         heard_plan = (self.cfg.get("heard_plan") or "").strip().lower()
         managed_usable = (
@@ -1560,9 +1582,14 @@ class Daemon:
         # granted `byok_enabled` account. So an active Pro/Power can't bypass
         # the managed voices it pays for with a stale key (Pro stays "managed,
         # not paid-OSS"), but a lapsed/capped user still falls back to their
-        # own key rather than dropping to Kokoro.
-        if api_key and (bool(self.cfg.get("byok_enabled")) or not managed_usable):
+        # own key rather than dropping to Kokoro. The gate is per-user, not
+        # per-provider — every BYOK voice key clears it on the same terms.
+        byok_honored = bool(self.cfg.get("byok_enabled")) or not managed_usable
+        if api_key and byok_honored:
             return ElevenLabsTTS(api_key=api_key)
+
+        if speechify_key and byok_honored:
+            return SpeechifyTTS(api_key=speechify_key)
 
         if managed_usable:
             from heard.tts.managed import ManagedTTS  # noqa: PLC0415
@@ -1602,6 +1629,7 @@ class Daemon:
     def _reload_config(self) -> None:
         old_sig = self._hotkey_signature(self.cfg)
         old_key = self.cfg.get("elevenlabs_api_key", "")
+        old_speechify_key = self.cfg.get("speechify_api_key", "")
         old_token = self.cfg.get("heard_token", "")
         old_plan = self.cfg.get("heard_plan", "")
         old_auto_silence = bool(self.cfg.get("auto_silence_on_mic", True))
@@ -1636,6 +1664,7 @@ class Daemon:
         # auto-flip is the canonical trigger here).
         repick = (
             self.cfg.get("elevenlabs_api_key", "") != old_key
+            or self.cfg.get("speechify_api_key", "") != old_speechify_key
             or self.cfg.get("heard_token", "") != old_token
             or self.cfg.get("heard_plan", "") != old_plan
         )
@@ -1656,6 +1685,10 @@ class Daemon:
             repick = True
         if repick:
             self.tts = self._make_tts()
+            # Swapping provider swaps the voice-ID namespace with it.
+            self.router.set_voice_pool(
+                multi_agent_mod.voice_pool_for_backend(type(self.tts).__name__)
+            )
         new_sig = self._hotkey_signature(self.cfg)
         if new_sig != old_sig:
             if self._hotkey_listener is not None:
@@ -1696,6 +1729,12 @@ class Daemon:
         # them).
         if type(self.tts).__name__ == "KokoroTTS":
             return persona.kokoro_voice or cfg.get("kokoro_voice") or "bm_george"
+        # Speechify IDs are readable slugs (`geffen_32`) — a third
+        # disjoint namespace. Empty is fine here: the backend falls back
+        # to its own curated default, and it filters ElevenLabs-shaped
+        # IDs defensively in case this resolution is ever bypassed.
+        if type(self.tts).__name__ == "SpeechifyTTS":
+            return persona.speechify_voice or cfg.get("speechify_voice") or ""
         return persona.voice or cfg["voice"]
 
     def _speak(
@@ -1994,9 +2033,17 @@ class Daemon:
                     pass
                 path.unlink(missing_ok=True)
                 continue
-            if isinstance(e, ElevenLabsError):
+            if isinstance(e, (ElevenLabsError, SpeechifyError)):
                 msg = str(e)
-                # PRD §13: when ElevenLabs is unreachable AND the user
+                # Both BYOK voice providers are plain HTTPS TTS with the
+                # same failure taxonomy (auth / rate / TLS / network), so
+                # they share one handler. `provider` swaps the label in
+                # the user-facing copy; `err_key` swaps the _record_error
+                # kind the menu bar badges off (see ui.py _error_label).
+                is_speechify = isinstance(e, SpeechifyError)
+                provider = "Speechify" if is_speechify else "ElevenLabs"
+                err_key = "speechify" if is_speechify else "elevenlabs"
+                # PRD §13: when the provider is unreachable AND the user
                 # has Kokoro on disk, automatically fall back so the
                 # narration goes out instead of disappearing entirely.
                 # Auth failures DON'T trigger fallback — that's a
@@ -2010,52 +2057,75 @@ class Daemon:
                     or "quota" in msg_l
                     or "credit" in msg_l
                     or "out of credits" in msg_l
+                    # Speechify bills per character and returns 402 when the
+                    # account runs out — same user-fixable "top up" state as
+                    # a 429, so it must not trigger the Kokoro fallback.
+                    or (is_speechify and "402" in msg)
                 )
-                # Auth + rate failures are user-fixable config bugs;
-                # don't paper over them with a Kokoro fallback. Other
+                # Speechify has no alias table — `speechify_voice` is a raw
+                # ID copied from their console, so a typo is a plausible
+                # first-run mistake that 404s on EVERY utterance. Without
+                # this branch it reads as "unreachable" and sends the user
+                # debugging their network instead of their config.
+                # Gate strictly on the 404 status: a bad `speechify_voice` 404s on
+                # every utterance. Matching bare "voice" in the body would also flag a
+                # 5xx "voice service down" as a config error and wrongly suppress the
+                # Kokoro fallback for a transient outage.
+                is_bad_voice = is_speechify and not is_auth and "404" in msg
+                # Auth + rate + bad-voice failures are user-fixable config
+                # bugs; don't paper over them with a Kokoro fallback. Other
                 # transient errors (network blips, 5xx) get the silent
                 # downgrade so the next narration goes out anyway.
-                if not is_auth and not is_rate and self._kokoro_fallback_to(
+                if not is_auth and not is_rate and not is_bad_voice and self._kokoro_fallback_to(
                     chunk, voice, speed, lang, path
                 ):
                     notify.notify(
                         "Heard — using local voice",
-                        "ElevenLabs is unreachable. Falling back to the local model for now.",
-                        kind="elevenlabs_fallback",
+                        f"{provider} is unreachable. Falling back to the local model for now.",
+                        kind=f"{err_key}_fallback",
                     )
                     _log("synth_fallback_kokoro", err=msg)
                     # Fall through to playback below — file is on disk.
                 else:
                     if is_auth:
-                        self._record_error("elevenlabs_auth", msg)
+                        self._record_error(f"{err_key}_auth", msg)
                         notify.notify(
-                            "Heard — ElevenLabs key invalid",
-                            "Your ElevenLabs key was rejected. Open Heard from the menu bar to fix it.",
-                            kind="elevenlabs_auth",
+                            f"Heard — {provider} key invalid",
+                            f"Your {provider} key was rejected. Open Heard from the menu bar to fix it.",
+                            kind=f"{err_key}_auth",
                         )
                     elif is_rate:
-                        self._record_error("elevenlabs_rate", msg)
+                        self._record_error(f"{err_key}_rate", msg)
                         notify.notify(
-                            "Heard — ElevenLabs out of credits",
-                            "Your ElevenLabs account is rate-limited or out of credits. "
+                            f"Heard — {provider} out of credits",
+                            f"Your {provider} account is rate-limited or out of credits. "
                             "Top up or replace the key from Heard's menu bar.",
-                            kind="elevenlabs_rate",
+                            kind=f"{err_key}_rate",
+                        )
+                    elif is_bad_voice:
+                        self._record_error("speechify_voice", msg)
+                        notify.notify(
+                            "Heard — Speechify voice not found",
+                            "Speechify didn't recognise that voice ID. Check "
+                            "`speechify_voice` against the voices in your "
+                            "Speechify console.",
+                            kind="speechify_voice",
                         )
                     elif "CERTIFICATE_VERIFY_FAILED" in msg or "SSL" in msg.upper():
                         self._record_error("ssl", msg)
                         notify.notify(
                             "Heard — TLS verification failed",
-                            "The HTTPS handshake to ElevenLabs failed. "
+                            f"The HTTPS handshake to {provider} failed. "
                             "Check your network connection or your account from "
                             "Heard's menu bar.",
                             kind="ssl",
                         )
                     else:
-                        self._record_error("elevenlabs_network", msg)
+                        self._record_error(f"{err_key}_network", msg)
                         notify.notify(
                             "Heard — voice service unreachable",
-                            "ElevenLabs didn't respond. Check your connection or your account.",
-                            kind="elevenlabs_network",
+                            f"{provider} didn't respond. Check your connection or your account.",
+                            kind=f"{err_key}_network",
                         )
                     _log("synth_failed", backend=type(self.tts).__name__, err=msg)
                     path.unlink(missing_ok=True)
