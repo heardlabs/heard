@@ -1176,28 +1176,13 @@ class HeardApp(rumps.App):
         """Open the Stripe Payment Link with the user's email prefilled.
         Used by the menu-bar Upgrade item when trial is expiring or has
         expired."""
-        import urllib.parse
-
-        cfg = config.load()
-        email = (cfg.get("heard_email") or "").strip()
-        if not email:
-            # We don't know the account → a bare Payment Link would carry no
-            # client_reference_id, so the webhook would bind the payment to the
-            # Stripe billing email and upgrade a phantom account, not theirs.
-            # Never open an unbindable checkout: send them through the signed-in
-            # dashboard, which attaches client_reference_id.
-            try:
-                webbrowser.open("https://heard.dev/dashboard/billing")
-            except Exception:
-                pass
-            return
-        q = urllib.parse.quote(email)
-        # prefilled_email is editable at checkout; client_reference_id is
-        # NOT — the webhook keys the upgrade off it so it always links to
-        # this Heard account even if they pay with a different email.
-        url = f"{self._UPGRADE_URL}?prefilled_email={q}&client_reference_id={q}"
+        # Always route through the signed-in dashboard, which creates an
+        # account-BOUND Checkout Session server-side (POST /v1/checkout). Never
+        # open a bare Payment Link from the app: with no reliable account
+        # binding the webhook falls back to the Stripe billing email and can
+        # upgrade a phantom account instead of theirs (a real customer hit this).
         try:
-            webbrowser.open(url)
+            webbrowser.open("https://heard.dev/dashboard/billing")
         except Exception:
             pass
         # They're about to pay in the browser. Tell the daemon to poll
