@@ -1451,7 +1451,7 @@ class Daemon:
             if KokoroTTS(config.MODELS_DIR).is_downloaded():
                 return ("Your Heard trial ended — switched to your free local "
                         "voice, so narration keeps going. Want the cloud voice "
-                        f"back? Invite friends to earn it free — ~2 hours each "
+                        f"back? Invite friends to earn it free — ~9 hours each "
                         f"({self._REWARDS_URL}) — or upgrade to Pro.")
         except Exception:
             pass
@@ -1459,7 +1459,7 @@ class Daemon:
         # and lead with the invite path (free, no upfront cost).
         return ("Your Heard trial ended — that's why narration went quiet "
                 "(not a bug). Get the cloud voice back free by inviting "
-                f"friends (~2 hours each: {self._REWARDS_URL}), add a free "
+                f"friends (~9 hours each: {self._REWARDS_URL}), add a free "
                 "local voice, use your own key, or upgrade to Pro.")
 
     def _emit_plan_change(self, old_plan: str, new_plan: str) -> None:
@@ -4007,7 +4007,7 @@ class Daemon:
     def _maybe_announce_friend_joined(self, data: dict) -> None:
         """#15 — diff /v1/me `friends_activated` across polls; on an increase,
         speak + notify once that an invited friend joined (the inviter earns
-        ~2h of managed voice, plus a free month of Pro every 5th friend). The
+        ~9h of managed voice, plus a free month of Pro every 5th friend). The
         FIRST poll just records the baseline so we never announce pre-existing
         activations on a fresh daemon start."""
         try:
@@ -4029,7 +4029,7 @@ class Daemon:
         # account. Keep the baseline current but stay silent for pro/power.
         if (self.cfg.get("heard_plan") or "").strip().lower() in ("pro", "power"):
             return
-        # Ladder: each activated friend earns ~2h of managed voice; every 5th
+        # Ladder: each activated friend earns ~9h of managed voice; every 5th
         # also earns a free month of Pro (mirrors FREE_MONTH_MILESTONE=5 in
         # heard-api). Announce the month only on a milestone.
         extra = " and a free month of Pro" if new_count % 5 == 0 else ""
@@ -4037,14 +4037,14 @@ class Daemon:
             notify.notify(
                 "A friend joined Heard",
                 "Someone you invited just started using Heard — you've earned "
-                f"about 2 more hours of managed voice{extra}.",
+                f"about 9 more hours of managed voice{extra}.",
                 kind="referral_friend_joined",
             )
         except Exception:
             pass
         self._enqueue_announcement(
             "Good news. A friend you invited just started using Heard, so "
-            f"you've earned about two more hours of managed voice{extra}.",
+            f"you've earned about nine more hours of managed voice{extra}.",
             event="referral_announce",
         )
 

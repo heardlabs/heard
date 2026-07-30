@@ -337,10 +337,10 @@ class HeardApp(rumps.App):
 
         # "Invite friends…" — opens the Rewards page (heard.dev/dashboard/
         # rewards) where the user copies their invite link + a ready-made
-        # message. Each activated friend earns ~2h of managed voice (a free
-        # month of Pro every 5th). Web handles auth if they're not signed in.
+        # message. Each activated friend earns ~9 hours of managed voice (a
+        # free month of Pro every 5th). Web handles auth if they're not signed in.
         self.invite_item = rumps.MenuItem(
-            "Invite friends, earn free voice", callback=self.on_invite
+            "Invite a friend, get 9 hours free", callback=self.on_invite
         )
 
         options_menu = rumps.MenuItem("Options")
@@ -422,10 +422,18 @@ class HeardApp(rumps.App):
         self._refresh_api_key_labels(cfg, status or {})
         self._refresh_usage_item(cfg, status or {})
         # The invite reward is managed voice — useless to an unlimited paid
-        # account. Show it only to free/expired/trial users (the ones burning
-        # through their free usage and looking for more without paying).
+        # account, and premature for a free/trial user who still has plenty
+        # left. Show it ONLY when a non-paid user is out of / nearly out of
+        # managed voice (Dropbox-style: nudge at the moment more actually
+        # helps). cap<=0 = no managed voice at all (expired/free without a pool).
         _plan = (cfg.get("heard_plan") or "").strip().lower()
-        self._set_item_hidden(self.invite_item, _plan in ("pro", "power"))
+        _show_invite = False
+        if _plan not in ("pro", "power"):
+            _u = (status or {}).get("account_usage") or {}
+            _used = _u.get("usage_today_chars") or 0
+            _cap = _u.get("daily_cap") or 0
+            _show_invite = _cap <= 0 or _used >= 0.8 * _cap
+        self._set_item_hidden(self.invite_item, not _show_invite)
 
         # First-launch onboarding: open the Settings window (it shows the
         # welcome checklist) the first time, once the daemon's up. The
@@ -1522,7 +1530,7 @@ class HeardApp(rumps.App):
 
     def on_invite(self, _sender) -> None:
         """Open the Rewards page — copy your invite link / message there. Each
-        activated friend earns you ~2h of managed voice; every 5th, a free
+        activated friend earns you ~9h of managed voice; every 5th, a free
         month of Pro."""
         webbrowser.open("https://heard.dev/dashboard/rewards")
 
