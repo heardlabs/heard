@@ -63,12 +63,11 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 
 | | Voices | Talk back | Price |
 |---|---|---|---|
-| **Self-host** (open source) | Your own keys, or local Kokoro | - | Free · your API bill |
-| **Free** | Cloud voices to try it - 2 personas, light daily cap | - | Free |
-| **Pro** | **All** cloud voices + personas, bigger daily cap | - | $15/mo |
+| **Free** — open source; self-host or the app | **Local only** — Kokoro or your own keys, zero cloud | - | Free |
+| **Pro** | **All** cloud voices + personas, run for you | - | $15/mo |
 | **Power** | All cloud voices | **Yes** - hands-free voice control (talk *to* your agent) | $30/mo |
 
-Self-host runs from source with your own keys; the managed plans just download + sign in. **Free vs Pro:** Free is a taste - the cloud voices with the two starter personas and a light daily cap (~10k characters of speech/day); **Pro** raises the cap (~20k/day) and unlocks every voice and persona. Power adds hands-free voice control on top. [See pricing →](https://heard.dev/pricing)
+**Free is fully local** - the open-source engine with local Kokoro voice (or your own ElevenLabs / Anthropic keys), nothing through our cloud. Build it from source or just run the free app - same local experience. **Pro** runs all the cloud voices and personas for you, no keys to manage; downloading starts a free trial. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/pricing)
 
 ## What it does
 
