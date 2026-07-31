@@ -104,6 +104,54 @@ def test_manual_agent_voices_still_win_in_window_scope():
     assert got == "wyatt_32"
 
 
+def test_manual_agent_voices_win_on_the_daemon_path_too():
+    """Regression: `_start_speech` calls `voice_for_session`, NOT
+    `_voice_for_locked`. An earlier version only honoured the manual map
+    in the latter, so the test above passed while every real utterance
+    ignored `agent_voices` and used a round-robin voice instead. Assert
+    the precedence on the path the daemon actually takes."""
+    r = _router()
+    r.note_event("sess-a", cwd="/x/Projects/web")
+    assert r.voice_for_session("sess-a", {"web": "wyatt_32"}) == "wyatt_32"
+
+
+def test_daemon_path_falls_back_to_pool_when_repo_unmapped():
+    """A manual map covering *other* projects must not stop an unmapped
+    session getting its own pool voice."""
+    r = _router()
+    r.note_event("sess-a", cwd="/x/Projects/web")
+    assert r.voice_for_session("sess-a", {"api": "wyatt_32"}) in POOL
+
+
+def test_daemon_path_handles_unknown_session():
+    """A session that never called note_event has no repo_name; the
+    lookup must not raise, just skip the manual map."""
+    r = _router()
+    assert r.voice_for_session("never-seen", {"web": "wyatt_32"}) in POOL
+
+
+def test_session_voice_map_is_bounded():
+    """One entry per agent run for the daemon's lifetime — a long-lived
+    daemon must not accumulate without limit."""
+    from heard.multi_agent import _SESSION_VOICE_MAX
+
+    r = _router()
+    for i in range(_SESSION_VOICE_MAX + 200):
+        r.voice_for_session(f"s{i}")
+    assert len(r._session_voices) <= _SESSION_VOICE_MAX
+
+
+def test_eviction_keeps_serving_voices():
+    """After eviction the router still hands out valid pool voices —
+    the cap must not corrupt assignment."""
+    from heard.multi_agent import _SESSION_VOICE_MAX
+
+    r = _router()
+    for i in range(_SESSION_VOICE_MAX + 200):
+        r.voice_for_session(f"s{i}")
+    assert r.voice_for_session("fresh-session") in POOL
+
+
 def test_window_scope_inert_when_auto_voices_off():
     """auto_voices remains the master switch."""
     r = _router()
@@ -121,3 +169,40 @@ def test_window_voices_come_from_the_active_backend_pool():
     must hand out Speechify IDs, not ElevenLabs ones."""
     r = _router()
     assert r.voice_for_session("sess-a") in SPEECHIFY_POOL
+
+
+def test_digest_flush_uses_window_voices_when_scoped():
+    """The digest path has its own voice selection. If it stayed on
+    project scope while live narration used window scope, a background
+    agent's summary would speak in a different voice than its own
+    failures — the exact confusion per-window voices exist to remove."""
+    r = _router()
+    r.note_event("primary", cwd="/x/Projects/heard")
+    r.note_event("secondary", cwd="/x/Projects/web")
+    for sid in ("primary", "secondary"):
+        r.add_to_digest(sid, "tool_pre", "tool_edit", "Editing a file")
+
+    flushes = r.force_flush_all(auto_voices=True, voice_scope="window")
+    non_primary = [f for f in flushes if not f.is_primary]
+    assert non_primary, "expected a non-primary project flush"
+    for f in non_primary:
+        assert f.voice_override == r.voice_for_session(f.speaker_session_id)
+
+
+def test_digest_flush_keeps_project_voices_by_default():
+    """Default scope is untouched — still the repo hash."""
+    from heard.multi_agent import _auto_voice_for
+
+    r = _router()
+    r.note_event("primary", cwd="/x/Projects/heard")
+    r.note_event("secondary", cwd="/x/Projects/web")
+    for sid in ("primary", "secondary"):
+        r.add_to_digest(sid, "tool_pre", "tool_edit", "Editing a file")
+
+    # Which project ends up non-primary depends on recency, so derive
+    # the expectation from the flush itself rather than hardcoding it.
+    flushes = r.force_flush_all(auto_voices=True)
+    non_primary = [f for f in flushes if not f.is_primary]
+    assert non_primary, "expected a non-primary project flush"
+    for f in non_primary:
+        assert f.voice_override == _auto_voice_for(f.label, POOL)
