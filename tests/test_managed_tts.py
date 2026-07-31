@@ -189,6 +189,26 @@ def test_429_daily_cap_maps_to_managed_error(tmp_path, monkeypatch):
     assert "daily_cap_exceeded" in exc.value.reason
 
 
+def test_429_cloudflare_edge_maps_to_rate_limited_not_cap(tmp_path, monkeypatch):
+    """A 429 from the Cloudflare EDGE (plain-text 'error code: 1027', not our
+    Worker's JSON) must NOT be read as the account's daily cap — otherwise the
+    daemon latches silent until UTC midnight for a transient block. It should
+    surface reason='rate_limited' so the daemon retries instead of latching."""
+    err = urllib.error.HTTPError(
+        url="https://api.heard.dev/v1/synth",
+        code=429,
+        msg="Too Many Requests",
+        hdrs=None,  # type: ignore[arg-type]
+        fp=io.BytesIO(b"error code: 1027"),
+    )
+    _capture_urlopen(monkeypatch, err)
+    tts = ManagedTTS(token="t")
+    with pytest.raises(ManagedError) as exc:
+        tts.synth_to_file("x", "george", 1.0, "en-us", tmp_path / "x.mp3")
+    assert exc.value.status == 429
+    assert exc.value.reason == "rate_limited"
+
+
 def test_5xx_falls_under_proxy_error_when_body_unparseable(
     tmp_path, monkeypatch
 ):

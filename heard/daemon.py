@@ -1904,7 +1904,7 @@ class Daemon:
                             "Your plan ended. Switched to local voices. Open Heard to upgrade.",
                             kind="cloud_expired",
                         )
-                elif e.status == 429:
+                elif e.status == 429 and getattr(e, "reason", "") == "daily_cap_exceeded":
                     # Daily managed-char cap hit. Mark it so _make_tts
                     # skips the cloud path for the rest of the UTC day,
                     # then re-pick: if the user has a BYOK ElevenLabs key
@@ -1962,6 +1962,20 @@ class Daemon:
                                 "cloud voice returns at UTC midnight.",
                                 kind="cloud_daily_cap_top",
                             )
+                elif e.status == 429:
+                    # A 429 WITHOUT our cap reason = a Cloudflare EDGE 429 (a
+                    # rate-limit blip, or a Worker plan-limit outage) — NOT the
+                    # account's daily cap. Do NOT latch _managed_capped_at: that
+                    # would silence the user until UTC midnight for a transient
+                    # block. Keep managed selected so the next event retries;
+                    # voice auto-recovers the moment the edge clears (no restart).
+                    _log("managed_edge_429", reason=getattr(e, "reason", ""))
+                    notify.notify(
+                        "Heard voice paused",
+                        "Cloud voice is briefly unavailable (rate limited "
+                        "upstream). It'll resume on its own.",
+                        kind="cloud_edge_429",
+                    )
                 elif e.status == 401:
                     # 3B: server distinguishes device_revoked (this Mac
                     # was kicked from the dashboard) from token_unknown

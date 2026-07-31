@@ -95,7 +95,13 @@ def _reason_for_status(status: int) -> str:
     if status == 402:
         return "trial_expired"
     if status == 429:
-        return "daily_cap_exceeded"
+        # Only a 429 that arrives WITH our Worker's JSON body
+        # (error="daily_cap_exceeded") is a real per-account cap; the caller
+        # prefers that body reason. A 429 with NO JSON body is a Cloudflare
+        # EDGE 429 (rate-limit blip or a Worker plan-limit outage) — NOT the
+        # account's cap. Label it distinctly so the daemon doesn't latch
+        # "capped until midnight" on a transient edge block.
+        return "rate_limited"
     if 500 <= status < 600:
         return "proxy_error"
     return "unknown"
