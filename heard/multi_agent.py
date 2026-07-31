@@ -123,6 +123,14 @@ CHANNEL_MAX_PENDING = 5
 # user pin a session that just went idle for a moment.
 SESSION_VISIBLE_S = 600.0
 
+# Cap on the per-session voice map (voice_scope="window"). One entry per
+# agent run for the daemon's lifetime, so a machine that starts dozens of
+# sessions a day would otherwise grow it forever. Evicting a chunk at a
+# time keeps the amortised cost near zero; an evicted session that speaks
+# again simply gets a fresh voice.
+_SESSION_VOICE_MAX = 512
+_SESSION_VOICE_EVICT = 128
+
 # Files / directories whose presence in a folder marks it as a "real
 # project" (vs. an arbitrary working directory like ~/ or ~/Downloads).
 # The session-to-project inference walks up from each edited file path
@@ -724,8 +732,16 @@ class MultiAgentRouter:
             return _auto_voice_for(info.repo_name, self._voice_pool)
         return None
 
-    def voice_for_session(self, session_id: str) -> str | None:
+    def voice_for_session(
+        self, session_id: str, agent_voices: dict[str, str] | None = None
+    ) -> str | None:
         """Public per-window voice lookup for the daemon's speech path.
+
+        Precedence matches ``_voice_for_locked``: an explicit
+        ``agent_voices`` entry for this session's repo wins, and only
+        then do we hand out a pool voice. The manual map is the user
+        saying "this project sounds like *that*", and window scope must
+        not quietly override it.
 
         Assigns on first sight. Returns None for an empty session_id so
         the caller falls through to the persona/config voice rather than
@@ -734,6 +750,11 @@ class MultiAgentRouter:
         if not session_id:
             return None
         with self._lock:
+            if agent_voices:
+                info = self._sessions.get(session_id)
+                manual = agent_voices.get(info.repo_name) if info else None
+                if manual:
+                    return manual
             return self._session_voice_locked(session_id)
 
     def _session_voice_locked(self, session_id: str) -> str:
@@ -747,6 +768,16 @@ class MultiAgentRouter:
         voice = pool[self._voice_cursor % len(pool)]
         self._voice_cursor += 1
         self._session_voices[session_id] = voice
+        # Bound the map. Sessions are never removed from `_sessions`
+        # either, so this doesn't leak faster than the router already
+        # does — but this dict grows once per agent run for the life of
+        # the daemon, and a long-lived daemon shouldn't accumulate
+        # without limit. Dicts keep insertion order, so dropping the
+        # front evicts the oldest sessions, which are the least likely
+        # to speak again.
+        if len(self._session_voices) > _SESSION_VOICE_MAX:
+            for stale in list(self._session_voices)[:_SESSION_VOICE_EVICT]:
+                del self._session_voices[stale]
         return voice
 
     # --- project channel scheduler ----------------------------------------

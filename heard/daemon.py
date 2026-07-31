@@ -858,10 +858,16 @@ class Daemon:
             while True:
                 time.sleep(1.0)
                 auto_voices = bool(self.cfg.get("multi_agent_auto_voices", False))
+                # Scope must match the live path (_start_speech) or a
+                # background agent's digest speaks in a different voice
+                # than its own pierces.
+                voice_scope = self.cfg.get("multi_agent_voice_scope") or "project"
                 if not self.cfg.get("multi_agent_digest_enabled", True):
                     # Feature off — drain silently so events don't pile
                     # up forever waiting on a scheduler that won't speak.
-                    self.router.collect_project_flushes(auto_voices=auto_voices)
+                    self.router.collect_project_flushes(
+                        auto_voices=auto_voices, voice_scope=voice_scope
+                    )
                     continue
                 if self.cfg.get("muted") or self._awaiting_resume_intent:
                     # Muted or waiting for the user's resume-intent
@@ -874,7 +880,9 @@ class Daemon:
                     # unmute either drains it (catch up) or clears
                     # it (fresh start) via the same socket cmd.
                     continue
-                flushes = self.router.collect_project_flushes(auto_voices=auto_voices)
+                flushes = self.router.collect_project_flushes(
+                    auto_voices=auto_voices, voice_scope=voice_scope
+                )
                 # Solo when the whole fleet is one agent on one project —
                 # then the summary skips the repo label ("Read through the
                 # auth flow, tests passed" not "Heard: …").
@@ -2537,7 +2545,9 @@ class Daemon:
             and bool(_vcfg.get("multi_agent_auto_voices", False))
             and (_vcfg.get("multi_agent_voice_scope") or "project") == "window"
         ):
-            voice_override = self.router.voice_for_session(session_id)
+            voice_override = self.router.voice_for_session(
+                session_id, agent_voices=_vcfg.get("agent_voices") or {}
+            )
         # Record what we're about to say so the harness can avoid repeating it
         # (anti-repeat: prompt hint + near-dup backstop). All narration paths
         # funnel through here, so this captures harness + floor + opener lines.
@@ -2932,7 +2942,10 @@ class Daemon:
         stream — the recap just happens on-demand instead of on the
         next tick boundary."""
         auto_voices = bool(self.cfg.get("multi_agent_auto_voices", False))
-        flushes = self.router.force_flush_all(auto_voices=auto_voices)
+        flushes = self.router.force_flush_all(
+            auto_voices=auto_voices,
+            voice_scope=self.cfg.get("multi_agent_voice_scope") or "project",
+        )
         if not flushes:
             return
         for pf in flushes:
