@@ -49,6 +49,7 @@ from heard import voice_service as voice_service_mod
 from heard import (
     working_memory as working_memory_mod,
 )
+from heard.project_name import canonical_project_name
 from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
 from heard.tts.managed import ManagedError
@@ -59,6 +60,28 @@ DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # weeks at a time on a busy machine; without rotation the structured
 # per-event lines accumulate into hundreds of MB.
 _LOG_ROTATE_BYTES = 10 * 1024 * 1024
+
+# A path-like token: one or more "dir/" segments then a final stem with an
+# optional file extension. Templates already basename their own file
+# references; this is the deterministic backstop for the OTHER path —
+# brain-generated prose that slips a raw path in ("the fix is in
+# src/auth/handler.ts"). Reading a path aloud, slashes and extension and
+# all, is a named narration failure. We collapse it to the stem.
+_PATH_TOKEN = re.compile(r"(?:[\w.-]+/)+([\w-]+)(\.[A-Za-z]\w{0,4})?")
+
+
+def _sanitize_spoken(text: str) -> str:
+    """Collapse any bare filesystem path to its basename stem so TTS
+    never reads a path verbatim. Conservative: a token only collapses
+    when it has 2+ slashes OR a trailing file extension, so ordinary
+    prose with a single slash — "and/or", "TCP/IP", "read/write" —
+    is left exactly as written."""
+    def _repl(m: re.Match[str]) -> str:
+        tok = m.group(0)
+        if tok.count("/") >= 2 or m.group(2):   # multi-segment or has extension
+            return m.group(1)
+        return tok
+    return _PATH_TOKEN.sub(_repl, text)
 
 
 def _socket_accepts_ping(sock_path: str, timeout_s: float = 0.25) -> bool:
@@ -2405,6 +2428,9 @@ class Daemon:
         text = (text or "").strip()
         if not text:
             return
+        # Deterministic backstop: never read a file path verbatim, no
+        # matter which path produced the text (template or brain).
+        text = _sanitize_spoken(text)
         # "Pause Heard" — indefinite mute. Don't even queue; the mute
         # command already cleared whatever was in flight.
         if bool(self.cfg.get("muted")) and not self.cfg.get("narration_spool"):
@@ -2482,16 +2508,17 @@ class Daemon:
 
     def _project_label(self, hmeta: dict | None) -> str:
         """Resolve a speakable project name for an utterance from its
-        history meta. Prefers the session's repo_name (cwd basename, set in
-        session.py); falls back to the cwd basename. Returns "" for
-        utterances with no project (greetings, errors, system messages) and
-        for the home directory — so those never trigger a project tag."""
+        history meta. Prefers the session's repo_name (already the
+        canonical git-remote-slug name; see project_name.py); falls back
+        to resolving the cwd the same way. Returns "" for utterances with
+        no project (greetings, errors, system messages) and for the home
+        directory — so those never trigger a project tag."""
         hmeta = hmeta or {}
         name = (hmeta.get("repo_name") or "").strip()
         if not name:
             cwd = (hmeta.get("cwd") or "").strip()
             if cwd:
-                name = os.path.basename(cwd.rstrip("/"))
+                name = canonical_project_name(cwd)
         if not name or name in ("~", "/"):
             return ""
         # Don't announce the home dir as a "project".
@@ -3147,7 +3174,8 @@ class Daemon:
             _log("event_drop", kind=kind, reason="prompt_intent_retired")
             return
 
-        focus_mode = (cfg.get("mode") or "copilot").strip().lower() == "focus"
+        mode = (cfg.get("mode") or "copilot").strip().lower()
+        focus_mode = mode == "focus"
         if focus_mode and not harness.is_focus_attention_event(req):
             _log("event_drop", kind=kind, tag=tag, reason="focus_attention_drop")
             return
@@ -3204,6 +3232,19 @@ class Daemon:
             ):
                 if focus_mode and not harness.is_focus_template_event(req):
                     _log("event_drop", kind=kind, tag=tag, reason="focus_fastpath_drop")
+                    return
+                # Co-pilot suppresses the low-signal tool-template tier.
+                # At the screen, "Editing X." / "Running sed." is noise the
+                # diff already shows; the burst is carried by the brain's
+                # turn-boundary summary instead (the event was observed
+                # above, so that summary keeps full context). Failures and
+                # user questions are CRITICAL — they always pierce, in any
+                # mode. Companion (eyes-off) keeps the fuller stream.
+                if (mode == "copilot"
+                        and kind in ("tool_pre", "tool_post")
+                        and not harness.is_critical_template_event(req)):
+                    _log("event_drop", kind=kind, tag=tag,
+                         reason="copilot_tool_tier_suppressed")
                     return
                 # Verbosity profile still applies: quiet mode still
                 # mutes trivia, brief mode still digests bursts, etc.
@@ -3489,6 +3530,18 @@ class Daemon:
                 pass
             if focus_mode:
                 _log("event_drop", kind=kind, tag=tag, reason="focus_harness_punt")
+                return
+            # Co-pilot suppresses the low-signal tool tier here too. With 2+
+            # agents active a tool event skips the fast-path and lands here;
+            # the floor would otherwise read its raw template ("Running sed.")
+            # — the exact thing co-pilot must not say at the screen. Same rule
+            # as the fast-path gate: drop non-critical tool_pre/tool_post; the
+            # brain's turn summary carries it. Failures/questions still pierce.
+            if (mode == "copilot"
+                    and kind in ("tool_pre", "tool_post")
+                    and not harness.is_critical_template_event(req)):
+                _log("event_drop", kind=kind, tag=tag,
+                     reason="copilot_tool_tier_suppressed")
                 return
             # --- v2 floor — graceful no-LLM fallback. NEVER read a final
             # verbatim; a punted final gets a short canned line, a punted

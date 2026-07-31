@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from heard.project_name import canonical_project_name
+
 # Curated pool of distinguishable voices for auto-assignment to
 # non-focus agents in swarm mode. Mix of male/female + US/British so
 # the listener can tell who's speaking on first syllable. Same
@@ -487,13 +489,13 @@ class MultiAgentRouter:
         if path_hint:
             root = _find_project_root(path_hint)
             if root:
-                name = os.path.basename(root.rstrip("/")) or root
+                name = canonical_project_name(root) or root
                 return _RepoInference(name=name, confidence=2)
         # Tier 2: cwd itself walks up to a real project root.
         if cwd:
             root = _find_project_root(cwd)
             if root:
-                name = os.path.basename(root.rstrip("/")) or root
+                name = canonical_project_name(root) or root
                 return _RepoInference(name=name, confidence=2)
         # Tier 1: cwd basename. Backwards compatible with sessions in
         # non-project folders that still have a meaningful name — but

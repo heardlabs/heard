@@ -37,6 +37,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from heard.project_name import canonical_project_name
+
 # How long without an event before an agent is considered idle (for
 # salience hint + active-list filtering). Doesn't evict — the record
 # stays around for inspection.
@@ -66,9 +68,12 @@ def _approx_tokens(text: str) -> int:
 
 
 def _repo_name_from_cwd(cwd: str | None) -> str | None:
+    # Canonical name = git remote slug → folder basename (see
+    # project_name.py). A git subprocess, but cached per path — still a
+    # deterministic fact, not a judgment, so the Layer-2 boundary holds.
     if not cwd:
         return None
-    return os.path.basename(cwd.rstrip("/")) or cwd
+    return canonical_project_name(cwd) or None
 
 
 @dataclass
