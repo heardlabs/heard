@@ -62,14 +62,20 @@ DEFAULT_VOICE_ID = "geffen_32"
 # DEFAULT_VOICE_ID is deliberately absent — the focus agent keeps the
 # configured voice, so a background agent that hashed onto it would be
 # indistinguishable from the one you're driving.
+#
+# Order matters: window scope hands these out round-robin, so adjacent
+# entries must contrast — alternate gender first, then accent (GB/US).
+# At 2× narration speed same-gender neighbours blur together; with 4 M /
+# 3 F one male-male pair is unavoidable, so it's wyatt→hugh, the US/GB
+# pair that still differs by accent.
 AUTO_VOICE_POOL = (
-    "beatrice_32",
-    "dominic_32",
-    "edmund_32",
-    "harper_32",
-    "hugh_32",
-    "imogen_32",
-    "wyatt_32",
+    "beatrice_32",  # en-GB female
+    "dominic_32",   # en-US male
+    "harper_32",    # en-US female
+    "edmund_32",    # en-GB male
+    "imogen_32",    # en-GB female
+    "wyatt_32",     # en-US male
+    "hugh_32",      # en-GB male
 )
 DEFAULT_TIMEOUT_S = 8.0
 
