@@ -123,6 +123,14 @@ CHANNEL_MAX_PENDING = 5
 # user pin a session that just went idle for a moment.
 SESSION_VISIBLE_S = 600.0
 
+# Cap on the per-session voice map (voice_scope="window"). One entry per
+# agent run for the daemon's lifetime, so a machine that starts dozens of
+# sessions a day would otherwise grow it forever. Evicting a chunk at a
+# time keeps the amortised cost near zero; an evicted session that speaks
+# again simply gets a fresh voice.
+_SESSION_VOICE_MAX = 512
+_SESSION_VOICE_EVICT = 128
+
 # Files / directories whose presence in a folder marks it as a "real
 # project" (vs. an arbitrary working directory like ~/ or ~/Downloads).
 # The session-to-project inference walks up from each edited file path
@@ -445,6 +453,14 @@ class MultiAgentRouter:
         # the pool matching whichever backend _make_tts picked, and
         # again whenever a config reload re-picks it.
         self._voice_pool: tuple[str, ...] = voice_pool or _AUTO_VOICE_POOL
+        # Per-session voices for voice_scope="window". Round-robin from
+        # the pool on first sight rather than hashed: with 7 voices a
+        # hash collides badly (10 projects → 4 voices), whereas handing
+        # them out in order guarantees distinct voices for as many
+        # concurrent windows as the pool holds. Keyed by session_id, so
+        # entries die with the daemon — that's inherent to per-window.
+        self._session_voices: dict[str, str] = {}
+        self._voice_cursor = 0
         self._sessions: dict[str, SessionInfo] = {}
         self._pinned: str | None = None
         self._event_counter = 0  # monotonic; assigned to SessionInfo.event_seq
@@ -580,6 +596,7 @@ class MultiAgentRouter:
         session_id: str,
         agent_voices: dict[str, str] | None = None,
         auto_voices: bool = False,
+        voice_scope: str = "project",
     ) -> RoutingDecision:
         agent_voices = agent_voices or {}
         with self._lock:
@@ -589,7 +606,7 @@ class MultiAgentRouter:
             if self._pinned and self._pinned in self._sessions:
                 if session_id == self._pinned:
                     voice = self._voice_for_locked(
-                        session_id, agent_voices, auto_voices, is_focus=True
+                        session_id, agent_voices, auto_voices, is_focus=True, voice_scope=voice_scope
                     )
                     return self._speaking_locked(
                         session_id,
@@ -603,7 +620,7 @@ class MultiAgentRouter:
                     )
                 if tag in _PIERCE_TAGS:
                     voice = self._voice_for_locked(
-                        session_id, agent_voices, auto_voices, is_focus=False
+                        session_id, agent_voices, auto_voices, is_focus=False, voice_scope=voice_scope
                     )
                     return self._speaking_locked(session_id, self._pierced(session_id, voice))
                 return RoutingDecision(action="drop")
@@ -612,7 +629,7 @@ class MultiAgentRouter:
             # Solo: <2 active sessions, today's behaviour, everything plays.
             if len(active) < 2:
                 voice = self._voice_for_locked(
-                    session_id, agent_voices, auto_voices, is_focus=True
+                    session_id, agent_voices, auto_voices, is_focus=True, voice_scope=voice_scope
                 )
                 return self._speaking_locked(
                     session_id, RoutingDecision(action="speak", voice_override=voice)
@@ -626,7 +643,7 @@ class MultiAgentRouter:
             # the agent's name.
             if tag in _PIERCE_TAGS:
                 voice = self._voice_for_locked(
-                    session_id, agent_voices, auto_voices, is_focus=False
+                    session_id, agent_voices, auto_voices, is_focus=False, voice_scope=voice_scope
                 )
                 return self._speaking_locked(session_id, self._pierced(session_id, voice))
             return RoutingDecision(action="defer_to_digest")
@@ -683,6 +700,7 @@ class MultiAgentRouter:
         agent_voices: dict[str, str],
         auto_voices: bool,
         is_focus: bool,
+        voice_scope: str = "project",
     ) -> str | None:
         """Three-step voice resolution:
 
@@ -705,9 +723,62 @@ class MultiAgentRouter:
         manual = agent_voices.get(info.repo_name) if agent_voices else None
         if manual:
             return manual
+        # Window scope: every session gets its own voice, focus INCLUDED
+        # — the point is to tell windows apart, and exempting the one
+        # you're driving would leave it on the shared default.
+        if auto_voices and voice_scope == "window":
+            return self._session_voice_locked(session_id)
         if auto_voices and not is_focus and info.repo_name:
             return _auto_voice_for(info.repo_name, self._voice_pool)
         return None
+
+    def voice_for_session(
+        self, session_id: str, agent_voices: dict[str, str] | None = None
+    ) -> str | None:
+        """Public per-window voice lookup for the daemon's speech path.
+
+        Precedence matches ``_voice_for_locked``: an explicit
+        ``agent_voices`` entry for this session's repo wins, and only
+        then do we hand out a pool voice. The manual map is the user
+        saying "this project sounds like *that*", and window scope must
+        not quietly override it.
+
+        Assigns on first sight. Returns None for an empty session_id so
+        the caller falls through to the persona/config voice rather than
+        burning a pool slot on an unattributable utterance.
+        """
+        if not session_id:
+            return None
+        with self._lock:
+            if agent_voices:
+                info = self._sessions.get(session_id)
+                manual = agent_voices.get(info.repo_name) if info else None
+                if manual:
+                    return manual
+            return self._session_voice_locked(session_id)
+
+    def _session_voice_locked(self, session_id: str) -> str:
+        """Round-robin pool voice for this session, assigned on first
+        sight and remembered for the daemon's lifetime. Caller holds
+        the lock."""
+        existing = self._session_voices.get(session_id)
+        if existing:
+            return existing
+        pool = self._voice_pool or _AUTO_VOICE_POOL
+        voice = pool[self._voice_cursor % len(pool)]
+        self._voice_cursor += 1
+        self._session_voices[session_id] = voice
+        # Bound the map. Sessions are never removed from `_sessions`
+        # either, so this doesn't leak faster than the router already
+        # does — but this dict grows once per agent run for the life of
+        # the daemon, and a long-lived daemon shouldn't accumulate
+        # without limit. Dicts keep insertion order, so dropping the
+        # front evicts the oldest sessions, which are the least likely
+        # to speak again.
+        if len(self._session_voices) > _SESSION_VOICE_MAX:
+            for stale in list(self._session_voices)[:_SESSION_VOICE_EVICT]:
+                del self._session_voices[stale]
+        return voice
 
     # --- project channel scheduler ----------------------------------------
 
@@ -719,7 +790,11 @@ class MultiAgentRouter:
         return info.repo_name or info.session_id
 
     def collect_project_flushes(
-        self, *, auto_voices: bool = True, now: float | None = None
+        self,
+        *,
+        auto_voices: bool = True,
+        now: float | None = None,
+        voice_scope: str = "project",
     ) -> list[ProjectFlush]:
         """Atomically pop pending events from every project whose channel
         is ready to drain. A channel is ready when its most recent event
@@ -791,8 +866,13 @@ class MultiAgentRouter:
                 )
                 is_primary = project_key == primary_key
                 voice_override: str | None = None
-                if auto_voices and not is_primary and speaker.repo_name:
-                    voice_override = _auto_voice_for(speaker.repo_name, self._voice_pool)
+                if auto_voices and not is_primary:
+                    if voice_scope == "window":
+                        voice_override = self._session_voice_locked(speaker.session_id)
+                    elif speaker.repo_name:
+                        voice_override = _auto_voice_for(
+                            speaker.repo_name, self._voice_pool
+                        )
                 out.append(
                     ProjectFlush(
                         project_key=project_key,
@@ -908,7 +988,11 @@ class MultiAgentRouter:
             return sum(len(info.pending_digest) for info in self._sessions.values())
 
     def force_flush_all(
-        self, *, auto_voices: bool = True, now: float | None = None
+        self,
+        *,
+        auto_voices: bool = True,
+        now: float | None = None,
+        voice_scope: str = "project",
     ) -> list[ProjectFlush]:
         """Same shape as ``collect_project_flushes`` but bypasses the
         idle / backpressure gates — every session with pending events
@@ -954,8 +1038,13 @@ class MultiAgentRouter:
                 )
                 is_primary = project_key == primary_key
                 voice_override: str | None = None
-                if auto_voices and not is_primary and speaker.repo_name:
-                    voice_override = _auto_voice_for(speaker.repo_name, self._voice_pool)
+                if auto_voices and not is_primary:
+                    if voice_scope == "window":
+                        voice_override = self._session_voice_locked(speaker.session_id)
+                    elif speaker.repo_name:
+                        voice_override = _auto_voice_for(
+                            speaker.repo_name, self._voice_pool
+                        )
                 out.append(
                     ProjectFlush(
                         project_key=project_key,
