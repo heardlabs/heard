@@ -79,9 +79,7 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 | **Pro** | **All** cloud voices + personas, run for you | - | $15/mo |
 | **Power** | All cloud voices | **Yes** - hands-free voice control (talk *to* your agent) | $30/mo |
 
-**Free is the open-source build** - clone the repo and run it with your own ElevenLabs / Anthropic keys, or fully local with Kokoro. No account, nothing through our cloud. **Pro** and **Power** are the downloadable **app**: the same engine with the cloud voices and narration brain run for you, no keys to manage - sign in and your plan decides what's on. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/pricing)
-
-**Two front doors, one engine.** Want it managed? [Download the app →](#get-the-app) and sign in for Pro or Power (the app is key-free by design, so once a trial lapses it simply goes quiet). Want it free and fully local? [Build from source →](#self-host-open-source) with your own keys or Kokoro - no account, no cloud.
+**Free is the open-source build** - [clone the repo](#self-host-open-source) and run it with your own ElevenLabs / Anthropic keys or fully local Kokoro; no account, nothing through our cloud. **Pro** and **Power** are the [downloadable app](#get-the-app): the same engine with the cloud voices and narration brain run for you - sign in and your plan decides what's on. The app is key-free by design, so a lapsed trial just goes quiet. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/pricing)
 
 Invite a friend and you both win: they start on a 30-day trial, and you get a free week of Pro for each friend who activates.
 
