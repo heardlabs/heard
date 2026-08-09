@@ -75,13 +75,13 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 
 | | Voices | Talk back | Price |
 |---|---|---|---|
-| **Free** — open source; self-host or the app | **Local only** — Kokoro or your own keys, zero cloud | - | Free |
+| **Free** — open source, built from the repo | **Local only** — Kokoro or your own keys, zero cloud | - | Free |
 | **Pro** | **All** cloud voices + personas, run for you | - | $15/mo |
 | **Power** | All cloud voices | **Yes** - hands-free voice control (talk *to* your agent) | $30/mo |
 
-**Free is fully local** - the open-source engine with local Kokoro voice (or your own ElevenLabs / Anthropic keys), nothing through our cloud. Build it from source or just run the free app - same local experience. **Pro** runs all the cloud voices and personas for you, no keys to manage; downloading starts a free trial. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/pricing)
+**Free is the open-source build** - clone the repo and run it with your own ElevenLabs / Anthropic keys, or fully local with Kokoro. No account, nothing through our cloud. **Pro** and **Power** are the downloadable **app**: the same engine with the cloud voices and narration brain run for you, no keys to manage - sign in and your plan decides what's on. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/pricing)
 
-**It's all one app - [download it once →](#get-the-app).** There aren't separate builds per tier. Free is the full local, open-source experience out of the box; **Pro** and **Power** simply unlock when you sign in. Same app, same binary - your plan just decides what lights up.
+**Two front doors, one engine.** Want it managed? [Download the app →](#get-the-app) and sign in for Pro or Power (the app is key-free by design, so once a trial lapses it simply goes quiet). Want it free and fully local? [Build from source →](#self-host-open-source) with your own keys or Kokoro - no account, no cloud.
 
 Invite a friend and you both win: they start on a 30-day trial, and you get a free week of Pro for each friend who activates.
 
