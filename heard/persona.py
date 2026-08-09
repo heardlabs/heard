@@ -396,14 +396,14 @@ def _brain_model() -> str:
     """EXPERIMENT hook — override the narration-brain model on the BYOK
     path only. Empty/unset → the default Haiku checkpoint (`HAIKU_MODEL`).
 
-    Set to `claude-sonnet-5` to A/B the proprietary Power-brain model on
-    your own machine. BYOK bypasses the managed proxy, so this ships
-    nothing and changes nothing for other users — the free/managed path
-    stays on Haiku. Config `brain_model` wins over env `HEARD_BRAIN_MODEL`.
+    Set it to another Anthropic model to A/B it on your own machine. BYOK
+    bypasses the managed proxy, so this ships nothing and changes nothing
+    for other users — the free/managed path stays on Haiku. Config
+    `brain_model` wins over env `HEARD_BRAIN_MODEL`.
 
     Toggle for the packaged .app (env vars don't reach it):
-        heard config set brain_model claude-sonnet-5   # on
-        heard config set brain_model ""                # back to Haiku
+        heard config set brain_model <model-id>   # on
+        heard config set brain_model ""           # back to Haiku
     """
     env = (os.environ.get("HEARD_BRAIN_MODEL") or "").strip()
     try:

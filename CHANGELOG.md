@@ -94,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Latency work in the Heard Power voice loop (proprietary): dictation cleanup
+- Latency work in the voice loop: dictation cleanup
   now runs while Heard is still waiting to confirm you finished speaking,
   rather than after. No change to the open-source narration engine.
 
