@@ -16,15 +16,27 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/heardlabs/heard/releases/latest"><img src="https://img.shields.io/github/v/release/heardlabs/heard?label=release&color=0aa" alt="Latest release"></a>
+  <a href="https://github.com/heardlabs/heard/releases/latest"><img src="https://img.shields.io/github/v/release/heardlabs/heard?label=release&amp;color=0aa" alt="Latest release"></a>
+  <a href="https://github.com/heardlabs/heard/releases"><img src="https://img.shields.io/github/downloads/heardlabs/heard/total?label=downloads&amp;color=0aa" alt="GitHub downloads"></a>
   <a href="https://github.com/heardlabs/heard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
   <a href="https://github.com/heardlabs/heard"><img src="https://img.shields.io/github/stars/heardlabs/heard?style=social" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="https://www.producthunt.com/products/heard-2?embed=true&amp;utm_source=badge-top-post-badge&amp;utm_medium=badge&amp;utm_campaign=badge-heard-3" target="_blank" rel="noopener noreferrer">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1205639&amp;theme=dark&amp;period=daily">
+      <img alt="Heard - Give Claude Code and Codex a voice | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1205639&amp;theme=light&amp;period=daily">
+    </picture>
+  </a>
 </p>
 
 <p align="center">
   <a href="https://heard.dev">heard.dev</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/heardlabs/heard/releases/latest">Releases</a>
+  &nbsp;·&nbsp;
+  <a href="https://discord.gg/gdC36fpeDw">Discord</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/heardlabs/heard/issues">Issues</a>
 </p>
@@ -63,17 +75,20 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 
 | | Voices | Talk back | Price |
 |---|---|---|---|
-| **Free** — open source; self-host or the app | **Local only** — Kokoro or your own keys, zero cloud | - | Free |
+| **Free** — open source, built from the repo | **Local only** — Kokoro or your own keys, zero cloud | - | Free |
 | **Pro** | **All** cloud voices + personas, run for you | - | $15/mo |
 | **Power** | All cloud voices | **Yes** - hands-free voice control (talk *to* your agent) | $30/mo |
 
-**Free is fully local** - the open-source engine with local Kokoro voice (or your own ElevenLabs / Anthropic keys), nothing through our cloud. Build it from source or just run the free app - same local experience. **Pro** runs all the cloud voices and personas for you, no keys to manage; downloading starts a free trial. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/pricing)
+**Free is the open-source build** - [clone the repo](#self-host-open-source) and run it with your own ElevenLabs / Anthropic keys or fully local Kokoro; no account, nothing through our cloud. **Pro** and **Power** are the [downloadable app](https://heard.dev/download): the same engine with the cloud voices and narration brain run for you - sign in and your plan decides what's on. The app is key-free by design, so a lapsed trial just goes quiet. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/#pricing)
+
+Invite a friend and you both win: they start on a 30-day trial, and you get a free week of Pro for each friend who activates.
 
 ## What it does
 
 - **Narrates with judgment, not just transcription.** Heard decides what to say based on context - your recent activity, what tool just ran, whether something is a decision moment or routine progress. Not every tool call gets the same airtime.
 - **Three listening modes you switch between.** **Co-pilot** for screen-on work - short hooks and signposts. **Companion** for eyes-off (driving, cooking, walking) - fuller briefings that name the choice and surface the decision. **Focus** for alert-only use - quiet unless something needs your attention.
 - **Multi-agent aware.** Run 3+ agents in parallel; Heard voices the most salient one and quietly summarises the others. Each gets a distinct voice so you can tell them apart by ear.
+- **Talk back, hands-free *(Power)*.** Not just listening - reply out loud and your agent acts on it. Approve a step, answer a prompt, or redirect it without touching the keyboard.
 - **Four personas, fork-your-own.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator).
 - **Works with any coding CLI.** First-class adapters for Claude Code, Codex CLI, and Codex App; `heard run <command>` wraps anything else.
 
@@ -85,8 +100,6 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 | **friday** | Bright, breezy, three steps ahead. Sprinkles "boss". |
 | **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. |
 | **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. |
-
-[▶ Hear the voices in action on heard.dev →](https://heard.dev/#voices)
 
 Fork your own - drop a Markdown file with frontmatter into `~/Library/Application Support/heard/personas/`.
 
@@ -168,7 +181,7 @@ macOS 13+ · Claude Code + Codex CLI/App first-class · Cursor and Aider planned
 
 ## Status
 
-v1.0.x - cross-event-judgment narration via the Heard brain (one Haiku call per meaningful event sees your recent context, the active agents, and the current event, then decides what to say). Co-pilot / Companion / Focus listening modes, multi-agent salience, automatic ElevenLabs ⇄ Kokoro failover. Used daily by the author. Backward-compatible API surface; deeper knobs may move into preferences over time.
+[![Latest release](https://img.shields.io/github/v/release/heardlabs/heard?label=release&color=0aa)](https://github.com/heardlabs/heard/releases/latest) - cross-event-judgment narration via the Heard brain (one Haiku call per meaningful event sees your recent context, the active agents, and the current event, then decides what to say). Co-pilot / Companion / Focus listening modes, multi-agent salience with a distinct per-window voice each, hands-free voice control on Power, and automatic failover across ElevenLabs / Speechify / local Kokoro. First-class Claude Code, Codex CLI, and Codex App adapters. Used daily by the author. Backward-compatible API surface; deeper knobs may move into preferences over time.
 
 ## License
 
