@@ -521,8 +521,9 @@ def call_with_prompt(
     fallbacks can be added (or this helper can fold into
     `_haiku_rewrite`'s ladder).
 
-    System block is wrapped with `cache_control: {ephemeral}` on both
-    paths (matches what `_byok_haiku_rewrite` and heard-api do today).
+    System block is wrapped with `cache_control: {ephemeral, ttl: 1h}`
+    on the BYOK path (`_byok_haiku_rewrite` matches; the managed proxy
+    sets its own cache_control server-side in heard-api).
     Cache hit/miss tokens are logged via `_log_haiku_cache_usage`
     under the supplied `log_path_label`.
 
@@ -546,7 +547,12 @@ def call_with_prompt(
                         {
                             "type": "text",
                             "text": system_text,
-                            "cache_control": {"type": "ephemeral"},
+                            # 1h TTL, not the 5m default: narration is bursty,
+                            # and gaps >5m rewrite the ~11k block at 1.25x
+                            # input price. 1h writes cost 2x but the TTL
+                            # refreshes on every hit, so break-even is ~1.6
+                            # rewrites/hour — real sessions sit well past it.
+                            "cache_control": {"type": "ephemeral", "ttl": "1h"},
                         }
                     ],
                     messages=[{"role": "user", "content": user_msg}],
@@ -774,7 +780,10 @@ def _byok_haiku_rewrite(
                 {
                     "type": "text",
                     "text": full_system,
-                    "cache_control": {"type": "ephemeral"},
+                    # 1h TTL for the same bursty-traffic economics as the
+                    # harness path (see call_with_prompt). Below the model's
+                    # min cacheable size this is a no-op either way.
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
                 }
             ],
             messages=[{"role": "user", "content": user_msg}],
