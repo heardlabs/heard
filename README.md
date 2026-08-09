@@ -101,8 +101,6 @@ Invite a friend and you both win: they start on a 30-day trial, and you get a fr
 | **jarvis** | Marvel JARVIS-coded butler. Dry wit, "Sir" only on summaries. |
 | **atlas** | Cinematic narrator. Greek tragedy applied to compile cycles. |
 
-[▶ Hear the voices in action on heard.dev →](https://heard.dev/#voices)
-
 Fork your own - drop a Markdown file with frontmatter into `~/Library/Application Support/heard/personas/`.
 
 ## Listening modes
