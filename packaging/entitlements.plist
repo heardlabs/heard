@@ -24,6 +24,6 @@
          cs.allow-unsigned-executable-memory) entitlements are NOT here — the
          public OSS app has no microphone/STT/numba and must stay minimal. The
          PRIVATE Power build (which injects the voice engine) needs them and
-         signs with its own ../heard-power/packaging/entitlements.plist. -->
+         signs with its own entitlements. -->
 </dict>
 </plist>

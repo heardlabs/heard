@@ -80,9 +80,9 @@ DEFAULTS: dict[str, Any] = {
     "voice_mode": "off",
     # EXPERIMENT — override the narration-brain model on the BYOK path only
     # (needs anthropic_api_key set). Empty → default Haiku checkpoint. Set to
-    # "claude-sonnet-5" to A/B the proprietary Power-brain model locally; BYOK
-    # bypasses the managed proxy so nothing ships and the free path stays Haiku.
-    # See persona._brain_model(). Toggle: heard config set brain_model claude-sonnet-5
+    # another Anthropic model to A/B it locally; BYOK bypasses the managed
+    # proxy so nothing ships and the free path stays Haiku.
+    # See persona._brain_model(). Toggle: heard config set brain_model <model-id>
     "brain_model": "",
     "voice_cleanup": True,          # LLM tidy pass on dictated text
     "voice_input_unlocked": False,  # dev/test escape hatch for the Power menu
