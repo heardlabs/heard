@@ -81,6 +81,8 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 
 **Free is fully local** - the open-source engine with local Kokoro voice (or your own ElevenLabs / Anthropic keys), nothing through our cloud. Build it from source or just run the free app - same local experience. **Pro** runs all the cloud voices and personas for you, no keys to manage; downloading starts a free trial. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/pricing)
 
+**It's all one app - [download it once →](#get-the-app).** There aren't separate builds per tier. Free is the full local, open-source experience out of the box; **Pro** and **Power** simply unlock when you sign in. Same app, same binary - your plan just decides what lights up.
+
 Invite a friend and you both win: they start on a 30-day trial, and you get a free week of Pro for each friend who activates.
 
 ## What it does
