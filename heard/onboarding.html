@@ -403,6 +403,11 @@ window.__heard = {
   if(q.get('plan')){ S.plan=q.get('plan'); S.signedIn=q.get('plan')!=='free'; S.email='you@example.com'; }
   if(q.get('upgrade')){ S.plan='power'; S.onboardedPlan='pro'; S.signedIn=true; }
   if(q.get('trial')){ S.trialDaysLeft=14; }
+  if(q.get('race')){ S.leaderboard={clubSize:4,currentRank:2,standings:[
+    {name:'#1 power user',running_seconds:22095,isCurrent:false,rank:1},
+    {name:'You',running_seconds:18000,isCurrent:true,rank:2},
+    {name:'Kelly (Founder)',running_seconds:18000,isCurrent:false,rank:3},
+    {name:'Maya',running_seconds:0,isCurrent:false,rank:4}]}; }
   // ?view=home&connect=codex|claude|both — preview the "installed but not
   // connected" nudge without a backend.
   if(q.get('connect')){ const c=q.get('connect');
@@ -465,6 +470,7 @@ let current = null;
 const HOME_PANES = ['mission','transcript','settings'];
 const _initialPane = new URLSearchParams(location.search).get('pane');
 let navHome = HOME_PANES.includes(_initialPane) ? _initialPane : 'mission';
+let raceListOpen = false, raceInviteOpen = false, raceInviteSent = false;
 let forceHome = HOME_PANES.includes(_initialPane);
 window.__heard.openHome = function(pane){
   forceHome = true;
@@ -620,6 +626,82 @@ const HOME_SAMPLE = {
   ],
 };
 const PILL = {speaking:'SPEAKING',building:'BUILDING',await:'AWAITING YOU',blocked:'BLOCKED',idle:'IDLE'};
+const RACE_PAL = ['#7898C8','#9A82C2','#5CA4AA','#C4B25E','#7D8EA5','#A89B8E'];
+function raceSlime(color, size){
+  return `<svg viewBox="0 0 16 13" style="width:${size}px;height:${Math.round(size*13/16)}px;display:block" aria-hidden="true">
+    <path fill="${color}" d="M5 1h6v1h2v1h1v2h1v5H1V5h1V3h1V2h2z"/>
+    <rect x="2" y="11" width="4" height="1.6" fill="${color}" opacity=".5"/>
+    <rect x="10" y="11" width="4" height="1.6" fill="${color}" opacity=".5"/>
+    <rect x="5" y="5" width="2" height="2.6" fill="#20242b"/>
+    <rect x="9" y="5" width="2" height="2.6" fill="#20242b"/>
+  </svg>`;
+}
+function raceCard(){
+  const LB = S.leaderboard;
+  if(!LB || !Array.isArray(LB.standings) || !LB.standings.length) return '';
+  const mono = "font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase";
+  const sec = s => Number(s.running_seconds)||0;
+  const mi = s => (sec(s)/3600*5.2);
+  const mtxt = s => mi(s).toFixed(1)+' mi';
+  const you = LB.standings.find(s=>s.isCurrent) || LB.standings[0];
+  const yh = sec(you)/3600;
+  const hours = Math.floor(yh)+'h '+String(Math.round((yh%1)*60)).padStart(2,'0')+'m';
+  const visible = LB.standings.slice(0,6);
+  const maxSec = Math.max(1, ...visible.map(sec));
+  const seen=[]; let fp=0;
+  const sprites = visible.map(s=>{
+    // A true running lane: position = miles / leader's miles; exact ties get a
+    // tiny stagger so overlapping sprites both stay visible.
+    let p = 0.05 + 0.86*(sec(s)/maxSec);
+    while(seen.some(q=>Math.abs(q-p)<0.012)) p-=0.028;
+    p=Math.max(0.01,p); seen.push(p);
+    const color = s.isCurrent? RACE_PAL[0] : RACE_PAL[1+(fp++)%(RACE_PAL.length-1)];
+    const chip = s.isCurrent
+      ? `<span style="position:absolute;bottom:34px;left:50%;transform:translateX(-50%);white-space:nowrap;background:var(--ink);color:#fff;${mono};font-size:8.5px;font-weight:700;padding:4px 7px;border-radius:5px">You · ${mtxt(s)}</span>`
+      : '';
+    return `<span title="${s.name} · ${mtxt(s)}" style="position:absolute;left:${(p*100).toFixed(1)}%;bottom:2px;width:36px;margin-left:-18px;z-index:${s.isCurrent?3:2}">${chip}${raceSlime(color,36)}</span>`;
+  }).join('');
+  const rows = LB.standings.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 2px;border-top:1px solid var(--line)">
+      <span style="${mono};font-size:9px;font-weight:700;color:var(--terra)">${String(s.rank).padStart(2,'0')}</span>
+      <span style="font-size:12.5px;font-weight:600">${s.isCurrent?s.name+' · you':s.name}</span>
+      <span style="margin-left:auto;font-size:12px;color:var(--ink-2)">${mtxt(s)}</span>
+    </div>`).join('');
+  return `<section style="margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div style="flex:1;min-width:0">
+        <div style="${mono};font-size:10px;font-weight:500;color:var(--ink-3)">Sprite shift</div>
+        <div style="font-family:var(--serif);font-size:20px;margin-top:2px">Blue’s monthly run</div>
+        <div style="font-size:12px;color:var(--ink-3);margin-top:2px">Compare running hours with friends. Who worked hardest?</div>
+      </div>
+      <button style="${mono};font-size:8.5px;font-weight:700;color:var(--ink-2);background:none;border:1px solid var(--line);border-radius:6px;padding:0 10px;height:30px;cursor:pointer" onclick="raceListOpen=!raceListOpen;raceInviteOpen=false;renderHome()">Rank ${LB.currentRank} / ${LB.clubSize}</button>
+      <button style="${mono};font-size:8.5px;font-weight:700;color:#fff;background:var(--ink);border:none;border-radius:6px;padding:0 10px;height:30px;cursor:pointer" onclick="raceInviteOpen=!raceInviteOpen;raceListOpen=false;raceInviteSent=false;renderHome()">+ Invite friends</button>
+    </div>
+    <div style="display:flex;gap:22px;align-items:center;margin-top:15px">
+      <div><div style="font-size:23px;font-weight:700;letter-spacing:-.5px">${hours}</div><div style="font-size:9.5px;color:var(--ink-3)">estimated running</div></div>
+      <div style="width:1px;height:36px;background:var(--line)"></div>
+      <div><div style="font-size:23px;font-weight:700;letter-spacing:-.5px">${mtxt(you)}</div><div style="font-size:9.5px;color:var(--ink-3)">miles covered</div></div>
+    </div>
+    <div style="position:relative;height:74px;margin-top:8px">
+      <div style="position:absolute;left:0;right:14px;bottom:14px;border-top:2px dashed var(--line)"></div>
+      <svg viewBox="0 0 8 24" style="position:absolute;right:0;bottom:8px;width:9px;height:27px"><path fill="var(--ink)" d="M1 0h1v24H1zM2 0h3v3H2zM5 3h3v3H5zM2 6h3v3H2zM5 9h3v3H5z"/></svg>
+      ${sprites}
+    </div>
+    ${raceListOpen?`<div style="margin-top:10px">${rows}</div>`:''}
+    ${raceInviteOpen?`<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+      ${raceInviteSent
+        ? `<div style="font-size:12.5px;font-weight:600">Challenge sent 💪 <span style="font-weight:400;color:var(--ink-3)">They’ll show up on your board once they join.</span></div>`
+        : `<div style="display:flex;gap:8px"><input id="race-invite-email" type="email" placeholder="friend@email.com" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff" onkeydown="if(event.key==='Enter')sendRaceInvite()"><button class="brand-button" onclick="sendRaceInvite()">Send</button></div>
+           <div style="font-size:10px;color:var(--ink-3);margin-top:7px">We’ll email them your invite link and dare them to out-work you. Only rank, miles, and running hours are shared.</div>`}
+    </div>`:''}
+  </section>`;
+}
+function sendRaceInvite(){
+  const el=document.getElementById('race-invite-email');
+  const v=(el&&el.value||'').trim();
+  if(!v||v.indexOf('@')<0||v.indexOf('.')<0) return;
+  bridge('invite_friend',{email:v});
+  raceInviteSent=true; renderHome();
+}
 function renderHome(){
   // In the app S.home is REAL (daemon + history). Only use the design sample
   // when it's absent (browser preview) — never show fake projects to the user.
@@ -670,6 +752,11 @@ function renderHome(){
             ${p.acts?`<div class="pacts"><a class="p">Approve</a><a class="g">Review</a></div>`:(p.progress!=null?`<div class="pbar"><i style="width:${p.progress}%"></i></div>`:'')}
           </div>`).join('')}</div>`
       : (recap?'':empty('No agents working right now', 'Mission Control lights up when your agents are running.'))}`;
+
+  // Sprite Shift — the monthly race, REAL data only (S.leaderboard is fetched
+  // natively from /v1/leaderboard; while absent the card simply isn't shown).
+  // Same board + proportional lane as the Power app's native panel.
+  document.getElementById('v-mission').insertAdjacentHTML('beforeend', raceCard());
 
   // Transcript
   document.getElementById('v-transcript').innerHTML = `<div class="h-pad"><div class="h-h">Transcript</div>

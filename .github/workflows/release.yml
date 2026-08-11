@@ -25,6 +25,17 @@ jobs:
           # Install Heard + its runtime deps so py2app can collect them.
           pip install -e ".[dev]"
 
+      - name: Version gate (tag must match the code)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          CODE=$(python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('heard/__init__.py').read()).group(1))")
+          PYPROJ=$(python -c "import re; print(re.search(r'^version = \"([^\"]+)\"', open('pyproject.toml').read(), re.M).group(1))")
+          if [ "$TAG" != "$CODE" ] || [ "$TAG" != "$PYPROJ" ]; then
+            echo "::error::tag v$TAG vs __init__.py $CODE vs pyproject $PYPROJ — all three must match (releases 1.1.45-47 shipped self-identifying as 1.1.24)"
+            exit 1
+          fi
+
       - name: Test gate (don't ship a broken build)
         run: |
           ruff check heard/ tests/

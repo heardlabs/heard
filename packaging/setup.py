@@ -24,7 +24,15 @@ sys.path.insert(0, ROOT)
 from setuptools import setup  # noqa: E402
 
 APP_NAME = "Heard"
-APP_VERSION = "1.1.24"
+# Version comes from heard/__init__.py — the ONE source of truth. The bundle's
+# CFBundleShortVersionString is stamped from here, and the release workflow
+# refuses to publish when the pushed tag disagrees, so tag / bundle / code can
+# never drift again (releases v1.1.45-47 all shipped self-identifying as
+# 1.1.24, which would have broken the min_app_version forced-update handshake).
+import re as _re
+
+with open(os.path.join(os.path.dirname(HERE), "heard", "__init__.py")) as _fh:
+    APP_VERSION = _re.search(r'__version__ = "([^"]+)"', _fh.read()).group(1)
 APP_BUNDLE_ID = "dev.heard.menubar"
 
 APP = [os.path.join(HERE, "app_entry.py")]

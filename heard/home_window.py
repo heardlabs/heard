@@ -95,6 +95,98 @@ def show_home(start: str | None = None) -> None:
         pass
 
 
+# Sprite Shift board cache — fetched in a background thread when the window
+# loads (and after an invite), never on the state-push path, so _current_state
+# stays network-free. None until the first successful fetch; the page hides
+# the race card while it's None (no fake data, ever).
+_LEADERBOARD: dict[str, Any] | None = None
+
+
+def _cloud_auth() -> tuple[str, str] | None:
+    cfg = config.load()
+    token = (cfg.get("heard_token") or "").strip()
+    if not token:
+        return None
+    base = (cfg.get("heard_api_base") or "https://api.heard.dev").rstrip("/")
+    return base, token
+
+
+def _fetch_leaderboard(on_done) -> None:
+    """GET /v1/leaderboard on a worker thread → cache → on_done() on the main
+    thread. Best-effort: any failure leaves the cache as-is."""
+    auth = _cloud_auth()
+    if auth is None:
+        return
+
+    def work():
+        global _LEADERBOARD
+        import ssl
+        import urllib.request
+
+        base, token = auth
+        try:
+            try:
+                import certifi  # type: ignore
+
+                ctx = ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                ctx = ssl.create_default_context()
+            req = urllib.request.Request(
+                f"{base}/v1/leaderboard",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(req, timeout=8.0, context=ctx) as resp:
+                data = json.loads(resp.read().decode("utf-8") or "{}")
+            if isinstance(data, dict) and isinstance(data.get("standings"), list):
+                _LEADERBOARD = data
+                from PyObjCTools import AppHelper
+
+                AppHelper.callAfter(on_done)
+        except Exception:
+            pass
+
+    import threading
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def _send_invite(email: str, on_done) -> None:
+    """POST /v1/referrals/invite on a worker thread, then refresh the board."""
+    auth = _cloud_auth()
+    if auth is None:
+        return
+
+    def work():
+        import ssl
+        import urllib.request
+
+        base, token = auth
+        try:
+            try:
+                import certifi  # type: ignore
+
+                ctx = ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                ctx = ssl.create_default_context()
+            req = urllib.request.Request(
+                f"{base}/v1/referrals/invite",
+                data=json.dumps({"email": email}).encode(),
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            urllib.request.urlopen(req, timeout=10.0, context=ctx).close()
+        except Exception:
+            pass
+        _fetch_leaderboard(on_done)
+
+    import threading
+
+    threading.Thread(target=work, daemon=True).start()
+
+
 def _current_state() -> dict[str, Any]:
     """Snapshot the real app state the page renders from. Pure config reads +
     cheap filesystem checks — no network. Never includes anything analytics
@@ -136,6 +228,9 @@ def _current_state() -> dict[str, Any]:
         },
         "micGranted": _mic_granted(),
         "axGranted": _ax_granted(),
+        # Sprite Shift race — REAL standings from /v1/leaderboard (async cache;
+        # None hides the card). Same board the Power app renders.
+        "leaderboard": _LEADERBOARD,
         "voice": cfg.get("voice") or None,
         "speed": float(cfg.get("speed") or 1.0),
         "verbosity": cfg.get("verbosity") or "normal",
@@ -661,6 +756,12 @@ def _build_controller_class():
         # WKNavigationDelegate — push state once the page is ready
         def webView_didFinishNavigation_(self, web, nav):
             self._push_state()
+            _fetch_leaderboard(self._push_state)
+
+        def _act_invite_friend(self, body):
+            email = str(body.get("email") or "").strip()
+            if "@" in email and "." in email:
+                _send_invite(email, self._push_state)
 
         # WKScriptMessageHandler — web → native
         def userContentController_didReceiveScriptMessage_(self, ucc, message):
