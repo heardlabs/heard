@@ -4151,6 +4151,15 @@ class Daemon:
             }
             if ax is not None:
                 headers["X-Heard-Accessibility"] = ax
+            # Announce our build on the poll. The server keys the relaunch
+            # fresh-trial grant on this header's presence (only post-relaunch
+            # builds send it), and it doubles as fleet-version telemetry.
+            try:
+                from heard import __version__ as _hv  # noqa: PLC0415
+
+                headers["X-Heard-Version"] = str(_hv)
+            except Exception:
+                pass
             req = _urlreq.Request(
                 f"{base_url}/v1/me",
                 method="GET",
