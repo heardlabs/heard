@@ -1,8 +1,13 @@
 name: release
 
+# MANUAL-ONLY since 2026-08-11. This workflow builds the OSS menu-bar app —
+# which is NO LONGER what users download. Releases v1.1.45-47 were meant to
+# ship HeardFace (the v3 native app), but this workflow fired on every tag
+# push and published its own build over them, so the relaunch kept serving
+# the old app. User releases are now cut from the private heard-v3 pipeline
+# (build-app.sh --notarize + gh release upload). Run this by hand only if
+# you explicitly want an OSS-app build.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
