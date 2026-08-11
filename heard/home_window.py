@@ -1032,6 +1032,7 @@ def _build_controller_class():
 def _mark_onboarded() -> None:
     try:
         config.set_value("onboarded", True)
+        config.set_value("onboarded_rev", config.ONBOARDING_REV)
         config.set_value(
             "onboarded_plan", (config.load().get("heard_plan") or "").strip() or "free"
         )

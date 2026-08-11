@@ -69,6 +69,11 @@ def _resolve_onboarded(cfg: dict) -> tuple[bool, bool]:
     drifted value for healing. A genuine first-timer has none of these
     and still onboards.
     """
+    # A bumped ONBOARDING_REV re-onboards EVERYONE once — deliberate, for
+    # releases that change the product's shape (the self-heal below still
+    # guards against accidental drift within a revision).
+    if int(cfg.get("onboarded_rev") or 0) < config.ONBOARDING_REV:
+        return False, False
     if cfg.get("onboarded"):
         return True, False
     already_set_up = bool(
@@ -450,6 +455,7 @@ class HeardApp(rumps.App):
                 # launch (and so the daemon's narration gate sees it too).
                 try:
                     config.set_value("onboarded", True)
+                    config.set_value("onboarded_rev", config.ONBOARDING_REV)
                 except Exception:
                     pass
             if not onboarded:
@@ -561,6 +567,22 @@ class HeardApp(rumps.App):
             if not self._update_in_flight:
                 self.version_item.title = f"↑ Update to {pending.get('tag', '')} →".rstrip()
                 self.version_item.set_callback(self.on_update_clicked)
+                # ZERO-CLICK UPDATES (2026-08-11): install automatically once
+                # the agent is idle — no active sessions, so no narration is
+                # cut mid-sentence by the relaunch. One attempt per tag
+                # (persisted) so a broken release can't crash-loop us; the
+                # manual menu item above remains as the retry path.
+                tag = (pending.get("tag") or "").strip()
+                idle = not ((status or {}).get("active_sessions") or [])
+                if tag and idle:
+                    try:
+                        cfg_now = config.load()
+                        if (cfg_now.get("auto_update", True)
+                                and cfg_now.get("auto_update_attempted") != tag):
+                            config.set_value("auto_update_attempted", tag)
+                            self.on_update_clicked(None)
+                    except Exception:
+                        pass  # never let auto-update break the menu refresh
         else:
             self._update_url = None
             self._pending_update = None

@@ -235,9 +235,21 @@ DEFAULTS: dict[str, Any] = {
     # Set to True after the user finishes the welcome flow (or skips it),
     # so we never re-prompt them.
     "onboarded": False,
+    # Onboarding REVISION the user last completed. Bumping ONBOARDING_REV below
+    # re-runs onboarding ONCE for everyone — even long-onboarded users — used
+    # for ground-up releases where the old mental model no longer applies
+    # (K., 2026-08-11 relaunch). Distinct from the drift self-heal in
+    # ui._resolve_onboarded, which still protects against ACCIDENTAL re-runs.
+    "onboarded_rev": 0,
     # Plan the user last completed onboarding for — lets the persistent Heard
     # window detect a Pro→Power upgrade and show only the new Power beats.
     "onboarded_plan": "",
+    # Zero-click updates (2026-08-11): when the periodic check finds a newer
+    # release and no agent sessions are active, install it automatically.
+    "auto_update": True,
+    # Last tag auto-install was ATTEMPTED for — one shot per release, so a
+    # broken download can't crash-loop the app.
+    "auto_update_attempted": "",
     # Set once Heard Mobile is paired (Power). Drives the onboarding checklist.
     "phone_paired": False,
     # Indefinite "Pause Heard": when true, the daemon drops every
@@ -321,6 +333,10 @@ DEFAULTS: dict[str, Any] = {
     "harness_think_say": True,
 }
 
+
+# Current onboarding revision — bump to force a one-time re-onboard for all
+# users on their first launch of a build carrying the new value.
+ONBOARDING_REV = 2
 
 def ensure_dirs() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
