@@ -352,8 +352,11 @@ jobs:
           zip -ry "Heard-${GITHUB_REF_NAME:-dev}.zip" Heard.app
           cp "Heard-${GITHUB_REF_NAME:-dev}.zip" Heard.zip
 
-      - name: Upload artifact (for workflow_dispatch / non-tag runs)
-        if: "!startsWith(github.ref, 'refs/tags/')"
+      # This workflow can ONLY produce an internal artifact. It must never
+      # publish to GitHub Releases — that's how the old app kept shipping to
+      # users over the intended v3 releases (v1.1.45-47). User releases are
+      # cut exclusively from the private heard-v3 pipeline.
+      - name: Upload artifact (internal only — never a public release)
         uses: actions/upload-artifact@v4
         with:
           name: heard-app
@@ -362,76 +365,3 @@ jobs:
             packaging/dist/Heard.zip
             packaging/dist/Heard-*.dmg
             packaging/dist/Heard.dmg
-
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            packaging/dist/Heard-*.zip
-            packaging/dist/Heard.zip
-            packaging/dist/Heard-*.dmg
-            packaging/dist/Heard.dmg
-          body: |
-            ### Install with one prompt (lazy mode)
-
-            Paste this into Claude Code, Codex, or your agent of choice.
-
-            **Fresh install** (no Heard yet on this machine):
-
-            > Install Heard so you narrate your responses to me. Run: `curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — a window will pop up and I'll fill it in.
-
-            **Upgrade from an older version** (Heard is currently running). The fresh-install command above races the still-shutting-down app and can leave a partial bundle; this version kills the running app, waits for it to release its file handles, then swaps in the new bundle cleanly:
-
-            > Upgrade Heard so I keep narrating your responses. Run: `killall Heard 2>/dev/null; while pgrep -x Heard >/dev/null; do sleep 0.2; done; rm -f ~/Library/Application\ Support/heard/daemon.sock ~/Library/Application\ Support/heard/daemon.pid; rm -rf /Applications/Heard.app && curl -L https://github.com/heardlabs/heard/releases/latest/download/Heard.zip -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app` — Heard will quit and relaunch as the new version.
-
-            > _Note: starting in v0.8.2, the menu-bar "↑ Update to vX.Y.Z →" item does this swap for you in one click — no terminal needed. The upgrade prompt above is here for cases where the in-app updater isn't reachable (older versions, daemon stopped, etc.)._
-
-            ---
-
-            ### Install manually (menu bar app)
-
-            **Recommended — `Heard.dmg`:**
-
-            1. Download `Heard-${{ github.ref_name }}.dmg` below (or the unversioned `Heard.dmg`)
-            2. Double-click the DMG — a window opens with `Heard.app` on the left and an `Applications` shortcut on the right
-            3. Drag `Heard.app` onto `Applications`. Eject the disk image when done.
-            4. Open Heard from `/Applications` (or Launchpad / Spotlight)
-            5. The onboarding window walks you through four screens: API key (optional, for in-character persona rewrites), voice, the pause/continue hotkeys, and which agents to wire up
-            6. Done — Heard is in the menu bar, hooks installed, ready to narrate
-
-            **Alternative — `Heard.zip`** (use this only if you specifically need an unsigned-style flow; the DMG is more reliable):
-
-            Download the zip, drag `Heard.app` into `/Applications`, then double-click. **Important:** unzipping inside Downloads and double-clicking from there triggers macOS App Translocation — Heard runs from a randomized temp folder and its hooks break. Always move the `.app` to `/Applications` *before* launching it.
-
-            ### Voice — two options
-
-            - **Free local (Kokoro)** — skip the ElevenLabs key field in onboarding. Downloads a ~337 MB voice model on first synth call. Best on Macs with 12 GB+ RAM.
-            - **Premium (ElevenLabs)** — paste your `sk_…` key on screen 2 of onboarding. Tiny daemon (~80 MB), pay-per-character (typically pennies a day), best voice quality.
-
-            ### Hotkeys
-
-            Two combo hotkeys, both rebindable in Settings → Shortcuts:
-            - **⇧⌥.** (`Shift+Option+.`) — Pause narration
-            - **⇧⌥,** (`Shift+Option+,`) — Continue narration. If anything was buffered while paused, the persona asks whether to catch you up or start fresh.
-
-            macOS will ask once for Accessibility access — click Allow.
-
-            See the [README](https://github.com/heardlabs/heard#readme) for full docs and troubleshooting.
-
-      - name: Notify heard.dev of the published release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.WEBSITE_RELEASE_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          VERSION="$GITHUB_REF_NAME"
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Unexpected release tag: $VERSION"
-            exit 1
-          fi
-
-          jq -n --arg version "$VERSION" \
-            '{event_type: "heard-release", client_payload: {version: $version}}' \
-            | gh api --method POST repos/heardlabs/heard-website/dispatches --input -
