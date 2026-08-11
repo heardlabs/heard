@@ -25,6 +25,37 @@ from heard import config
 
 _HTML = Path(__file__).with_name("onboarding.html")
 
+# ---- Notch (heard-face) settings — written here, read live by the SwiftUI notch ----
+_NOTCH_CFG = Path("~/.heard/notch-config.json").expanduser()
+_NOTCH_DEFAULTS = {"visible": True, "completion_pop": True,
+                   "hover_expand": True, "alive_minutes": 10}
+
+
+def _read_notch_config() -> dict[str, Any]:
+    cfg = dict(_NOTCH_DEFAULTS)
+    try:
+        raw = json.loads(_NOTCH_CFG.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            for key, default in _NOTCH_DEFAULTS.items():
+                value = raw.get(key)
+                if isinstance(value, type(default)) and not (
+                    isinstance(default, int) and not isinstance(default, bool)
+                    and isinstance(value, bool)
+                ):
+                    cfg[key] = value
+    except Exception:
+        pass
+    return cfg
+
+
+def _write_notch_config(patch: dict[str, Any]) -> None:
+    cfg = _read_notch_config()
+    for k in _NOTCH_DEFAULTS:
+        if k in patch:
+            cfg[k] = patch[k]
+    _NOTCH_CFG.parent.mkdir(parents=True, exist_ok=True)
+    _NOTCH_CFG.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
 # Power subscription checkout (public Stripe payment links). Opened from the
 # in-app "Keep Power" upgrade; the account is bound via prefilled email +
 # client_reference_id. Paying flips the plan to 'power' through the webhook.
@@ -33,6 +64,18 @@ _POWER_ANNUAL_BUY_URL = "https://buy.stripe.com/00w6oAeFJ2Sad2S8PS77O08"  # $288
 
 _controller = None       # window-controller singleton (reused on re-open)
 _HeardHomeClass = None    # ObjC class, built lazily on first use
+_HOME_PANES = {"mission", "transcript", "settings"}
+
+
+def _start_js(start: str | None) -> str:
+    """Route a requested starting surface after the WebView finishes loading."""
+    if not start:
+        return ""
+    method = "openHome" if start in _HOME_PANES else "goto"
+    return (
+        f"window.__heard&&window.__heard.{method}&&"
+        f"window.__heard.{method}({json.dumps(start)});"
+    )
 
 
 def show_home(start: str | None = None) -> None:
@@ -80,6 +123,7 @@ def _current_state() -> dict[str, Any]:
         "agentConnected": _agent_connected(),
         "claudeConnected": _claude_connected(),
         "codexConnected": _codex_connected(),
+        "notch": _read_notch_config(),          # heard-face notch settings (Notch pane)
         # A supported agent is present on this machine (its config dir exists)
         # but Heard's hook isn't installed → we can gently offer to connect it.
         "claudeDetected": _claude_present(),
@@ -516,10 +560,9 @@ def _build_controller_class():
             self._pending_start = start
             if self._window is None:
                 self._make_window()
-                # Fresh window: didFinishNavigation fires _push_state (which
-                # consumes _pending_start → goto). Push now too in case the page
-                # was already cached-loaded.
-                self._push_state()
+                # Fresh loads are asynchronous. Let didFinishNavigation push
+                # state and consume _pending_start once window.__heard exists;
+                # pushing here loses the requested pane before the page is ready.
             else:
                 # Re-open: reload so fresh content shows. Do NOT _push_state here
                 # — it would run before the reload finishes and consume
@@ -609,10 +652,7 @@ def _build_controller_class():
                 return
             js = f"window.__heard && window.__heard.setState({json.dumps(_current_state())});"
             if self._pending_start:
-                js += (
-                    "window.__heard&&window.__heard.goto&&window.__heard.goto("
-                    f"{json.dumps(self._pending_start)});"
-                )
+                js += _start_js(self._pending_start)
                 # One-shot: consume it, or every later push (after any bridge
                 # click) would snap the user back to this start screen.
                 self._pending_start = None
@@ -781,6 +821,19 @@ def _build_controller_class():
                     _reload_daemon()
                 except Exception as e:
                     _log_bridge_error("set_mode", e)
+
+        def _act_set_notch(self, body):
+            # Persist heard-face notch settings; the SwiftUI notch re-reads the file live.
+            patch = {}
+            for k in ("visible", "completion_pop", "hover_expand"):
+                if k in body:
+                    patch[k] = bool(body[k])
+            if isinstance(body.get("alive_minutes"), (int, float)):
+                patch["alive_minutes"] = int(body["alive_minutes"])
+            try:
+                _write_notch_config(patch)
+            except Exception as e:
+                _log_bridge_error("set_notch", e)
 
         def _act_set_speed(self, body):
             try:

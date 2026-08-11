@@ -325,12 +325,10 @@ class HeardApp(rumps.App):
         )
         self._delete_voice_mounted = False
 
-        # Settings… opens the native tabbed window — Account, Voice,
-        # Keys, Shortcuts, Advanced. This is the primary surface now;
-        # the rumps submenus below stay as quick toggles for users who
-        # don't want to open a window.
+        # Settings… opens the redesigned Settings board directly. The
+        # first-launch action still opens the onboarding flow.
         self.settings_item = rumps.MenuItem(
-            "Settings…", callback=self.on_open_home, key=","
+            "Settings…", callback=self.on_open_settings, key=","
         )
 
         # "Report a problem…" — the ONLY user-facing feedback surface
@@ -1126,11 +1124,10 @@ class HeardApp(rumps.App):
 
     def on_open_settings(self, _sender) -> None:
         """Open the Settings panel from the menu bar. Same window the
-        first-launch flow uses; just bypasses the welcome banner once
-        ``onboarded`` is true."""
+        first-launch flow uses, but explicitly select its Settings pane."""
         try:
             from heard import home_window
-            home_window.show_home()
+            home_window.show_home("settings")
         except Exception as e:
             print(f"home window unavailable: {e}", file=sys.stderr)
 
@@ -1138,7 +1135,7 @@ class HeardApp(rumps.App):
         # API keys live in the Settings → Keys tab now.
         try:
             from heard import home_window
-            home_window.show_home()
+            home_window.show_home("settings")
         except Exception as e:
             print(f"home window unavailable: {e}", file=sys.stderr)
 
@@ -1148,7 +1145,7 @@ class HeardApp(rumps.App):
         returned install code)."""
         try:
             from heard import home_window
-            home_window.show_home()
+            home_window.show_home("settings")
         except Exception as e:
             print(f"home window unavailable: {e}", file=sys.stderr)
 

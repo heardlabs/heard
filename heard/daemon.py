@@ -1810,14 +1810,17 @@ class Daemon:
             self.tts = self._make_tts()
             _log("managed_cap_reset", new_backend=type(self.tts).__name__)
         # No voice backend configured (not signed in, no BYOK key, local
-        # model not downloaded). Don't synth — nudge the user once and
-        # bail. notify() dedups per kind (60s) so this can't spam.
+        # model not downloaded). Don't synth — nudge the user ONCE and bail.
+        # The menu bar carries the persistent "no voice" surface, so this is a
+        # one-shot (re-armed by clear_once once a real backend returns) instead
+        # of a popup on every turn.
         if isinstance(self.tts, NullTTS):
             notify.notify(
                 "Heard — add a voice to hear narration",
                 "Sign in to Heard for cloud voices, paste your ElevenLabs key "
                 "in Settings → Keys, or download the local voice in Options.",
                 kind="no_voice_configured",
+                once=True,
             )
             _log("synth_skipped", reason="no_voice_configured")
             return
@@ -1842,9 +1845,13 @@ class Daemon:
                     "Sign in to Heard for cloud voices, paste your ElevenLabs "
                     "key in Settings → Keys, or download the local voice in Options.",
                     kind="no_voice_configured",
+                    once=True,
                 )
                 _log("synth_skipped", reason="no_voice_configured_mid_utterance")
                 return
+            # A real backend is available → re-arm the one-shot nudge so the
+            # next signed-out episode gets a single fresh reminder.
+            notify.clear_once("no_voice_configured")
             fd, path_str = tempfile.mkstemp(
                 suffix=getattr(self.tts, "AUDIO_EXT", ".mp3"), prefix="heard-"
             )

@@ -146,6 +146,13 @@ def _apply_token(token: str, plan: str, email: str, trial_expires_at: int) -> No
     config.set_value("heard_token", token)
     config.set_value("heard_plan", plan or "trial")
     _refresh_byok_enabled(token)
+    # Fresh sign-in → re-arm the one-shot no-voice nudge for any future
+    # signed-out episode.
+    try:
+        from heard import notify as _notify
+        _notify.clear_once("no_voice_configured")
+    except Exception:
+        pass
     if email:
         config.set_value("heard_email", email)
         # Use the email's SHA-256 as the analytics user_id when we don't

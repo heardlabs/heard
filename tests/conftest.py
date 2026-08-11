@@ -28,6 +28,21 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _heard_once_store_floor(tmp_path_factory):
+    """Isolate notify's persistent one-shot store (~/.heard/notify-once.json) for the whole
+    run. It's a module-level ~/.heard constant, not config.DATA_DIR-derived, so the per-test
+    config isolation misses it. Set the ENV override (survives a heard.* module re-import)
+    AND the module attr, so a NullTTS 'no voice' nudge in a test never writes the real file."""
+    import os as _os
+
+    d = tmp_path_factory.mktemp("heard-once")
+    _os.environ["HEARD_NOTIFY_ONCE_PATH"] = str(d / "notify-once.json")
+    from heard import notify as _notify
+    _notify._ONCE_PATH = str(d / "notify-once.json")
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _heard_config_dirs_isolated(tmp_path, monkeypatch):
     """Point every test at a fresh, throwaway config + data dir."""

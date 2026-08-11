@@ -17,13 +17,15 @@
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <style>
   :root{
-    --paper:#efece7; --card:#faf8f5; --ink:#0b0b0c; --ink-2:#6f6f6f; --ink-3:#a49f98;
-    --line:#e4e0d9; --terra:#b25b41; --peri:#8c93d6; --peri-hi:#6f77c4; --ok:#4c9a6a;
-    --serif:'Instrument Serif',Georgia,serif; --sans:'Inter',-apple-system,system-ui,sans-serif;
-    --mono:'JetBrains Mono',ui-monospace,monospace;
+    --paper:#f3f0e9; --card:#fff; --ink:#171614; --ink-2:#625d57; --ink-3:#7d7770;
+    --line:#e7e2d9; --terra:#99664b; --peri:#566fb4; --peri-hi:#455a93; --ok:#4f8b43;
+    --sand:#f2e4d3; --blue:#dceafb; --green:#d9edcf; --red:#f3dadb; --teal:#d2f0e9;
+    --serif:'Instrument Serif',Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif;
+    --mono:'SFMono-Regular',ui-monospace,Menlo,monospace;
     --orb:radial-gradient(circle at 34% 28%,oklch(86% .1 45),oklch(73% .12 36) 42%,oklch(70% .1 266) 76%,oklch(58% .09 282));
   }
   @keyframes wf{0%,100%{transform:scaleY(.28)}50%{transform:scaleY(1)}}
@@ -125,32 +127,40 @@
   .qr{width:154px;height:154px;border-radius:16px;background:#fff;border:1px solid var(--line);margin-top:24px;display:grid;place-items:center;font:500 11px var(--mono);color:var(--ink-3);box-shadow:0 10px 30px -16px rgba(0,0,0,.25);}
 
   /* ===================== HOME (Mission Control) ===================== */
-  #home{position:relative;z-index:1;height:100vh;display:none;flex-direction:column;background:#fff;}
+  #home{position:relative;z-index:1;height:100vh;display:none;flex-direction:column;background:#faf9f6;}
   .h-title{display:none;}
   .h-body{display:flex;flex:1;min-height:0;}
-  .h-side{width:214px;flex:0 0 auto;border-right:1px solid #efefef;padding:6px 16px 18px;display:flex;flex-direction:column;background:#fcfcfc;}
-  .h-brand{display:flex;align-items:center;gap:9px;padding:2px 6px 16px;}
-  .h-brand .o{width:24px;height:24px;border-radius:50%;background:var(--orb);}
-  .h-brand span{font:600 15px var(--sans);color:var(--ink);}
+  .h-side{width:214px;flex:0 0 auto;border-right:1px solid var(--line);padding:8px 16px 18px;display:flex;flex-direction:column;background:#f3f0e9;}
+  .h-brand{display:flex;align-items:center;gap:10px;padding:2px 7px 18px;}
+  .h-brand svg{width:23px;height:23px;color:var(--ink);shape-rendering:crispEdges;}
+  .h-brand span{font:700 17px var(--sans);letter-spacing:-.045em;color:var(--ink);}
   .h-nav{display:flex;flex-direction:column;gap:3px;}
-  .h-nav a{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:9px;cursor:pointer;font:400 12.5px var(--sans);color:var(--ink-2);}
-  .h-nav a .d{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.5;}
-  .h-nav a.on{background:var(--ink);color:#fff;font-weight:500;}
-  .h-nav a.on .d{opacity:.9;}
-  .h-today{margin-top:auto;padding:12px;border:1px solid #eee;border-radius:12px;background:#fff;}
+  .h-nav a{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid transparent;border-radius:8px;cursor:pointer;font:500 12px var(--sans);color:var(--ink-2);transition:all .7s cubic-bezier(.32,.72,0,1);}
+  .h-nav a:hover{color:var(--ink);background:#faf9f6;border-color:var(--line);}
+  .h-nav a .d{width:6px;height:6px;border-radius:1px;background:currentColor;opacity:.45;}
+  .h-nav a.on{background:var(--ink);color:#fff;font-weight:600;border-color:var(--ink);box-shadow:0 3px 0 #47433f;}
+  .h-nav a.on .d{opacity:1;transform:rotate(45deg);}
+  .h-today{margin-top:auto;padding:13px;border:1px solid var(--line);border-radius:8px;background:#faf9f6;box-shadow:0 3px 0 #d4cec4;}
   .h-today .k{font:500 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#bdbdbd;margin-bottom:6px;}
   .h-today .big{font-family:var(--serif);font-size:27px;line-height:1;color:var(--ink);}
   .h-today .sub{font:400 11px var(--sans);color:#8a8a8a;margin-top:3px;}
-  .h-main{flex:1;min-width:0;background:#fafafa;overflow-y:auto;}
+  .h-main{flex:1;min-width:0;background:#faf9f6;overflow-y:auto;}
   .h-view{display:none;} .h-view.on{display:block;}
-  /* now-narrating banner */
-  .now{margin:18px;padding:17px 20px;border-radius:14px;display:flex;align-items:center;gap:16px;
-    background:linear-gradient(105deg,rgba(233,140,116,.14),rgba(140,147,214,.14) 70%);border:1px solid rgba(140,147,214,.16);}
-  .now .o{width:42px;height:42px;border-radius:50%;flex:0 0 auto;background:var(--orb);}
-  .now .k{font:500 9.5px var(--mono);letter-spacing:.13em;text-transform:uppercase;color:#9a8fa0;margin-bottom:4px;}
-  .now .q{font-family:var(--serif);font-style:italic;font-size:20px;line-height:1.3;color:var(--ink);}
-  .now .wv{display:flex;align-items:flex-end;gap:3px;height:30px;flex:0 0 auto;}
-  .now .wv i{width:3px;border-radius:3px;background:linear-gradient(180deg,#cf7d64,#8c93d6);}
+  /* latest recap — pixel board language shared with Settings */
+  .now{margin:18px;padding:16px 18px;border:1px solid var(--line);border-radius:10px;display:flex;align-items:center;gap:14px;
+    background:#fff;box-shadow:0 4px 0 #e7e2d9;}
+  .now .o{width:40px;height:40px;border:1px solid var(--ink);border-radius:6px;flex:0 0 auto;display:grid;place-items:center;
+    background:var(--ink);box-shadow:0 3px 0 #47433f;}
+  .now .o svg{width:22px;height:22px;color:#fff;shape-rendering:crispEdges;}
+  .now .k{display:flex;align-items:center;gap:7px;font:650 10px/16px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:2px;}
+  .now .k::before{content:"";width:7px;height:7px;border-radius:1px;background:var(--terra);box-shadow:2px 2px 0 var(--sand);}
+  .now .q{font:500 14px/20px var(--sans);color:var(--ink);text-wrap:pretty;}
+  .now .wv{display:flex;align-items:flex-end;gap:3px;height:32px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;flex:0 0 auto;background:#faf9f6;}
+  .now .wv i{width:4px;border-radius:1px;background:var(--ink-3);}
+  .now .wv i:nth-child(1),.now .wv i:nth-child(5){background:#d4cec4;}
+  .now .wv i:nth-child(2){background:var(--terra);}
+  .now .wv i:nth-child(3){background:var(--ink);}
+  .now .wv i:nth-child(4){background:var(--peri);}
   /* quiet "installed but not connected" nudge — dismissible, per-agent */
   .connect-hint{margin:18px 18px 0;padding:12px 15px;border-radius:12px;display:flex;align-items:center;gap:12px;
     background:#fff;border:1px solid #ececec;}
@@ -188,6 +198,135 @@
   .tr .tt{font:400 10px var(--mono);color:#bdbdbd;flex:0 0 44px;padding-top:3px;}
   .tr .proj{font:500 11px var(--sans);margin-bottom:2px;}
   .tr .say{font-family:var(--serif);font-style:italic;font-size:16px;line-height:1.4;color:var(--ink);}
+
+  /* ===================== DASHBOARD SETTINGS + PIXEL DETAILS ===================== */
+  #v-settings{min-height:100%;background:#faf9f6;--dash-green:var(--ink);--dash-orange:var(--terra);--dash-card:#fff;--dash-line:var(--line);--dash-line-soft:var(--line);}
+  .settings-shell{width:min(100%,1000px);margin:0 auto;padding:40px 44px 80px;}
+  .settings-header{display:flex;align-items:flex-start;justify-content:space-between;gap:32px;margin-bottom:40px;}
+  .settings-kicker{display:flex;align-items:center;gap:9px;font:700 11px/16px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dash-orange);margin-bottom:8px;}
+  .settings-kicker::before{content:"";width:7px;height:7px;border-radius:1px;background:currentColor;box-shadow:3px 3px 0 rgba(255,86,54,.18);}
+  .settings-header h1{font:680 32px/40px var(--sans);letter-spacing:-.045em;margin:0;color:var(--ink);text-wrap:balance;}
+  .settings-header p{max-width:580px;font:400 15px/24px var(--sans);color:var(--ink-2);margin:8px 0 0;text-wrap:pretty;}
+  .plan-key{display:flex;align-items:center;gap:9px;flex:0 0 auto;padding:10px 13px;border:1px solid var(--dash-green);border-radius:999px;background:var(--dash-green);font:700 11px/16px var(--mono);color:#fff;text-transform:uppercase;letter-spacing:.08em;}
+  .plan-key svg{width:16px;height:16px;shape-rendering:crispEdges;}
+  .settings-section{margin-top:40px;}
+  .settings-section:first-of-type{margin-top:0;}
+  .settings-section-head{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(220px,.8fr);align-items:center;gap:12px;margin:0 0 14px;}
+  .settings-index{font:700 11px/16px var(--mono);letter-spacing:.1em;color:var(--dash-orange);}
+  .settings-section-head h2{font:680 20px/28px var(--sans);letter-spacing:-.025em;margin:0;color:var(--ink);}
+  .settings-section-head p{font:400 14px/20px var(--sans);color:var(--ink-3);margin:0;text-align:right;text-wrap:pretty;}
+  .settings-card{border:1px solid var(--dash-line);border-radius:13px;background:var(--dash-card);box-shadow:none;}
+  .settings-card-pad{padding:24px;}
+  .settings-label{display:block;font:700 11px/16px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px;}
+  .settings-divider{height:1px;background:var(--dash-line-soft);margin:24px 0;}
+  .voice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
+  .voice-option{appearance:none;position:relative;min-width:0;min-height:70px;padding:13px 14px;border:1px solid var(--dash-line-soft);border-radius:9px;background:#faf8f3;color:var(--ink);cursor:pointer;display:flex;align-items:center;gap:13px;text-align:left;transition:background 150ms ease,border-color 150ms ease,transform 150ms ease;}
+  .voice-option:hover{transform:translateY(-1px);border-color:#b9b1a6;background:#fff;}
+  .voice-option:active{transform:translateY(1px);}
+  .voice-option.is-selected{border:1px solid var(--dash-green);padding:13px 14px;background:#fff;box-shadow:inset 0 0 0 1px var(--dash-green);}
+  .voice-option:focus-visible,.mode-option:focus-visible,.choice-key:focus-visible,.setting-row:focus-visible,.brand-button:focus-visible,.pixel-toggle-button:focus-visible,.notch-visibility:focus-visible{outline:3px solid #94b8eb;outline-offset:2px;}
+  .voice-copy{display:flex;min-width:0;flex-direction:column;gap:1px;}
+  .voice-copy b{font:680 15px/20px var(--sans);overflow:hidden;text-overflow:ellipsis;}
+  .voice-copy small{font:650 10px/16px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);}
+  .voice-check{position:absolute;top:9px;right:9px;width:17px;height:17px;border-radius:3px;background:var(--dash-green);color:#fff;display:grid;place-items:center;font:700 10px/1 var(--sans);}
+  .voice-sprite{position:relative;width:42px;height:42px;flex:0 0 auto;border:1px solid rgba(23,22,20,.12);border-radius:6px;overflow:hidden;background:#f2e4d3;image-rendering:pixelated;}
+  .voice-sprite::before,.voice-sprite::after{content:"";position:absolute;}
+  .voice-jarvis{background:#f2e4d3}.voice-jarvis::before{left:8px;top:7px;width:6px;height:6px;background:#99664b;box-shadow:14px 0 #99664b,7px 7px #171614,0 14px #b77b50,14px 14px #b77b50}.voice-jarvis::after{left:12px;bottom:4px;width:14px;height:4px;background:#171614;}
+  .voice-aria{background:#dceafb}.voice-aria::before{left:5px;top:8px;width:7px;height:7px;background:#566fb4;box-shadow:7px 7px #94b8eb,14px 0 #394a76,21px 7px #7595db,0 14px #7595db,14px 14px #566fb4}.voice-aria::after{left:5px;bottom:5px;width:28px;height:3px;background:#394a76;}
+  .voice-friday{background:#f3dadb}.voice-friday::before{left:14px;top:6px;width:10px;height:10px;background:#b55f63;box-shadow:-7px 7px #da999d,7px 7px #9a5153,0 14px #c9777b}.voice-friday::after{left:4px;bottom:4px;width:30px;height:4px;background:#653537;}
+  .voice-atlas{background:#d9edcf}.voice-atlas::before{left:4px;bottom:4px;width:10px;height:10px;background:#4f8b43;box-shadow:7px -7px #76b568,14px 0 #31572c,21px -14px #5a9b4e}.voice-atlas::after{left:4px;bottom:3px;width:30px;height:3px;background:#31572c;}
+  .mode-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;}
+  .mode-option{appearance:none;min-height:112px;padding:16px;border:1px solid var(--dash-line-soft);border-radius:9px;background:#faf8f3;color:var(--ink);cursor:pointer;text-align:left;display:flex;flex-direction:column;transition:background 150ms ease,border-color 150ms ease,transform 150ms ease;}
+  .mode-option:hover{background:#fff;border-color:#b9b1a6;}
+  .mode-option:active{transform:translateY(1px);}
+  .mode-option.is-selected{background:var(--dash-green);border-color:var(--dash-green);color:#fff;box-shadow:none;}
+  .mode-top{display:flex;align-items:center;gap:9px;font:680 15px/20px var(--sans);}
+  .mode-pixel{width:14px;height:14px;border:2px solid currentColor;border-radius:2px;position:relative;opacity:.8;}
+  .mode-option.is-selected .mode-pixel::after{content:"";position:absolute;width:4px;height:4px;background:#fff;left:2px;top:2px;}
+  .mode-option p{font:400 13px/20px var(--sans);color:var(--ink-2);margin:10px 0 0;text-wrap:pretty;}
+  .mode-option.is-selected p{color:rgba(255,255,255,.68);}
+  .speed-line{display:flex;align-items:center;justify-content:space-between;gap:16px;}
+  .speed-value{padding:6px 9px;border:1px solid var(--dash-green);border-radius:6px;background:var(--dash-green);color:#fff;font:700 12px/16px var(--mono);}
+  .pixel-range{appearance:none;width:100%;height:24px;margin:12px 0 0;background:transparent;cursor:pointer;}
+  .pixel-range::-webkit-slider-runnable-track{height:7px;border:1px solid #d4cec4;border-radius:3px;background:#e7e2d9;}
+  .pixel-range::-webkit-slider-thumb{appearance:none;width:20px;height:20px;margin-top:-8px;border:2px solid var(--dash-green);border-radius:4px;background:#fff;box-shadow:0 3px 0 var(--dash-green);}
+  .speed-marks{display:flex;justify-content:space-between;font:600 10px/16px var(--mono);color:var(--ink-3);margin-top:4px;}
+  .settings-row-list{overflow:hidden;}
+  .setting-row{appearance:none;width:100%;min-height:68px;padding:14px 18px;border:0;border-top:1px solid var(--dash-line-soft);background:var(--dash-card);color:var(--ink);display:flex;align-items:center;gap:14px;text-align:left;cursor:pointer;transition:background 150ms ease;}
+  .setting-row:first-child{border-top:0;}
+  .setting-row:hover{background:#faf8f3;}
+  .setting-row:active{background:#f3f0e9;}
+  .row-pixel{width:30px;height:30px;border-radius:5px;display:grid;place-items:center;flex:0 0 auto;font:700 12px var(--mono);color:var(--ink);image-rendering:pixelated;}
+  .row-pixel.error{background:var(--red);color:#653537}.row-pixel.review{background:var(--sand);color:#4e3025}.row-pixel.done{background:var(--green);color:#31572c}
+  .row-copy{display:flex;flex-direction:column;gap:2px;min-width:0;}
+  .row-copy b{font:650 14px/20px var(--sans);}
+  .row-copy small{font:400 12px/16px var(--sans);color:var(--ink-3);text-wrap:pretty;}
+  .pixel-toggle{position:relative;width:44px;height:26px;margin-left:auto;flex:0 0 auto;border:1px solid #d4cec4;border-radius:6px;background:#e7e2d9;transition:background 150ms ease,border-color 150ms ease;}
+  .pixel-toggle i{position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:3px;background:#fff;box-shadow:0 1px 0 #aaa39a;transition:left 150ms ease;}
+  .pixel-toggle.is-on{background:var(--dash-green);border-color:var(--dash-green);}
+  .pixel-toggle.is-on i{left:22px;box-shadow:none;}
+  .behavior-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(250px,.65fr);gap:14px;align-items:start;}
+  .notch-card{padding:24px;}
+  .notch-preview{height:88px;border:1px solid var(--dash-line-soft);border-radius:9px;background:#f0ede6;position:relative;margin-bottom:22px;overflow:hidden;}
+  .notch-preview::before{content:"";position:absolute;left:50%;top:0;transform:translateX(-50%);width:72px;height:17px;background:var(--ink);border-radius:0 0 8px 8px;}
+  .notch-preview::after{content:"";position:absolute;width:6px;height:6px;right:14px;top:14px;background:var(--ok);box-shadow:-8px 0 0 #97cd84,-16px 0 0 #d9edcf;}
+  .notch-preview.is-hidden::before{background:#d4cec4;}
+  .notch-preview.is-hidden::after{background:#d4cec4;box-shadow:-8px 0 0 #e7e2d9,-16px 0 0 #f3f0e9;}
+  .notch-preview-status{position:absolute;left:14px;bottom:12px;font:700 10px/16px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);}
+  .notch-visibility{appearance:none;width:100%;padding:0;border:0;background:transparent;color:var(--ink);display:flex;align-items:center;gap:16px;text-align:left;cursor:pointer;border-radius:6px;transition:transform 150ms ease;}
+  .notch-visibility:hover{transform:translateY(-1px);}
+  .notch-visibility:active{transform:translateY(1px);}
+  .notch-visibility-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px;}
+  .notch-visibility-copy b{font:650 14px/20px var(--sans);}
+  .notch-visibility-copy span{font:400 12px/16px var(--sans);color:var(--ink-3);text-wrap:pretty;}
+  .choice-grid{display:grid;gap:8px;}
+  .choice-grid.two{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .choice-grid.three{grid-template-columns:repeat(3,minmax(0,1fr));}
+  .choice-key{appearance:none;padding:10px 8px;border:1px solid var(--dash-line);border-radius:7px;background:#faf8f3;color:var(--ink);font:650 13px/20px var(--sans);cursor:pointer;box-shadow:none;transition:background 150ms ease,border-color 150ms ease,transform 150ms ease;}
+  .choice-key:hover{background:#fff;border-color:#aaa39a;transform:translateY(-1px);}
+  .choice-key:active{transform:translateY(1px);box-shadow:none;}
+  .choice-key.is-selected{background:var(--dash-green);border-color:var(--dash-green);color:#fff;box-shadow:none;}
+  .subsetting{margin-top:22px;}
+  .tool-card{overflow:hidden;}
+  .tool-row{min-height:72px;padding:15px 17px;border-top:1px solid var(--dash-line-soft);display:flex;align-items:center;gap:12px;}
+  .tool-row:first-child{border-top:0;}
+  .tool-icon{width:34px;height:34px;border-radius:6px;background:#f0ede6;border:1px solid var(--dash-line);display:grid;place-items:center;font:700 13px var(--mono);color:var(--ink);}
+  .tool-copy{display:flex;flex-direction:column;gap:1px;}
+  .tool-copy b{font:650 14px/20px var(--sans);}
+  .tool-copy small{font:400 11px/16px var(--sans);color:var(--ink-3);}
+  .tool-status{margin-left:auto;display:flex;align-items:center;gap:6px;font:700 10px/16px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);}
+  .tool-status i{width:7px;height:7px;border-radius:2px;background:#d4cec4;}
+  .tool-status.is-active{color:#31572c}.tool-status.is-active i{background:#4f8b43;box-shadow:2px 2px 0 #bde0ae;}
+  .account-card{overflow:hidden;}
+  .account-row{padding:20px 24px;border-top:1px solid var(--dash-line-soft);display:flex;align-items:center;justify-content:space-between;gap:20px;}
+  .account-row:first-child{border-top:0;}
+  .account-copy{min-width:0;}
+  .account-copy b{display:block;font:650 15px/20px var(--sans);overflow-wrap:anywhere;}
+  .account-copy span{display:block;font:400 13px/20px var(--sans);color:var(--ink-2);margin-top:2px;text-wrap:pretty;}
+  .account-upsell{display:block;background:#fbf7f1;}
+  .account-actions{display:flex;gap:8px;align-items:center;flex:0 0 auto;}
+  .account-action-pair{display:flex;gap:8px;margin-top:12px;}
+  .brand-button{appearance:none;padding:9px 13px;border:1px solid #b6b3af;border-radius:7px;background:#fff;color:var(--ink);font:650 13px/20px var(--sans);cursor:pointer;box-shadow:none;transition:background 150ms ease,border-color 150ms ease,transform 150ms ease;}
+  .brand-button:hover{transform:translateY(-1px);border-color:#7d7770;}
+  .brand-button:active{transform:translateY(1px);box-shadow:none;}
+  .brand-button.primary{border-color:var(--dash-green);background:var(--dash-green);color:#fff;box-shadow:none;}
+  .account-action-pair .brand-button{flex:1;}
+  .key-intro{font:400 14px/20px var(--sans);color:var(--ink-2);margin:-2px 0 14px;text-wrap:pretty;}
+  .key-row{padding:18px 0;border-top:1px solid var(--dash-line-soft);}
+  .key-row:first-child{border-top:0;}
+  .key-meta{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px;}
+  .key-meta b{font:650 14px/20px var(--sans);}
+  .key-status{font:650 10px/16px var(--mono);color:var(--ink-3);}
+  .key-status.is-set{color:#31572c;}
+  .key-controls{display:flex;gap:8px;}
+  .key-controls input{min-width:0;flex:1;padding:10px 12px;border:1px solid var(--dash-line);border-radius:7px;background:#faf8f3;color:var(--ink);font:400 12px/16px var(--mono);outline:none;}
+  .key-controls input:focus{border-color:#566fb4;box-shadow:0 0 0 3px #dceafb;}
+  @media (max-width:850px){
+    .settings-shell{padding:32px 24px 64px;}
+    .settings-section-head{grid-template-columns:auto 1fr;}
+    .settings-section-head p{grid-column:2;text-align:left;}
+    .behavior-grid{grid-template-columns:1fr;}
+  }
 </style>
 </head>
 <body>
@@ -207,7 +346,12 @@
   <div class="h-title" id="h-title">Heard — Mission Control</div>
   <div class="h-body">
     <div class="h-side">
-      <div class="h-brand"><div class="o"></div><span>Heard</span></div>
+      <div class="h-brand">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path fill="currentColor" d="M7 0h2v5H7zM7 11h2v5H7zM0 7h5v2H0zM11 7h5v2h-5zM2 2h2v1h1v1h1v2H4V5H3V4H2zM12 2h2v2h-1v1h-1v1h-2V4h1V3h1zM4 10h2v2H5v1H4v1H2v-2h1v-1h1zM10 10h2v1h1v1h1v2h-2v-1h-1v-1h-1z"/>
+        </svg>
+        <span>heard</span>
+      </div>
       <div class="h-nav" id="h-nav">
         <a data-v="mission" class="on"><span class="d"></span>Mission Control</a>
         <a data-v="transcript"><span class="d"></span>Transcript</a>
@@ -238,6 +382,12 @@ let S = {
   claudeDetected:false, codexDetected:false, connectHintDismissed:{},
   voice:null, whisperOn:false, phonePaired:false,
 };
+const NOTCH_DEFAULTS = {visible:true,completion_pop:true,hover_expand:true,alive_minutes:10};
+function setNotch(patch){
+  S.notch = Object.assign({}, NOTCH_DEFAULTS, S.notch||{}, patch||{});
+  bridge('set_notch', patch);
+  renderHome();
+}
 // Dismiss the "installed but not connected" nudge for one agent, for good.
 function dismissHint(agent){
   S.connectHintDismissed = Object.assign({}, S.connectHintDismissed, {[agent]:true});
@@ -285,36 +435,45 @@ function planWord(){ return S.plan==='power'?'Power':S.plan==='pro'?'Pro':S.plan
 // on Power plan but wrong build → get the app. Returns '' when nothing applies
 // (paying Power, or not signed in).
 function _powerUpsell(){
-  const line = (t,s)=>`<div><div style="font-weight:600">${t}</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">${s}</div></div>`;
-  const payBtns = `<div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" style="padding:9px 16px;flex:1" onclick="bridge('upgrade_power',{interval:'monthly'})">$30 / month</button><button class="btn btn-primary" style="padding:9px 16px;flex:1" onclick="bridge('upgrade_power',{interval:'annual'})">$24 / mo · annual</button></div>`;
-  const wrap = (inner)=>`<div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0">${inner}</div>`;
+  const line = (t,s)=>`<div class="account-copy"><b>${t}</b><span>${s}</span></div>`;
+  const payBtns = `<div class="account-action-pair"><button class="brand-button primary" onclick="bridge('upgrade_power',{interval:'monthly'})">$30 monthly</button><button class="brand-button primary" onclick="bridge('upgrade_power',{interval:'annual'})">$24 monthly, annual</button></div>`;
+  const wrap = (inner)=>`<div class="account-row account-upsell">${inner}</div>`;
   if(!S.signedIn) return '';
   // On Power plan but on the standard build → they need the Power app.
   if(S.plan==='power' && !S.powerBuild)
-    return wrap(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">${line('Get the Power app',"You're on Power - install the Power app to unlock voice input.")}<button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('open_power_page')">Download</button></div>`);
+    return wrap(`<div style="display:flex;align-items:center;justify-content:space-between;gap:16px">${line('Get the Power app',"You're on Power. Install the Power app to unlock voice input.")}<button class="brand-button primary" onclick="bridge('open_power_page')">Download</button></div>`);
   // Trialing → keep it.
   if(S.plan==='power' && S.trialDaysLeft!=null){
     const d = S.trialDaysLeft===0?'Your trial ends today':S.trialDaysLeft+' day'+(S.trialDaysLeft===1?'':'s')+' left';
-    return wrap(line('Upgrade to Power', d+' in your trial - upgrade now to keep hands-free voice.')+payBtns);
+    return wrap(line('Upgrade to Power', d+' in your trial. Upgrade now to keep hands free voice.')+payBtns);
   }
   if(!S.powerBuild) return '';   // OSS/Pro build, nothing Power to offer here
   // Trial ended (reverted off Power).
   if(S.plan!=='power' && S.powerTrialUsed){
     if(S.plan==='pro')
-      return wrap(line('Your Power trial ended',"You're back on Pro. Add Power for hands-free voice control.")+payBtns);
-    return wrap(line('Your Power trial ended','Get Power for hands-free voice, or Pro for managed cloud voices.')+payBtns+`<button class="btn" style="padding:9px 16px;margin-top:8px;width:100%" onclick="bridge('manage_account')">Or upgrade to Pro - $15/mo</button>`);
+      return wrap(line('Your Power trial ended',"You're back on Pro. Add Power for hands free voice control.")+payBtns);
+    return wrap(line('Your Power trial ended','Get Power for hands free voice, or Pro for managed cloud voices.')+payBtns+`<button class="brand-button" style="margin-top:8px;width:100%" onclick="bridge('manage_account')">Or upgrade to Pro, $15 monthly</button>`);
   }
   // Never trialed, still eligible → start the free trial.
   if(S.plan!=='power' && !S.powerTrialUsed)
-    return wrap(`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">${line('Try Power free','14 days of hands-free voice control. No card.')}<button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('start_power_trial')">Start trial</button></div>`);
+    return wrap(`<div style="display:flex;align-items:center;justify-content:space-between;gap:16px">${line('Try Power free','14 days of hands free voice control. No card required.')}<button class="brand-button primary" onclick="bridge('start_power_trial')">Start trial</button></div>`);
   return '';
 }
 
 // ------------------------------------------------------------------ render
 let current = null;
-let navHome = 'mission';
+const HOME_PANES = ['mission','transcript','settings'];
+const _initialPane = new URLSearchParams(location.search).get('pane');
+let navHome = HOME_PANES.includes(_initialPane) ? _initialPane : 'mission';
+let forceHome = HOME_PANES.includes(_initialPane);
+window.__heard.openHome = function(pane){
+  forceHome = true;
+  navHome = HOME_PANES.includes(pane) ? pane : 'mission';
+  current = null;
+  render();
+};
 function homeMode(){
-  if(new URLSearchParams(location.search).get('view')==='home') return true;
+  if(forceHome || new URLSearchParams(location.search).get('view')==='home') return true;
   // Once signed in and set up, the window IS the Home. onboardedPlan tracks the
   // new flow (for the Pro->Power delta); S.onboarded covers existing users who
   // set up before the new onboarding shipped.
@@ -499,9 +658,10 @@ function renderHome(){
     </div>`).join('');
   document.getElementById('v-mission').innerHTML = `
     ${_hintHtml}
-    ${recap?`<div class="now"><div class="o"></div>
-      <div style="flex:1;min-width:0"><div class="k">✻ Recap</div><div class="q" style="font-size:17px;line-height:1.4">${recap}</div></div>
-      <div class="wv">${wv}</div></div>`:''}
+    ${recap?`<section class="now" aria-label="Latest recap"><div class="o" aria-hidden="true">
+      <svg viewBox="0 0 16 16"><path fill="currentColor" d="M7 0h2v5H7zM7 11h2v5H7zM0 7h5v2H0zM11 7h5v2h-5zM2 2h2v1h1v1h1v2H4V5H3V4H2zM12 2h2v2h-1v1h-1v1h-2V4h1V3h1zM4 10h2v2H5v1H4v1H2v-2h1v-1h1zM10 10h2v1h1v1h1v2h-2v-1h-1v-1h-1z"/></svg>
+      </div><div style="flex:1;min-width:0"><div class="k">Latest recap</div><div class="q">${recap}</div></div>
+      <div class="wv">${wv}</div></section>`:''}
     ${projects.length
       ? `<div class="cards">${projects.map(p=>`
           <div class="pcard"><div class="top"><span class="nm">${p.name}</span><span class="ag">${p.agents} agents</span>
@@ -517,55 +677,150 @@ function renderHome(){
       ? transcript.map(t=>`<div class="tr"><span class="tt">${t[0]}</span><div style="flex:1"><div class="proj" style="color:${t[2]}">${t[1]}</div><div class="say">"${t[3]}"</div></div></div>`).join('')
       : empty('Nothing yet today', 'Your narration history shows up here.')}</div>`;
 
-  // Settings — real controls (Voice / Verbosity / Mode / Speed / Speak-up /
-  // Account), wired to config via bridges. Restores the retired native panel.
-  const _voices=[['jarvis','Jarvis','Butler','oklch(86% .08 80),oklch(70% .1 72)'],['aria','Aria','Calm','oklch(78% .07 240),oklch(62% .08 250)'],['friday','Friday','Warm','oklch(80% .09 30),oklch(64% .12 32)'],['atlas','Atlas','Cinematic','oklch(82% .07 150),oklch(64% .08 152)']];
+  // Settings — real controls, restyled around the pixel signal brand.
+  // Every bridge and value domain stays identical to the shipping panel.
+  const _voices=[['jarvis','Jarvis','Butler'],['aria','Aria','Calm'],['friday','Friday','Warm'],['atlas','Atlas','Cinematic']];
   const _vsel = ['jarvis','aria','friday','atlas'].includes((S.voice||'').toLowerCase())?(S.voice||'').toLowerCase():'jarvis';
-  const _voiceCards = _voices.map(v=>`<div onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});renderHome()" style="position:relative;border:${_vsel===v[0]?'1.5px solid var(--ink)':'1px solid var(--line)'};border-radius:13px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;background:var(--card)">${_vsel===v[0]?`<div style="position:absolute;top:9px;right:10px;width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center">✓</div>`:''}<div style="width:48px;height:48px;border-radius:50%;background:radial-gradient(circle at 50% 50%,${v[3]})"></div><div style="font:500 13px var(--sans);color:var(--ink)">${v[1]}</div><div style="font:400 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)">${v[2]}</div></div>`).join('');
-  const _verb=[['quiet','Minimal'],['normal','Balanced'],['verbose','Detailed']];
-  const _vbsel = S.verbosity||'normal';
-  const _verbSeg = _verb.map(x=>`<div onclick="S.verbosity='${x[0]}';bridge('set_verbosity',{verbosity:'${x[0]}'});renderHome()" style="flex:1;text-align:center;padding:9px;border-radius:8px;font:500 12.5px var(--sans);cursor:pointer;${_vbsel===x[0]?'color:var(--ink);background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.1)':'color:var(--ink-2)'}">${x[1]}</div>`).join('');
-  const _modes=[['copilot','Co-pilot','Compact, eyes on screen.'],['companion','Companion','Fuller detail, eyes off screen.'],['focus','Focus','Silent until something needs you.']];
+  const _voiceCards = _voices.map(v=>{
+    const on=_vsel===v[0];
+    return `<button class="voice-option ${on?'is-selected':''}" aria-pressed="${on}" onclick="S.voice='${v[0]}';bridge('set_voice',{voice:'${v[0]}'});renderHome()">
+      <span class="voice-sprite voice-${v[0]}" aria-hidden="true"></span>
+      <span class="voice-copy"><b>${v[1]}</b><small>${v[2]}</small></span>
+      ${on?'<span class="voice-check" aria-hidden="true">✓</span>':''}
+    </button>`;
+  }).join('');
+  const _modes=[['copilot','Co-pilot','Compact updates while you keep your eyes on screen.'],['companion','Companion','Fuller context when you are away from the terminal.'],['focus','Focus','Stays quiet until something truly needs you.']];
   const _msel = S.mode||'copilot';
-  const _modeCards = _modes.map(m=>`<div onclick="S.mode='${m[0]}';bridge('set_mode',{mode:'${m[0]}'});renderHome()" style="border:${_msel===m[0]?'1.5px solid var(--ink)':'1px solid var(--line)'};border-radius:13px;padding:15px;cursor:pointer;background:var(--card)"><div style="font:600 13.5px var(--sans);color:var(--ink);margin-bottom:5px">${m[1]}</div><div style="font:400 11.5px/1.45 var(--sans);color:var(--ink-2)">${m[2]}</div></div>`).join('');
+  const _modeCards = _modes.map(m=>{
+    const on=_msel===m[0];
+    return `<button class="mode-option ${on?'is-selected':''}" aria-pressed="${on}" onclick="S.mode='${m[0]}';bridge('set_mode',{mode:'${m[0]}'});renderHome()">
+      <span class="mode-top"><span class="mode-pixel" aria-hidden="true"></span>${m[1]}</span>
+      <p>${m[2]}</p>
+    </button>`;
+  }).join('');
   const _SPEEDS=[0.5,1,1.5,2]; const _raw=+(S.speed||1.0); const _spd=_SPEEDS.reduce((a,b)=>Math.abs(b-_raw)<Math.abs(a-_raw)?b:a);
-  const _notif=[['errors','Errors & failures'],['blocked','Blocked on your review'],['completions','Task completions']];
+  const _notif=[
+    ['errors','Errors and failures','A command or check stops the work','error','!'],
+    ['blocked','Blocked on your review','An agent is waiting for your decision','review','?'],
+    ['completions','Task completions','A session finishes meaningful work','done','✓'],
+  ];
   const _N = S.notify||{errors:true,blocked:true,completions:true,idle:false};
-  const _notifRows = _notif.map((n,i)=>`<div onclick="S.notify=Object.assign({},S.notify,{['${n[0]}']:!(S.notify&&S.notify['${n[0]}'])});bridge('set_notify',{key:'${n[0]}',on:S.notify['${n[0]}']});renderHome()" style="display:flex;align-items:center;padding:12px 15px;font:400 13px var(--sans);color:var(--ink);cursor:pointer;${i>0?'border-top:1px solid #f4f4f4':''}"><span>${n[1]}</span><div style="margin-left:auto;width:38px;height:22px;border-radius:999px;background:${_N[n[0]]?'var(--ink)':'#e3e3e3'};position:relative"><div style="position:absolute;top:2px;${_N[n[0]]?'right:2px':'left:2px'};width:18px;height:18px;border-radius:50%;background:#fff"></div></div></div>`).join('');
+  const _notifRows = _notif.map(n=>`<button class="setting-row" aria-pressed="${!!_N[n[0]]}" onclick="S.notify=Object.assign({},S.notify,{['${n[0]}']:${!_N[n[0]]}});bridge('set_notify',{key:'${n[0]}',on:${!_N[n[0]]}});renderHome()">
+    <span class="row-pixel ${n[3]}" aria-hidden="true">${n[4]}</span>
+    <span class="row-copy"><b>${n[1]}</b><small>${n[2]}</small></span>
+    <span class="pixel-toggle ${_N[n[0]]?'is-on':''}" aria-hidden="true"><i></i></span>
+  </button>`).join('');
   const _trialNote = S.trialDaysLeft!=null ? ` · Power trial, ${S.trialDaysLeft} days left` : '';
-  const _HD = (t,s)=>`<div style="font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:26px 0 12px">${t}${s?`<span style="text-transform:none;letter-spacing:0;font-family:var(--sans);font-weight:400;font-size:12px;color:var(--ink-2)"> · ${s}</span>`:''}</div>`;
-  const _keyRow=(id,label,hint)=>`<div style="padding:13px 0;border-top:1px solid #f4f4f4"><div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px"><span style="font:500 13px var(--sans);color:var(--ink)">${label}</span><span style="font:400 11px var(--mono);color:${(S.keys&&S.keys[id])?'var(--terra)':'var(--ink-3)'}">${(S.keys&&S.keys[id])?'\u25cf set':'not set'}</span></div><div style="display:flex;gap:8px"><input id="k-${id}" type="password" placeholder="${hint}" style="flex:1;padding:9px 12px;border:1px solid var(--line);border-radius:9px;font:400 13px var(--mono);background:#fff"><button class="btn btn-ghost" style="padding:9px 16px" onclick="const v=document.getElementById('k-${id}').value.trim();if(v){bridge('set_key',{which:'${id}',value:v});document.getElementById('k-${id}').value='';S.keys=Object.assign({},S.keys,{[id]:true});renderHome()}">Save</button></div></div>`;
-  document.getElementById('v-settings').innerHTML = `<div style="padding:26px 28px;max-width:660px">
-    <div style="font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px">Voice</div>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:11px">${_voiceCards}</div>
-    ${_HD('Mode','how much Heard says')}
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:11px">${_modeCards}</div>
-    <div style="display:flex;align-items:baseline;justify-content:space-between;margin:26px 0 12px"><span style="font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)">Speed</span><span id="spd-pill" style="font:500 12px var(--mono);color:var(--ink);padding:3px 9px;border:1px solid var(--line);border-radius:7px">${_spd}×</span></div>
-    <input type="range" min="0.5" max="2" step="0.5" value="${_spd}" oninput="document.getElementById('spd-pill').textContent=(+this.value)+'×'" onchange="S.speed=+this.value;bridge('set_speed',{speed:+this.value});renderHome()" style="width:100%;accent-color:var(--terra);cursor:pointer">
-    <div style="display:flex;justify-content:space-between;font:400 10px var(--mono);color:var(--ink-3);margin-top:7px"><span>0.5×</span><span>1×</span><span>1.5×</span><span>2×</span></div>
-    ${_HD('Speak up on')}
-    <div style="border:1px solid #efece7;border-radius:12px;overflow:hidden;background:var(--card)">${_notifRows}</div>
-    ${_HD('Account')}
-    <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-        <div><div style="font-weight:600">${S.email||'Not signed in'}</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">Plan: <b>${planWord()}</b>${_trialNote}</div></div>
-        ${S.signedIn?`<button class="btn btn-ghost" style="padding:9px 16px" onclick="bridge('signout')">Sign out</button>`:`<button class="btn btn-primary" style="padding:9px 16px" onclick="bridge('signin_google')">Sign in</button>`}
-      </div>
-      <div style="border-top:1px solid var(--line);margin:14px -18px 0;padding:14px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:12px">
-        <div><div style="font-weight:600">Manage on heard.dev</div><div style="font:400 13px var(--sans);color:var(--ink-2);margin-top:2px">Plan, payment, and email in the browser.</div></div>
-        <button class="btn btn-ghost" style="padding:9px 16px" onclick="bridge('manage_account')">Open</button>
-      </div>
-      ${_powerUpsell()}
-    </div>
-    ${S.byokEnabled ? `${_HD('API keys')}
-    <div style="font:400 12.5px/1.5 var(--sans);color:var(--ink-2);margin:-6px 0 10px">Bring your own keys. Heard sends narration <b>straight to these providers</b> using your key - never through our servers. Leave blank to use your plan’s cloud voices, or the local Kokoro voice for zero cloud. Set both voice keys and ElevenLabs wins — clear it to speak through Speechify.</div>
-    <div style="background:var(--card);border:1px solid var(--line);border-radius:14px;padding:2px 18px 14px">
-      ${_keyRow('elevenlabs','ElevenLabs · voice','xi-api-key…')}
-      ${_keyRow('speechify','Speechify · voice (Simba 3.2)','sk_…')}
-      ${_keyRow('anthropic','Anthropic · narration brain','sk-ant-…')}
-      ${S.powerBuild ? _keyRow('groq','Groq · dictation cleanup','gsk_…') : ''}
-    </div>` : ''}
+  const _sectionHead=(n,t,s)=>`<header class="settings-section-head"><span class="settings-index">${n}</span><h2>${t}</h2><p>${s}</p></header>`;
+  const _keyRow=(id,label,hint)=>{
+    const set=!!(S.keys&&S.keys[id]);
+    return `<div class="key-row">
+      <div class="key-meta"><b>${label}</b><span class="key-status ${set?'is-set':''}">${set?'■ Set':'Not set'}</span></div>
+      <div class="key-controls"><input id="k-${id}" type="password" aria-label="${label}" placeholder="${hint}"><button class="brand-button" onclick="const v=document.getElementById('k-${id}').value.trim();if(v){bridge('set_key',{which:'${id}',value:v});document.getElementById('k-${id}').value='';S.keys=Object.assign({},S.keys,{[id]:true});renderHome()}">Save</button></div>
+    </div>`;
+  };
+  const N = Object.assign({},NOTCH_DEFAULTS,S.notch||{});
+  const _seg=(opts,cur,key)=>{
+    const cols=opts.length===2?'two':'three';
+    return `<div class="choice-grid ${cols}">${opts.map(o=>{
+      const v=typeof o.v==='string'?`'${o.v}'`:o.v;
+      const on=o.v===cur;
+      return `<button class="choice-key ${on?'is-selected':''}" aria-pressed="${on}" onclick="setNotch({${key}:${v}})">${o.l}</button>`;
+    }).join('')}</div>`;
+  };
+  const _ntoggle=(key,label,desc,on)=>`<button class="setting-row" aria-pressed="${on}" onclick="setNotch({${key}:${!on}})">
+    <span class="row-copy"><b>${label}</b><small>${desc}</small></span>
+    <span class="pixel-toggle ${on?'is-on':''}" aria-hidden="true"><i></i></span>
+  </button>`;
+  const _cliRow=(on,label,glyph)=>`<div class="tool-row">
+    <span class="tool-icon" aria-hidden="true">${glyph}</span>
+    <span class="tool-copy"><b>${label}</b><small>Session tracking</small></span>
+    <span class="tool-status ${on?'is-active':''}"><i></i>${on?'Active':'Inactive'}</span>
   </div>`;
+  const _pixelLogo = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 0h2v5H7zM7 11h2v5H7zM0 7h5v2H0zM11 7h5v2h-5zM2 2h2v1h1v1h1v2H4V5H3V4H2zM12 2h2v2h-1v1h-1v1h-2V4h1V3h1zM4 10h2v2H5v1H4v1H2v-2h1v-1h1zM10 10h2v1h1v1h1v2h-2v-1h-1v-1h-1z"/></svg>`;
+  document.getElementById('v-settings').innerHTML = `<main class="settings-shell">
+    <header class="settings-header">
+      <div>
+        <div class="settings-kicker">Desktop settings</div>
+        <h1>Make Heard yours.</h1>
+        <p>Choose how Heard sounds, when it speaks, and what appears in your notch.</p>
+      </div>
+      <div class="plan-key">${_pixelLogo}${planWord()}</div>
+    </header>
+
+    <section class="settings-section">
+      ${_sectionHead('01','Voice and delivery','Choose what Heard sounds like and how much it says.')}
+      <div class="settings-card settings-card-pad">
+        <span class="settings-label">Voice</span>
+        <div class="voice-grid">${_voiceCards}</div>
+        <div class="settings-divider"></div>
+        <span class="settings-label">Mode</span>
+        <div class="mode-grid">${_modeCards}</div>
+        <div class="settings-divider"></div>
+        <div class="speed-line"><span class="settings-label" style="margin:0">Speaking speed</span><span id="spd-pill" class="speed-value">${_spd}×</span></div>
+        <input class="pixel-range" aria-label="Speaking speed" type="range" min="0.5" max="2" step="0.5" value="${_spd}" oninput="document.getElementById('spd-pill').textContent=(+this.value)+'×'" onchange="S.speed=+this.value;bridge('set_speed',{speed:+this.value});renderHome()">
+        <div class="speed-marks"><span>0.5×</span><span>1×</span><span>1.5×</span><span>2×</span></div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      ${_sectionHead('02','Speak when it matters','Choose which moments should break your focus.')}
+      <div class="settings-card settings-row-list">${_notifRows}</div>
+    </section>
+
+    <section class="settings-section">
+      ${_sectionHead('03','Notch and tools','Choose when Heard appears and which tools it tracks.')}
+      <div class="behavior-grid">
+        <div>
+          <div class="settings-card notch-card">
+            <div class="notch-preview ${N.visible?'':'is-hidden'}" aria-hidden="true"><span class="notch-preview-status">${N.visible?'Visible':'Hidden'}</span></div>
+            <button class="notch-visibility" aria-pressed="${N.visible}" onclick="setNotch({visible:${!N.visible}})">
+              <span class="notch-visibility-copy"><b>Show notch</b><span>Keep agent activity visible at the top of your display.</span></span>
+              <span class="pixel-toggle ${N.visible?'is-on':''}" aria-hidden="true"><i></i></span>
+            </button>
+            <div class="subsetting">
+              <span class="settings-label">Keep idle sessions visible</span>
+              ${_seg([{l:'5 min',v:5},{l:'10 min',v:10},{l:'30 min',v:30}],N.alive_minutes,'alive_minutes')}
+            </div>
+          </div>
+          <div class="settings-card settings-row-list" style="margin-top:12px">
+            ${_ntoggle('completion_pop','Pop and chime when a session finishes','Surface completed work right away.',N.completion_pop)}
+            ${_ntoggle('hover_expand','Expand the notch on hover','Reveal the session details when you point at it.',N.hover_expand)}
+          </div>
+        </div>
+        <div class="settings-card tool-card">
+          ${_cliRow(S.claudeConnected,'Claude Code','C')}
+          ${_cliRow(S.codexConnected,'Codex','X')}
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      ${_sectionHead('04','Account','Manage your plan and Heard identity.')}
+      <div class="settings-card account-card">
+        <div class="account-row">
+          <div class="account-copy"><b>${S.email||'Not signed in'}</b><span>${planWord()} plan${_trialNote}</span></div>
+          ${S.signedIn?`<button class="brand-button" onclick="bridge('signout')">Sign out</button>`:`<button class="brand-button primary" onclick="bridge('signin_google')">Sign in</button>`}
+        </div>
+        <div class="account-row">
+          <div class="account-copy"><b>Manage on heard.dev</b><span>Update your plan, payment, and email in the browser.</span></div>
+          <button class="brand-button" onclick="bridge('manage_account')">Open</button>
+        </div>
+        ${_powerUpsell()}
+      </div>
+    </section>
+
+    ${S.byokEnabled ? `<section class="settings-section">
+      ${_sectionHead('05','API keys','Use your own providers for narration and voice.')}
+      <p class="key-intro">Heard sends narration straight to these providers with your key, never through our servers. Leave a field blank to keep using your plan’s cloud voice or the local Kokoro voice. Set both voice keys and ElevenLabs wins — clear it to speak through Speechify.</p>
+      <div class="settings-card settings-card-pad">
+        ${_keyRow('elevenlabs','ElevenLabs voice','xi api key…')}
+        ${_keyRow('speechify','Speechify voice (Simba 3.2)','sk_…')}
+        ${_keyRow('anthropic','Anthropic narration brain','sk ant…')}
+        ${S.powerBuild ? _keyRow('groq','Groq dictation cleanup','gsk…') : ''}
+      </div>
+    </section>` : ''}
+  </main>`;
 }
 
 // ------------------------------------------------------------------ screens
