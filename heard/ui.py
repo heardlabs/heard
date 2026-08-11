@@ -567,20 +567,33 @@ class HeardApp(rumps.App):
             if not self._update_in_flight:
                 self.version_item.title = f"↑ Update to {pending.get('tag', '')} →".rstrip()
                 self.version_item.set_callback(self.on_update_clicked)
-                # ZERO-CLICK UPDATES (2026-08-11): install automatically once
-                # the agent is idle — no active sessions, so no narration is
-                # cut mid-sentence by the relaunch. One attempt per tag
-                # (persisted) so a broken release can't crash-loop us; the
-                # manual menu item above remains as the retry path.
+                # ZERO-CLICK, WISPR-STYLE (2026-08-11): never restart a
+                # RUNNING app on our own — silently download + stage the new
+                # release in the background; it applies instantly at the next
+                # launch (see main()/app_entry). One staging attempt per tag
+                # so a broken release can't loop. Manual menu path unchanged.
+                # Exception: the server can mandate a minimum version
+                # (min_app_version in /v1/me) — a breach updates NOW.
                 tag = (pending.get("tag") or "").strip()
-                idle = not ((status or {}).get("active_sessions") or [])
-                if tag and idle:
+                if tag:
                     try:
+                        me = (status or {}).get("account_usage") or {}
+                        min_v = updater.parse_version("v" + str(me.get("min_app_version") or "0.0.0"))
+                        cur_v = updater.parse_version("v" + updater.resolved_current_version())
+                        forced = bool(min_v and cur_v and updater.is_newer(min_v, cur_v))
                         cfg_now = config.load()
-                        if (cfg_now.get("auto_update", True)
+                        if forced and cfg_now.get("auto_update_attempted") != "forced-" + tag:
+                            config.set_value("auto_update_attempted", "forced-" + tag)
+                            rumps.notification("Heard", "", "This version is no longer supported — updating now.")
+                            self.on_update_clicked(None)
+                        elif (cfg_now.get("auto_update", True)
                                 and cfg_now.get("auto_update_attempted") != tag):
                             config.set_value("auto_update_attempted", tag)
-                            self.on_update_clicked(None)
+                            threading.Thread(
+                                target=updater.background_stage,
+                                args=(tag, self._update_url, (pending.get("zip_size") or None)),
+                                daemon=True,
+                            ).start()
                     except Exception:
                         pass  # never let auto-update break the menu refresh
         else:
@@ -1721,4 +1734,12 @@ def run() -> None:
     except Exception as e:
         print(f"could not start daemon: {e}", file=sys.stderr)
     _refresh_existing_hooks()
+    # Apply a background-staged update NOW, before the app builds itself —
+    # at launch a 1-2s swap+relaunch is invisible; mid-run it's spooky.
+    try:
+        if updater.apply_staged_at_launch():
+            time.sleep(0.5)   # let the swap helper detach
+            return
+    except Exception:
+        pass
     HeardApp().run()

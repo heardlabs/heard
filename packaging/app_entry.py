@@ -71,4 +71,12 @@ def _run_daemon() -> None:
 if __name__ == "__main__":
     _redirect_stdio_to_log()
     threading.Timer(1.0, _run_daemon).start()
+    from heard import updater as _updater
+    try:
+        if _updater.apply_staged_at_launch():
+            import time as _time
+            _time.sleep(0.5)
+            sys.exit(0)   # swap helper relaunches the NEW bundle
+    except Exception:
+        pass
     HeardApp().run()

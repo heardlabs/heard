@@ -724,3 +724,57 @@ def consume_post_update_marker() -> str | None:
     except OSError:
         pass
     return version
+
+
+# ── Zero-click, Wispr-style (2026-08-11): download in the BACKGROUND during a
+# session, APPLY only at the next launch. Never restart a running app on its
+# own — an idle app suddenly relaunching itself reads as haunted (K.); at
+# launch, a 1-2s swap is invisible ("the app is starting").
+
+def background_stage(tag: str, zip_url: str, zip_size: int | None = None) -> bool:
+    """Silently download + unzip a pending release and remember it for the
+    next launch. No UI, no restart. Returns True when staged."""
+    try:
+        staging = _updates_dir() / f"stage-{tag}"
+        staging.mkdir(parents=True, exist_ok=True)
+        zip_path = staging / f"Heard-{tag}.zip"
+        download_zip(zip_url, zip_path, expected_size=zip_size)
+        staged_app = unzip_app(zip_path, staging)
+        state = _load_state()
+        state["staged_tag"] = tag
+        state["staged_path"] = str(staged_app)
+        _save_state(state)
+        return True
+    except Exception:
+        return False   # failure-silent; the manual menu path still works
+
+
+def apply_staged_at_launch() -> bool:
+    """At app launch: if a previously-staged newer release exists, swap into it
+    now (spawns the helper; CALLER must exit so the helper can relaunch the new
+    version). Cleans up stale stagings. Returns True when a swap was started."""
+    state = _load_state()
+    tag = (state.get("staged_tag") or "").strip()
+    path = state.get("staged_path") or ""
+    if not tag or not path:
+        return False
+    staged = Path(path)
+    latest = parse_version(tag)
+    current = parse_version("v" + resolved_current_version())
+    fresh = bool(latest and current and is_newer(latest, current) and staged.exists())
+    if not fresh:
+        # already on (or past) this version, or the bundle vanished — forget it
+        state.pop("staged_tag", None)
+        state.pop("staged_path", None)
+        _save_state(state)
+        try:
+            import shutil
+            shutil.rmtree(staged.parent, ignore_errors=True)
+        except Exception:
+            pass
+        return False
+    state.pop("staged_tag", None)
+    state.pop("staged_path", None)
+    _save_state(state)
+    stage_and_swap(staged, tag)
+    return True
