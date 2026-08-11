@@ -4180,9 +4180,66 @@ class Daemon:
                 self._sync_plan_from_me(data)
                 self._maybe_autostart_power_trial(data)
                 self._maybe_announce_friend_joined(data)
+                # Report trailing-30d running time to the Sprite Shift leaderboard,
+                # piggybacking this poll's base+token+ssl. Best-effort; never raises.
+                self._report_running_usage(base_url, token, ssl_ctx)
         except (_urlerr.HTTPError, _urlerr.URLError, TimeoutError, OSError, ValueError):
             # Stay quiet; menu bar shows the previous value (or nothing).
             return
+
+    def _compute_running_seconds_30d(self) -> int:
+        """Trailing-30-day running seconds — the SAME basis as the desktop card:
+        per-session gaps between consecutive events, each capped at 15 min. Read from
+        history.jsonl (the file the card reads). Best-effort → 0 on any problem."""
+        import json as _json  # noqa: PLC0415
+        import os as _os  # noqa: PLC0415
+        import time as _time  # noqa: PLC0415
+        path = _os.path.join(str(config.CONFIG_DIR), "history.jsonl")
+        try:
+            with open(path, encoding="utf-8") as f:
+                lines = f.readlines()[-400:]   # match the card's window
+        except OSError:
+            return 0
+        now = _time.time()
+        cutoff = now - 30 * 86400
+        last_by_session: dict[str, float] = {}
+        total = 0.0
+        for line in lines:
+            try:
+                r = _json.loads(line)
+            except Exception:
+                continue
+            ets = r.get("event_ts")
+            sid = str(r.get("session_id") or "").strip()
+            if not sid or not isinstance(ets, (int, float)):
+                continue
+            if ets < cutoff or ets > now + 60:
+                continue
+            prev = last_by_session.get(sid)
+            if prev is not None:
+                gap = ets - prev
+                if 0 < gap <= 900:
+                    total += gap
+            if ets > last_by_session.get(sid, 0):
+                last_by_session[sid] = ets
+        return int(total)
+
+    def _report_running_usage(self, base_url: str, token: str, ssl_ctx) -> None:
+        """POST the trailing-30d running seconds to /v1/usage/report — feeds the
+        Sprite Shift leaderboard so friends see REAL miles for this account
+        (without this, a Pro friend shows 0.0 mi on everyone's board). Best-effort."""
+        import json as _json  # noqa: PLC0415
+        import urllib.request as _urlreq  # noqa: PLC0415
+        try:
+            body = _json.dumps({"running_seconds": self._compute_running_seconds_30d()}).encode()
+            req = _urlreq.Request(
+                f"{base_url}/v1/usage/report", data=body, method="POST",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json",
+                         "User-Agent": "Heard-daemon/1.0"})
+            _urlreq.urlopen(req, timeout=5.0, context=ssl_ctx).close()
+        except Exception:
+            pass
 
     def _set_friends_announced(self, n: int) -> None:
         self.cfg["heard_friends_announced"] = n
