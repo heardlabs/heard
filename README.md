@@ -9,7 +9,7 @@
 
 <p align="center">
   Heard speaks your coding agent's outputs so you can get up, walk around, and still know what's going on.
-  <br/>Think <b>Jarvis for your coding agents</b> — a voice layer for Claude Code, Codex, and any AI workflow: your agent narrates its work out loud, you talk back hands-free.
+  <br/>Think <b>Jarvis for your coding agents</b> — a voice layer for Claude Code, Codex, OpenClaw, Hermes, and any AI workflow: your agent narrates its work out loud, you talk back hands-free.
 </p>
 
 <p align="center">
@@ -86,7 +86,7 @@ Invite a friend and you both win: they start on a 30-day trial, and you get a fr
 
 ## Your Jarvis moment
 
-Every AI workflow deserves a voice. Heard is the **voice layer**: a Jarvis-style narrator (that's literally our default voice's name) that turns your agent's stream of tool calls and replies into spoken updates — and on Power, listens back, so you converse with your agent like Tony Stark talks to Jarvis. Works with Claude Code, Codex CLI, and the Codex app today.
+Every AI workflow deserves a voice. Heard is the **voice layer**: a Jarvis-style narrator (that's literally our default voice's name) that turns your agent's stream of tool calls and replies into spoken updates — and on Power, listens back, so you converse with your agent like Tony Stark talks to Jarvis. First-class with Claude Code, Codex CLI, and the Codex app today — and it rides along anywhere those agents run (OpenClaw, Hermes Agent, your own stack), with `heard run` wrapping anything else.
 
 ## Built-in dictation on Power — Wispr Flow style
 
