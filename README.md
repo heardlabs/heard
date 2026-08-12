@@ -17,7 +17,7 @@
 
 <p align="center">
   <a href="https://github.com/heardlabs/heard/releases/latest"><img src="https://img.shields.io/github/v/release/heardlabs/heard?label=release&amp;color=0aa" alt="Latest release"></a>
-  <a href="https://github.com/heardlabs/heard/releases"><img src="https://img.shields.io/github/downloads/heardlabs/heard/total?label=downloads&amp;color=0aa" alt="GitHub downloads"></a>
+  <a href="https://github.com/heardlabs/heard/releases"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.heard.dev%2Fv1%2Fbadges%2Fdownloads" alt="Downloads"></a>
   <a href="https://github.com/heardlabs/heard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
   <a href="https://github.com/heardlabs/heard"><img src="https://img.shields.io/github/stars/heardlabs/heard?style=social" alt="GitHub stars"></a>
 </p>
