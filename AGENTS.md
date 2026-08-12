@@ -37,7 +37,7 @@ afplay → history.append (after successful play)
 The **harness brain is the mandatory narration path** for prose and
 finals. There are exactly three lanes:
 
-1. **Brain** (`harness.narrate`) — prose + finals. One Haiku call with
+1. **Brain** (`harness.narrate`) — prose + finals. One narration-brain call with
    access to the persona, the Agent State scoreboard, and Working Memory.
 2. **Fast-path templates** — tool actions ("Editing auth.py"); never the
    brain (latency/cost). Cheap, no LLM.
@@ -69,9 +69,9 @@ same change — a drifted table is worse than none.
 | `heard/harness.py` | **Layer 5 — the mandatory narration brain.** `narrate(event, cfg, persona, agent_states, working_memory)` builds a cached system block (persona + shared rules + instruction block) + a dynamic user message (rolling summary + ranked active-agent snapshot + current event), dispatches via `persona.call_with_prompt`, and returns a `HarnessDecision`: `None` → daemon's no-LLM floor; `speak=False` → chose silence; `speak=True` → daemon enqueues the text. Prompt assembly is pure so it's unit-testable without the LLM. |
 | `heard/profile.py` + `heard/profiles/*.yaml` | Verbosity profiles (quiet / brief / normal / verbose). Five dimensions per profile. User dir overrides bundled. |
 | `heard/verbosity.py` | Three-way classifier for the fast path: `classify_pre` → `speak/drop/digest`. Failures + questions always pierce. |
-| `heard/persona.py` | Persona load + LLM dispatch. `_SHARED_NARRATION_RULES` is the cross-persona framing. `call_with_prompt(...)` is the live entry point the harness brain and burst digests dispatch through (prompt caching + observability). BYOK Anthropic → managed proxy ladder. Model: `claude-haiku-4-5`. |
+| `heard/persona.py` | Persona load + LLM dispatch. `_SHARED_NARRATION_RULES` is the cross-persona framing. `call_with_prompt(...)` is the live entry point the harness brain and burst digests dispatch through (prompt caching + observability). BYOK Anthropic → managed proxy ladder; the model id is configured here. |
 | `heard/providers.py` | Provider abstraction for the narration LLM (partially-finished extraction). |
-| `heard/personas/*.md` | Bundled personas (aria, friday, jarvis, atlas). YAML frontmatter (voice/speed/verbosity/…) + Markdown body (Haiku system prompt). |
+| `heard/personas/*.md` | Bundled personas (aria, friday, jarvis, atlas). YAML frontmatter (voice/speed/verbosity/…) + Markdown body (narration-brain system prompt). |
 | `heard/templates.py` | Per-tool narration templates. `_bash_tag_and_text` extracts intent from shell verbs (grep → search, ls → list, …). |
 | `heard/markdown.py` | Strips Markdown before TTS. Handles fenced/indented code, blockquotes, tables, links, emphasis. |
 | `heard/spoken.py` | Per-session dedup of already-narrated assistant text. `flock`'d read-modify-write on `<session>.json`. |
@@ -136,7 +136,7 @@ to verify it came up cleanly.
 
 ## Common file edits
 
-- **Persona tone** → `heard/personas/<name>.md` (Haiku system prompt body)
+- **Persona tone** → `heard/personas/<name>.md` (narration-brain system prompt body)
 - **Cross-persona framing** → `_SHARED_NARRATION_RULES` in `heard/persona.py`
 - **Verbosity behaviour** → `heard/profiles/<name>.yaml` (5 dimensions)
 - **Per-tool narration templates** → `heard/templates.py`

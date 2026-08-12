@@ -94,7 +94,7 @@ Power ships with **Heard Whisper**, a built-in dictation and voice-typing tool i
 
 - **Push-to-talk**: hold Right-⌘, speak, release — your words are transcribed and typed at your cursor, in any app.
 - **Ambient mode**: always-on, hands-free voice input with voice-activity detection — talk naturally, interrupt Heard mid-sentence (real echo cancellation), and it types or acts as you go.
-- **On-device speech-to-text**: transcription runs locally on your Mac (NVIDIA Parakeet, Whisper-class accuracy) — fast, private, no audio leaves your machine.
+- **On-device speech-to-text**: transcription runs locally on your Mac — fast, accurate, private; no audio leaves your machine.
 - **Call-aware**: joins a Zoom/Meet/Teams call and ambient input pauses itself, then resumes after.
 
 So on Power, Heard is the full voice loop: speech-to-text in, agent does the work, text-to-speech out.
@@ -170,7 +170,7 @@ That's the DIY path: you own keys, updates, and config. Everything's configurabl
 Depends on which backends you opt into.
 
 - **Voice synth.** ElevenLabs and Speechify send spoken text over HTTPS. **Kokoro** runs fully locally - nothing leaves the machine.
-- **Narration.** Heard sends compact event summaries (what tool ran, the agent's response text, recent context) to Claude Haiku 4.5 to decide what to say and shape it in your persona's voice. Either through your own Anthropic key, through Heard's managed proxy if you're signed in, or - with no key and no sign-in - falls back to neutral templates locally.
+- **Narration.** Heard sends compact event summaries (what tool ran, the agent's response text, recent context) to the Heard narration brain - a fast LLM pass that decides what to say and shapes it in your persona's voice. Either through your own Anthropic key, through Heard's managed proxy if you're signed in, or - with no key and no sign-in - falls back to neutral templates locally.
 </details>
 
 <details>
@@ -197,14 +197,11 @@ macOS 13+ · Claude Code + Codex CLI/App first-class · Cursor and Aider planned
 
 ## Status
 
-**Releases on this repo are the official closed app** (the download surface); this open-source engine is built from source — see [Self-host](#self-host-open-source). Engine status: cross-event-judgment narration via the Heard brain (one Haiku call per meaningful event sees your recent context, the active agents, and the current event, then decides what to say). Co-pilot / Companion / Focus listening modes, multi-agent salience with a distinct per-window voice each, hands-free voice control on Power, and automatic failover across ElevenLabs / Speechify / local Kokoro. First-class Claude Code, Codex CLI, and Codex App adapters. Used daily by the author. Backward-compatible API surface; deeper knobs may move into preferences over time.
+**Releases on this repo are the official closed app** (the download surface); this open-source engine is built from source — see [Self-host](#self-host-open-source). Engine status: cross-event-judgment narration via the Heard brain (each meaningful event is judged against your recent context and the active agents before anything is said). Co-pilot / Companion / Focus listening modes, multi-agent salience with a distinct per-window voice each, hands-free voice control on Power, and automatic failover across ElevenLabs / Speechify / local Kokoro. First-class Claude Code, Codex CLI, and Codex App adapters. Used daily by the author. Backward-compatible API surface; deeper knobs may move into preferences over time.
 
 ## License
 
 Apache 2.0.
 
-Heard runs speech recognition locally using NVIDIA's
-[Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
-(CC-BY-4.0) and [Silero VAD](https://github.com/snakers4/silero-vad) (MIT).
-Full credits and license texts are in
-[`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md).
+Heard includes third-party speech components. Full credits and license texts
+are in [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md).
