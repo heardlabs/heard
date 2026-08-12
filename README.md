@@ -139,7 +139,7 @@ Pin a specific session if you want to focus: menu bar → Active agents → clic
 
 The basics - persona, voice, speed, mode, pause/resume - all live in the menu bar. Hotkeys: ⇧⌥. to pause, ⇧⌥, to resume.
 
-Deeper knobs (verbosity profiles, per-repo overrides, narration preferences) live in Settings or `.heard.yaml`. Most users never need to touch them - Heard's listening modes cover the common cases on their own.
+Deeper knobs (verbosity profiles, per-repo overrides, narration preferences) live in Settings or `.heard.yaml`. Handy one: drop `label: My Project` in a repo's `.heard.yaml` and the voice announces that project by the name you chose instead of the folder name. Most users never need to touch the rest - Heard's listening modes cover the common cases on their own.
 
 ## Self-host (open source)
 
