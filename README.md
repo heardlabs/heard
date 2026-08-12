@@ -193,7 +193,7 @@ Yes - Apache 2.0. The easiest places to contribute are adapters (`heard/adapters
 
 ## Compatibility
 
-macOS 13+ · Claude Code + Codex CLI/App first-class · Cursor and Aider planned · anything else via `heard run`.
+macOS 14+ · Claude Code + Codex CLI/App first-class · Cursor and Aider planned · anything else via `heard run`.
 
 ## Status
 
