@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <sub>Counterpart to input tools like <a href="https://wisprflow.ai">Wispr Flow</a>. Wispr handles what you say <i>to</i> your agent; Heard handles what it says back.</sub>
+  <sub>Pairs with — or replaces — input tools like <a href="https://wisprflow.ai">Wispr Flow</a>: on <b>Power</b>, Wispr Flow-style <b>dictation</b> is built in (push-to-talk + ambient voice typing, on-device speech-to-text), and Heard speaks everything your agent says back.</sub>
 </p>
 
 <p align="center">
@@ -78,15 +78,26 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 |---|---|---|---|
 | **Free** — self-host: build from this repo | **Local only** — Kokoro or your own keys, zero cloud | - | Free |
 | **Pro** | **All** cloud voices + personas, run for you | - | $15/mo |
-| **Power** | All cloud voices | **Yes** - hands-free voice control (talk *to* your agent) | $30/mo |
+| **Power** | All cloud voices | **Yes** - hands-free voice control + built-in Wispr Flow-style dictation (push-to-talk & ambient voice typing) | $30/mo |
 
-**Free is the open-source path** - [clone this repo](#self-host-open-source) and run the engine with your own ElevenLabs / Anthropic keys or fully local Kokoro; no account, nothing through our cloud. The [downloadable app](https://heard.dev/download) is the **official closed build** - a native successor to this engine with the cloud voices and narration brain run for you; sign in and your plan decides what's on. The app is key-free by design, so a lapsed trial just goes quiet. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/#pricing)
+**Free is the open-source path** - [clone this repo](#self-host-open-source) and run the engine with your own ElevenLabs / Anthropic keys or fully local Kokoro; no account, nothing through our cloud. The [downloadable app](https://heard.dev/download) is the **official closed build** - a native successor to this engine with the cloud voices and narration brain run for you; sign in and your plan decides what's on. The app is key-free by design, so a lapsed trial just goes quiet. **Power** adds hands-free voice control and built-in dictation - you talk to your agent and it acts, and you can voice-type anywhere your cursor is. [See pricing →](https://heard.dev/#pricing)
 
 Invite a friend and you both win: they start on a 30-day trial, and you get a free week of Pro for each friend who activates.
 
 ## Your Jarvis moment
 
 Every AI workflow deserves a voice. Heard is the **voice layer**: a Jarvis-style narrator (that's literally our default voice's name) that turns your agent's stream of tool calls and replies into spoken updates — and on Power, listens back, so you converse with your agent like Tony Stark talks to Jarvis. Works with Claude Code, Codex CLI, and the Codex app today.
+
+## Built-in dictation on Power — Wispr Flow style
+
+Power ships with **Heard Whisper**, a built-in dictation and voice-typing tool in the spirit of Wispr Flow, Superwhisper, and macOS dictation — but wired straight into your coding agent:
+
+- **Push-to-talk**: hold Right-⌘, speak, release — your words are transcribed and typed at your cursor, in any app.
+- **Ambient mode**: always-on, hands-free voice input with voice-activity detection — talk naturally, interrupt Heard mid-sentence (real echo cancellation), and it types or acts as you go.
+- **On-device speech-to-text**: transcription runs locally on your Mac (NVIDIA Parakeet, Whisper-class accuracy) — fast, private, no audio leaves your machine.
+- **Call-aware**: joins a Zoom/Meet/Teams call and ambient input pauses itself, then resumes after.
+
+So on Power, Heard is the full voice loop: speech-to-text in, agent does the work, text-to-speech out.
 
 ## What it does
 
