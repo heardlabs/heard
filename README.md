@@ -9,6 +9,7 @@
 
 <p align="center">
   Heard speaks your coding agent's outputs so you can get up, walk around, and still know what's going on.
+  <br/>Think <b>Jarvis for your coding agents</b> — a voice layer for Claude Code, Codex, and any AI workflow: your agent narrates its work out loud, you talk back hands-free.
 </p>
 
 <p align="center">
@@ -82,6 +83,10 @@ You should not need to run a development daemon. If Heard ever starts with a sta
 **Free is the open-source path** - [clone this repo](#self-host-open-source) and run the engine with your own ElevenLabs / Anthropic keys or fully local Kokoro; no account, nothing through our cloud. The [downloadable app](https://heard.dev/download) is the **official closed build** - a native successor to this engine with the cloud voices and narration brain run for you; sign in and your plan decides what's on. The app is key-free by design, so a lapsed trial just goes quiet. **Power** adds hands-free voice control - you talk to your agent and it acts. [See pricing →](https://heard.dev/#pricing)
 
 Invite a friend and you both win: they start on a 30-day trial, and you get a free week of Pro for each friend who activates.
+
+## Your Jarvis moment
+
+Every AI workflow deserves a voice. Heard is the **voice layer**: a Jarvis-style narrator (that's literally our default voice's name) that turns your agent's stream of tool calls and replies into spoken updates — and on Power, listens back, so you converse with your agent like Tony Stark talks to Jarvis. Works with Claude Code, Codex CLI, and the Codex app today.
 
 ## What it does
 
