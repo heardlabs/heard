@@ -63,8 +63,11 @@ package into the installed bundle and restart the daemon. See the
 4. If you changed the architecture or a module's role, update the module
    map in `AGENTS.md` in the same PR — a drifted table is worse than
    none.
-5. Open a PR against `main` describing the change and how you tested it.
-6. Address review feedback with follow-up commits (avoid force-pushing
+5. If you changed a user-facing configuration key, default, accepted value, or
+   resolution rule, update [`docs/configuration.md`](./docs/configuration.md) in
+   the same PR.
+6. Open a PR against `main` describing the change and how you tested it.
+7. Address review feedback with follow-up commits (avoid force-pushing
    over review history until the PR is ready to merge).
 
 ## Reporting issues
