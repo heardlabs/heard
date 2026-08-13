@@ -208,7 +208,7 @@ The app has no modes since 2.0.6. In the engine: `heard config set mode <copilot
 
 In the app, the voice and Mute updates live in **Settings → Parrot**; Mute updates is also in the menu bar. Per-repo: drop `label: My Project` in a repo's `.heard.yaml` and Heard announces that project by the name you chose instead of the folder name.
 
-In the open-source engine, `⇧⌥.` pauses and `⇧⌥,` resumes, and verbosity profiles and narration preferences live in `config.yaml` and `.heard.yaml`.
+In the open-source engine, `⇧⌥.` pauses and `⇧⌥,` resumes, and verbosity profiles and narration preferences live in `config.yaml` and `.heard.yaml`. The [configuration guide](./docs/configuration.md) covers precedence, every supported option, project labels and narration preferences.
 
 ## Self-host (open source)
 
@@ -230,7 +230,7 @@ heard config set anthropic_api_key <your-key>    # narration brain (skip → neu
 heard install claude-code        # or: heard install codex (Codex CLI + Codex desktop app)
 ```
 
-That's the DIY path: you own keys, updates and config. Everything's configurable (personas in `heard/personas/*.md`, verbosity in `heard/profiles/*.yaml`, per-repo `.heard.yaml`), and `heard run <command>` wraps any other CLI. The cloud-agent connectors and Parrot are app features.
+That's the DIY path: you own keys, updates and config. Everything's configurable (personas in `heard/personas/*.md`, verbosity in `heard/profiles/*.yaml`, per-repo `.heard.yaml`; see the [configuration guide](./docs/configuration.md)), and `heard run <command>` wraps any other CLI. The cloud-agent connectors and Parrot are app features.
 
 ## FAQ
 
