@@ -105,6 +105,7 @@ So on Power, Heard is the full voice loop: speech-to-text in, agent does the wor
 - **Three listening modes you switch between.** **Co-pilot** for screen-on work - short hooks and signposts. **Companion** for eyes-off (driving, cooking, walking) - fuller briefings that name the choice and surface the decision. **Focus** for alert-only use - quiet unless something needs your attention.
 - **Multi-agent aware.** Run 3+ agents in parallel; Heard voices the most salient one and quietly summarises the others. Each gets a distinct voice so you can tell them apart by ear.
 - **Talk back, hands-free *(Power)*.** Not just listening - reply out loud and your agent acts on it. Approve a step, answer a prompt, or redirect it without touching the keyboard.
+- **"Catch me up" *(Power)*.** Step away, come back, and ask your coding companion what you missed - Heard speaks a fresh recap of exactly the window you were gone: what landed, what's still running, what's waiting on you. "Catch me up on everything" sweeps all your active projects at once, mission by mission.
 - **Four personas, fork-your-own.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator).
 - **Works with any coding CLI.** First-class adapters for Claude Code, Codex CLI, and Codex App; `heard run <command>` wraps anything else.
 
@@ -163,6 +164,12 @@ heard install claude-code        # also: codex-cli, codex-app
 That's the DIY path: you own keys, updates, and config. Everything's configurable (personas in `heard/personas/*.md`, verbosity in `heard/profiles/*.yaml`, per-repo `.heard.yaml`). The managed tiers are the same engine with the voices + brain run for you.
 
 ## FAQ
+
+<details>
+<summary><b>How do I catch up on what Claude Code did while I was away?</b></summary>
+
+Say **"catch me up"** (or "what did I miss?") and Heard speaks a fresh recap of your away window: what each agent finished, what's still running, and what needs you. **"Catch me up on everything"** covers all active projects at once. It re-summarizes rather than replaying old narration, so hours away come back as a few sentences - the pull half of an AI pair programmer that talks. *(Power)*
+</details>
 
 <details>
 <summary><b>Does my agent's output leave my machine?</b></summary>
