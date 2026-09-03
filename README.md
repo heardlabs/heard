@@ -17,6 +17,10 @@
 </p>
 
 <p align="center">
+  <sub>Comparing macOS coding-agent notification tools? Heard covers the notifier basics — you hear it when Claude Code or Codex finishes, fails, or needs approval — then goes past them: text-to-speech for the work itself, narrating progress, questions, and results across parallel sessions.</sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/heardlabs/heard/releases/latest"><img src="https://img.shields.io/github/v/release/heardlabs/heard?label=release&amp;color=0aa" alt="Latest release"></a>
   <a href="https://github.com/heardlabs/heard/releases"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fapi.heard.dev%2Fv1%2Fbadges%2Fdownloads&v=2" alt="Downloads"></a>
   <a href="https://github.com/heardlabs/heard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache-2.0"></a>
