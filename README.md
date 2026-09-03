@@ -144,7 +144,13 @@ Pin a specific session if you want to focus: menu bar → Active agents → clic
 
 The basics - persona, voice, speed, mode, pause/resume - all live in the menu bar. Hotkeys: ⇧⌥. to pause, ⇧⌥, to resume.
 
-Deeper knobs (verbosity profiles, per-repo overrides, narration preferences) live in Settings or `.heard.yaml`. Handy one: drop `label: My Project` in a repo's `.heard.yaml` and the voice announces that project by the name you chose instead of the folder name. Most users never need to touch the rest - Heard's listening modes cover the common cases on their own.
+For YAML, `heard config path` locates the global `config.yaml`, while the
+nearest `.heard.yaml` supplies repository or subdirectory overrides. A handy
+project setting is `label: My Project`, which makes Heard announce the name you
+chose instead of the folder name. See the
+[configuration guide](./docs/configuration.md) for precedence, every supported
+option, project labels, and narration preferences. Most users never need these
+deeper controls - Heard's listening modes cover the common cases on their own.
 
 ## Self-host (open source)
 
@@ -164,6 +170,9 @@ heard config set anthropic_api_key <your-key>    # narration brain (skip → neu
 # wire up your coding agent - the daemon auto-starts on the first tool call
 heard install claude-code        # also: codex-cli, codex-app
 ```
+
+The [configuration guide](./docs/configuration.md) documents all global options
+and project-specific `.heard.yaml` overrides.
 
 That's the DIY path: you own keys, updates, and config. Everything's configurable (personas in `heard/personas/*.md`, verbosity in `heard/profiles/*.yaml`, per-repo `.heard.yaml`). The managed tiers are the same engine with the voices + brain run for you.
 
