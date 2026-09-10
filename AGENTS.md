@@ -87,7 +87,10 @@ same change — a drifted table is worse than none.
 | `heard/settings_window.py` | Settings panel + first-launch onboarding wizard. `SettingsController` (Account, Voice, Keys, Shortcuts, Advanced) + `_OnboardingController`. |
 | `heard/prompt_window.py` | Native modal-dialog helpers (choice / text / defect-report). AppKit imports are lazy so importing on a CLI path doesn't pull AppKit. Main-thread only. |
 | `heard/notify.py` | User-visible macOS notifications via `osascript`. `notify(title, body, kind=…)` dedups per kind for 60s. |
-| `heard/service.py` | macOS LaunchAgent integration. Writes `~/Library/LaunchAgents/dev.heard.daemon.plist` and runs `launchctl load/unload`. |
+| `heard/service.py` | macOS LaunchAgent integration. Writes `~/Library/LaunchAgents/dev.heard.daemon.plist` (and `dev.heard.mcp.plist` for the connector server) and runs `launchctl load/unload`. |
+| `heard/mcp_server.py` | MCP connector server (stdlib, Streamable HTTP, loopback). Lets cloud agents — Grok Bot first — call `heard_speak` / `heard_ask` / `heard_wait` / `heard_listen` / `heard_status`; events go through `client.send_event` so the agent is a normal session (`grok:<name>`). `/reply` (key-guarded) feeds user answers back. |
+| `heard/tunnel.py` | Exposes the connector server publicly via a Cloudflare quick tunnel or ngrok (Grok rejects localhost). Passes its own minimal cloudflared `--config` so a user's named-tunnel ingress rules can't 404 it. |
+| `heard/adapters/grok_bot.py` | Connector adapter: `heard install grok-bot` generates the key, installs the LaunchAgent, prints + copies the URL and the Bot's standing instructions. |
 | `heard/updater.py` | In-app updater. Polls GitHub releases; resolves the running version from `Info.plist` as a backstop for the string in `heard/__init__.py`. |
 | `heard/tune.py` | `heard tune` — interactive walk through voice / persona / verbosity for CLI users. |
 | `heard/cli.py` | Typer CLI. Heard's product surface is the menu bar, not the terminal — most commands are `hidden=True` (functional, just absent from `heard --help`). Visible in `--help`: `install`, `uninstall`, `run`, `service install/uninstall`. |

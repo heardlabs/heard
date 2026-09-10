@@ -34,6 +34,7 @@ from heard import (
     harness,
     history,
     hotkey,
+    mcp_server,
     notify,
     project_memory,
     push_to_talk,
@@ -3152,6 +3153,16 @@ class Daemon:
         except Exception:
             pass
         _log("user_utterance", session=session_id, chars=len(text))
+        # MCP connector sessions (Grok Bot) have no terminal to type into:
+        # an utterance addressed to one — explicitly, or via the pinned
+        # session when the front-end sends the generic "voice" id — is
+        # handed to the connector server, which returns it to the agent
+        # through heard_listen / heard_ask. Off the speech path; best-effort.
+        target = session_id if session_id != "voice" else (self.router.pinned() or "")
+        if mcp_server.is_connector_session(target):
+            threading.Thread(
+                target=mcp_server.post_reply, args=(target, text), daemon=True
+            ).start()
         cb = self._utterance_listener
         if cb is not None:
             try:
@@ -3262,7 +3273,10 @@ class Daemon:
         # project name (e.g. "heard"). See router.note_event for the
         # tiered confidence rules.
         path_hint = (ctx.get("abs_path") or None) if isinstance(ctx, dict) else None
-        self.router.note_event(session_id, cwd or "", path_hint=path_hint)
+        self.router.note_event(
+            session_id, cwd or "", path_hint=path_hint,
+            label=(sess_payload.get("label") or None),
+        )
 
         # Suppress all narration until the user has finished the
         # first-launch wizard. This is the right gate for the

@@ -290,6 +290,9 @@ class SessionInfo:
     cwd: str = ""
     repo_name: str = ""
     repo_confidence: int = 0
+    # Explicit spoken label for sessions that have no repo (MCP connector
+    # sessions like Grok Bot). Wins over repo_name in ``_label_for``.
+    label: str = ""
     last_event: float = 0.0
     # Monotonic counter, bumped on every note_event. Used to break
     # ties when two sessions share a last_event timestamp (back-to-back
@@ -440,6 +443,8 @@ def _count_word(n: int) -> str:
 def _label_for(info: SessionInfo) -> str:
     """Spoken-friendly agent label. Falls back to a short session_id
     chunk if cwd / repo_name aren't available — better than no label."""
+    if info.label:
+        return info.label
     if info.repo_name:
         return info.repo_name
     return info.session_id[:8] if info.session_id else "agent"
@@ -486,6 +491,7 @@ class MultiAgentRouter:
         session_id: str,
         cwd: str = "",
         path_hint: str | None = None,
+        label: str | None = None,
     ) -> None:
         """Record that ``session_id`` just fired an event.
 
@@ -521,6 +527,7 @@ class MultiAgentRouter:
                     cwd=cwd or "",
                     repo_name=derived.name,
                     repo_confidence=derived.confidence,
+                    label=label or "",
                 )
                 self._sessions[session_id] = info
             else:
@@ -534,6 +541,8 @@ class MultiAgentRouter:
                 # hook without a tool_input).
                 if cwd and not info.cwd:
                     info.cwd = cwd
+            if label:
+                info.label = label
             self._event_counter += 1
             info.last_event = time.time()
             info.event_seq = self._event_counter
@@ -907,6 +916,10 @@ class MultiAgentRouter:
     def unpin(self) -> None:
         with self._lock:
             self._pinned = None
+
+    def pinned(self) -> str | None:
+        with self._lock:
+            return self._pinned
 
     # --- digest -----------------------------------------------------------
 

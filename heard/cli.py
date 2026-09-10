@@ -26,6 +26,12 @@ prefs_app = typer.Typer(
 app.add_typer(config_app, name="config", hidden=True)
 app.add_typer(prefs_app, name="preferences", hidden=True)
 app.add_typer(service_app, name="service")
+mcp_app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    help="MCP connector: let Grok Bot (or any MCP agent) talk through Heard.",
+)
+app.add_typer(mcp_app, name="mcp")
 
 
 @app.command(hidden=True)
@@ -127,6 +133,8 @@ def install(
     if agent == "codex" and hasattr(adapter, "set_enabled"):
         adapter.set_enabled(True)
     adapter.install()
+    if getattr(adapter, "IS_CONNECTOR", False):
+        return  # the adapter printed its own connector instructions
     onboarding.after_install(agent)
 
 
@@ -1424,3 +1432,71 @@ def service_uninstall() -> None:
     """Remove the LaunchAgent."""
     service.uninstall()
     typer.echo("LaunchAgent removed.")
+
+
+# --- MCP connector -------------------------------------------------------------
+
+
+@mcp_app.command("serve")
+def mcp_serve() -> None:
+    """Run the MCP connector server in the foreground (the LaunchAgent runs this)."""
+    from heard import mcp_server
+
+    mcp_server.serve()
+
+
+@mcp_app.command("url")
+def mcp_url(
+    snippet: bool = typer.Option(False, "--snippet", help="Also print the Bot instructions."),
+) -> None:
+    """Print the connector URL to paste into Grok (and whether the server is up)."""
+    from heard import mcp_server
+
+    cfg = config.load()
+    if not cfg.get("mcp_key"):
+        typer.echo("Not installed. Run: heard install grok-bot", err=True)
+        raise typer.Exit(1)
+    url = mcp_server.public_url(cfg)
+    alive = mcp_server.server_alive(cfg)
+    st = mcp_server.read_state()
+    typer.echo(f"server:  {'running' if alive else 'not running'} ({mcp_server.local_base(cfg)})")
+    typer.echo(f"tunnel:  {st.get('tunnel') or cfg.get('mcp_tunnel')}")
+    typer.echo(f"url:     {url or '(no public URL yet — see ' + str(mcp_server.log_path()) + ')'}")
+    if snippet:
+        typer.echo("")
+        typer.echo(mcp_server.bot_instructions())
+
+
+@mcp_app.command("key")
+def mcp_key(
+    rotate: bool = typer.Option(False, "--rotate", help="Generate a new key; old URLs stop working."),
+) -> None:
+    """Show (or rotate) the secret that guards the connector URL."""
+    from heard import mcp_server
+    from heard.adapters import grok_bot
+
+    cfg = config.load()
+    if rotate:
+        grok_bot.ensure_key(cfg, rotate=True)
+        if mcp_server.launchagent_installed():
+            mcp_server.launchagent_install()  # restart so the server picks up the key
+        typer.echo("Rotated. Re-run `heard mcp url` and paste the new URL into Grok.")
+        return
+    key = cfg.get("mcp_key") or ""
+    typer.echo(key if key else "(no key — run `heard install grok-bot`)")
+
+
+@app.command("reply")
+def reply_cmd(
+    session: str = typer.Argument(..., help='Agent session, e.g. "grok" or "grok:research".'),
+    text: str = typer.Argument(..., help="What to tell it. A bare number answers the pending question."),
+) -> None:
+    """Answer a connected agent (Grok Bot) from the terminal."""
+    from heard import mcp_server
+
+    if mcp_server.post_reply(session, text):
+        typer.echo("delivered")
+    else:
+        typer.echo("connector server not running — `heard mcp url` / `heard install grok-bot`", err=True)
+        raise typer.Exit(1)
+

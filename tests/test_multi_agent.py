@@ -748,3 +748,19 @@ def test_note_event_upgrades_repo_on_later_path_hint(tmp_path):
     r.note_event("s1", cwd=os.fspath(plain))
     assert r._sessions["s1"].repo_name == "strongname"
     assert r._sessions["s1"].repo_confidence == 2
+
+
+def test_explicit_label_wins_over_repo_and_session_chunk():
+    """MCP connector sessions have no cwd/repo; the event carries a spoken
+    label ("Grok research") that the pierce prefix must use instead of a
+    session-id chunk like "grok:res"."""
+    r = _new_router()
+    r.note_event("grok:research", cwd="", label="Grok research")
+    r.note_event("other-session", cwd="/Users/x/projects/api")
+    # SWARM: the connector's failure pierces with its label.
+    d = r.classify(kind="tool_post", tag="tool_post_failure", session_id="grok:research")
+    assert d.action == "speak"
+    assert d.label_prefix == "Agent Grok research: "
+    assert r.list_active()[0]["repo_name"] in ("Grok research", "api")
+    assert r.pinned() is None
+    assert r.pin("grok:research") and r.pinned() == "grok:research"

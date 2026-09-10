@@ -30,13 +30,27 @@ def _interpreter_env() -> tuple[str, dict[str, str]]:
     return exe, env
 
 
-def _plist_bytes(python_bin: str, log_path: str, env: dict[str, str]) -> bytes:
+def plist_path(label: str = LABEL) -> Path:
+    return LAUNCH_AGENTS_DIR / f"{label}.plist"
+
+
+def _plist_bytes(
+    python_bin: str,
+    log_path: str,
+    env: dict[str, str],
+    *,
+    label: str = LABEL,
+    module: str = "heard.daemon",
+) -> bytes:
     """Build the LaunchAgent plist as a dict and serialize via ``plistlib``
     so special characters in the interpreter path / log path / env values
-    are XML-escaped correctly instead of breaking the document."""
+    are XML-escaped correctly instead of breaking the document.
+
+    ``label`` / ``module`` let other long-running Heard processes (the MCP
+    connector server) reuse the same install/uninstall plumbing."""
     plist: dict[str, object] = {
-        "Label": LABEL,
-        "ProgramArguments": [python_bin, "-m", "heard.daemon"],
+        "Label": label,
+        "ProgramArguments": [python_bin, "-m", module],
         "RunAtLoad": True,
         "KeepAlive": True,
         "StandardOutPath": log_path,
@@ -47,30 +61,32 @@ def _plist_bytes(python_bin: str, log_path: str, env: dict[str, str]) -> bytes:
     return plistlib.dumps(plist)
 
 
-def install(log_path: str) -> None:
+def install(log_path: str, *, label: str = LABEL, module: str = "heard.daemon") -> None:
     LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
     exe, env = _interpreter_env()
-    PLIST_PATH.write_bytes(_plist_bytes(exe, log_path, env))
+    path = plist_path(label)
+    path.write_bytes(_plist_bytes(exe, log_path, env, label=label, module=module))
     subprocess.run(
-        ["launchctl", "unload", str(PLIST_PATH)],
+        ["launchctl", "unload", str(path)],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    subprocess.run(["launchctl", "load", str(PLIST_PATH)], check=False)
+    subprocess.run(["launchctl", "load", str(path)], check=False)
 
 
-def uninstall() -> None:
-    if not PLIST_PATH.exists():
+def uninstall(*, label: str = LABEL) -> None:
+    path = plist_path(label)
+    if not path.exists():
         return
     subprocess.run(
-        ["launchctl", "unload", str(PLIST_PATH)],
+        ["launchctl", "unload", str(path)],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    PLIST_PATH.unlink()
+    path.unlink()
 
 
-def is_installed() -> bool:
-    return PLIST_PATH.exists()
+def is_installed(*, label: str = LABEL) -> bool:
+    return plist_path(label).exists()

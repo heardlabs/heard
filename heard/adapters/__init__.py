@@ -1,11 +1,13 @@
 import shlex
 import sys
 
-from heard.adapters import claude_code, codex
+from heard.adapters import claude_code, codex, grok_bot
 
 ADAPTERS = {
     "claude-code": claude_code,
     "codex": codex,
+    # Connector (no hook): Grok Bot talks to Heard over MCP. See adapters/grok_bot.py.
+    "grok-bot": grok_bot,
 }
 
 
