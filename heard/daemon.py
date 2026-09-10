@@ -3163,6 +3163,10 @@ class Daemon:
             threading.Thread(
                 target=mcp_server.post_reply, args=(target, text), daemon=True
             ).start()
+            # The connector took it. The utterance listener is the voice
+            # front-end that resolves intent and drives a TERMINAL agent —
+            # handing it the same text would deliver it twice.
+            return
         cb = self._utterance_listener
         if cb is not None:
             try:

@@ -85,11 +85,11 @@ brew install cloudflared            # or ngrok
 heard install grok-bot              # prints + copies the connector URL and the Bot instructions
 ```
 
-Then in Grok: **Connectors → New Connector → Custom**, paste the URL, and give the Bot the standing instructions the installer printed (call `heard_speak` after each step, `heard_ask` for questions, `heard_listen` while idle). From then on the Bot's progress is spoken, its questions are read to you with numbered options, and you answer from the terminal (`heard reply grok "2"`) or by voice on Power with the Bot's session pinned.
+Then in Grok: **Connectors → New Connector → Custom**, paste the URL, and give the Bot the standing instructions the installer printed (call `heard_speak` after each step, `heard_ask` for questions, `heard_listen` while idle). From then on the Bot's progress is spoken, its questions are read to you with numbered options, and you answer from the terminal (`heard reply grok-bot "2"`) or by voice on Power with the Bot's session pinned.
 
 Tools the server exposes: `heard_speak`, `heard_ask`, `heard_wait`, `heard_listen`, `heard_status`. Any MCP-capable agent can use them - Claude Desktop, Cursor, or your own - Grok Bot is just the first that lives in the cloud.
 
-Honest limits: coverage is only as good as the Bot's instructions (Grok has no lifecycle hooks, so Heard hears what the Bot chooses to say); a Cloudflare quick tunnel gets a new hostname on every restart, so you'll re-paste after a reboot (use ngrok with a free static domain for a stable URL: `heard config set mcp_tunnel ngrok` + `heard config set mcp_tunnel_domain <you>.ngrok-free.app`); and your Mac has to be awake since it runs the server. The connector never talks to Heard's servers - the only outbound connection is the tunnel you chose.
+Honest limits: coverage is only as good as the Bot's instructions (Grok Bot has no lifecycle hooks, so Heard hears what the Bot chooses to say; Grok Build, the local CLI, is a different product and gets a hook adapter); a Cloudflare quick tunnel gets a new hostname on every restart, so you'll re-paste after a reboot (use ngrok with a free static domain for a stable URL: `heard config set mcp_tunnel ngrok` + `heard config set mcp_tunnel_domain <you>.ngrok-free.app`); and your Mac has to be awake since it runs the server. The connector never talks to Heard's servers - the only outbound connection is the tunnel you chose.
 
 ## Plans
 

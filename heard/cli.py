@@ -1462,6 +1462,9 @@ def mcp_url(
     typer.echo(f"server:  {'running' if alive else 'not running'} ({mcp_server.local_base(cfg)})")
     typer.echo(f"tunnel:  {st.get('tunnel') or cfg.get('mcp_tunnel')}")
     typer.echo(f"url:     {url or '(no public URL yet — see ' + str(mcp_server.log_path()) + ')'}")
+    if (st.get("tunnel") or cfg.get("mcp_tunnel")) == "cloudflared":
+        typer.echo("note:    quick-tunnel hostnames change on every restart — re-paste into Grok after a"
+                   " reboot, or use ngrok with a static domain (mcp_tunnel=ngrok, mcp_tunnel_domain=…).")
     if snippet:
         typer.echo("")
         typer.echo(mcp_server.bot_instructions())
@@ -1488,7 +1491,7 @@ def mcp_key(
 
 @app.command("reply")
 def reply_cmd(
-    session: str = typer.Argument(..., help='Agent session, e.g. "grok" or "grok:research".'),
+    session: str = typer.Argument(..., help='"grok-bot" (the Bot that spoke last) or a Bot name, e.g. "research".'),
     text: str = typer.Argument(..., help="What to tell it. A bare number answers the pending question."),
 ) -> None:
     """Answer a connected agent (Grok Bot) from the terminal."""

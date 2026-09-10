@@ -31,8 +31,22 @@ The connector never phones home — the only outbound connection is the
 tunnel the user chose.
 
 Sessions: each agent is a Heard session ``"<agent>:<name>"`` (default
-``grok:grok``) with a spoken label ("Grok", "Grok research"), so it can be
-pinned, recapped and remembered like a terminal session.
+``grok-bot:default``) with a spoken label ("Grok", "Grok research"), so it can
+be pinned, recapped and remembered like a terminal session. The ``grok-bot:``
+prefix is deliberate: xAI also ships *Grok Build*, a local CLI that Heard
+reaches through hooks (sessions labelled ``grok-build``), and the two must
+never share a prefix.
+
+v1 limits (documented, not designed around):
+  * One JSON-RPC session id for every client. One Bot is the target; two Bots
+    or a reconnect are indistinguishable at the transport level — they are
+    told apart only by the ``session`` name each passes.
+  * A reply that carries no nonce (``heard reply``, dictation) is handed to
+    the NEWEST unanswered ask on that session. Two overlapping asks on the
+    same session can therefore swap answers; give each Bot its own session.
+  * ``/reply`` and ``/health`` details need the key; loopback is not
+    authentication anywhere here, because the tunnel daemon also connects
+    from 127.0.0.1.
 """
 
 from __future__ import annotations
@@ -59,8 +73,8 @@ except Exception:  # pragma: no cover - version is always present in-tree
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 LAUNCH_LABEL = "dev.heard.mcp"
-DEFAULT_AGENT = "grok"
-DEFAULT_SESSION = "grok"
+DEFAULT_AGENT = "grok-bot"
+DEFAULT_SESSION = "default"
 MAX_WAIT_S = 30.0   # Grok's tool-call timeout is undocumented; stay well under it
 MAX_OPTIONS = 6
 _REPLY_TTL_S = 15 * 60
@@ -68,7 +82,7 @@ _REPLY_TTL_S = 15 * 60
 # Session-id prefixes the daemon treats as connector sessions: a user
 # utterance addressed to one of these (explicitly, or via the pinned
 # session) is forwarded to this server instead of typed into a terminal.
-CONNECTOR_AGENTS = ("grok", "mcp")
+CONNECTOR_AGENTS = ("grok-bot", "mcp")
 
 
 def is_connector_session(session_id: str | None) -> bool:
@@ -82,8 +96,8 @@ def session_id_for(agent: str, name: str) -> str:
 
 def label_for(agent: str, name: str) -> str:
     """Spoken label the router prefixes on pierces ("Agent Grok: …")."""
-    if agent == "grok":
-        return "Grok" if name in ("", DEFAULT_SESSION, "default") else f"Grok {name}"
+    if agent == "grok-bot":
+        return "Grok" if name in ("", DEFAULT_SESSION) else f"Grok {name}"
     return name or agent
 
 
@@ -208,12 +222,12 @@ def bot_instructions(name: str = "<bot name>") -> str:
 
 _SESSION_PROP = {
     "type": "string",
-    "description": 'Your session name, e.g. the Bot\'s name. Default "grok".',
+    "description": "Your session name, e.g. the Bot's name. One name per Bot.",
 }
 _AGENT_PROP = {
     "type": "string",
     "enum": list(CONNECTOR_AGENTS),
-    "description": 'Which kind of agent you are. "grok" for Grok Bot (default), "mcp" for anything else.',
+    "description": 'Which kind of agent you are. "grok-bot" for Grok Bot (default), "mcp" for anything else.',
 }
 
 TOOLS: list[dict[str, Any]] = [
@@ -605,8 +619,29 @@ class _Handler(BaseHTTPRequestHandler):
     tools: Tools
     state: dict[str, Any]
 
-    def log_message(self, fmt: str, *args: Any) -> None:  # quiet; we log ourselves
-        _log("http", line=(fmt % args) if args else fmt)
+    # Logging: the request line is ``POST /mcp/<key>`` — the key is the whole
+    # secret, so it must never reach mcp.log. Log method + path-with-key-
+    # redacted + status, and redact the key from any error text as well.
+    def _redacted_path(self) -> str:
+        path = (self.path or "").split("?", 1)[0]
+        if self.key and self.key in path:
+            path = path.replace(self.key, "<key>")
+        parts = path.split("/")
+        if len(parts) >= 3 and parts[1] in ("mcp", "reply") and parts[2] not in ("", "<key>"):
+            parts[2] = "<key>"  # a wrong key is still someone's secret attempt
+        return "/".join(parts)
+
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        _log("http", method=getattr(self, "command", "?"), path=self._redacted_path(), status=str(code))
+
+    def log_error(self, fmt: str, *args: Any) -> None:
+        text = (fmt % args) if args else fmt
+        if self.key:
+            text = text.replace(self.key, "<key>")
+        _log("http_error", line=text[:200])
+
+    def log_message(self, fmt: str, *args: Any) -> None:  # anything else stays out of the log
+        return
 
     # -- helpers --
     def _send_json(self, status: int, body: Any, extra: dict[str, str] | None = None) -> None:
@@ -692,11 +727,19 @@ class _Handler(BaseHTTPRequestHandler):
     # -- verbs --
     def do_GET(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
-        if path == "/health":
-            self._send_json(200, {
-                "ok": True, "version": _VERSION, "tunnel": self.state.get("tunnel"),
-                "origin": self.state.get("origin"), "sessions": sorted(self.tools.sessions),
-            })
+        if path == "/health" or path.startswith("/health/"):
+            # Liveness needs no key (the CLI probes it before it has one), but
+            # details (version, tunnel origin, session names) are reachable
+            # through the tunnel, so they require the key.
+            parts = path.rstrip("/").split("/")
+            path_key = parts[2] if len(parts) >= 3 else ""
+            if self._auth_ok(path_key):
+                self._send_json(200, {
+                    "ok": True, "version": _VERSION, "tunnel": self.state.get("tunnel"),
+                    "origin": self.state.get("origin"), "sessions": sorted(self.tools.sessions),
+                })
+            else:
+                self._send_json(200, {"ok": True})
             return
         if self._mcp_key_from_path() is not None:
             # No server→client stream in v1; the spec allows 405 here.
@@ -730,8 +773,13 @@ class _Handler(BaseHTTPRequestHandler):
             if not sid:
                 self._send_json(400, {"ok": False, "error": "no_session"})
                 return
-            if ":" not in sid:  # bare name → default agent
-                sid = session_id_for(DEFAULT_AGENT, sid)
+            if ":" not in sid:
+                # `heard reply grok-bot "2"` → the Bot that spoke last (else the
+                # default session); `heard reply research "2"` → that Bot by name.
+                if sid == DEFAULT_AGENT:
+                    sid = self.hub.last_session or session_id_for(DEFAULT_AGENT, DEFAULT_SESSION)
+                else:
+                    sid = session_id_for(DEFAULT_AGENT, sid)
             index = body.get("index")
             nonce = body.get("nonce") or self.hub.pending_ask_for(sid)
             if not text and index is None:
@@ -838,13 +886,36 @@ def _supervise_tunnel(cfg: dict[str, Any], port: int, state: dict[str, Any], sto
         backoff = min(60.0, backoff * 2)
 
 
+def wait_for_key(poll_s: float = 5.0, *, stop: threading.Event | None = None) -> dict[str, Any] | None:
+    """Block until config carries ``mcp_key``; return the config.
+
+    The LaunchAgent runs with KeepAlive, so exiting on a missing key would
+    make launchd respawn the server every few seconds forever. Waiting is
+    the honest behaviour: the key appears the moment `heard install
+    grok-bot` runs, and the server picks it up without a restart."""
+    warned = False
+    while True:
+        cfg = config.load()
+        if cfg.get("mcp_key"):
+            return cfg
+        if not warned:
+            _log("waiting_for_key")
+            print("mcp: no key configured yet — waiting for `heard install grok-bot`.", file=sys.stderr)
+            warned = True
+        if stop is not None:
+            if stop.wait(poll_s):
+                return None
+        else:
+            time.sleep(poll_s)
+
+
 def serve(cfg: dict[str, Any] | None = None) -> None:
     """Blocking entry point for `heard mcp serve` / the LaunchAgent."""
     cfg = cfg or config.load()
     key = cfg.get("mcp_key") or ""
     if not key:
-        print("mcp: no key configured — run `heard install grok-bot` first.", file=sys.stderr)
-        sys.exit(2)
+        cfg = wait_for_key() or cfg
+        key = cfg.get("mcp_key") or ""
     port = int(cfg.get("mcp_port") or 7391)
     state: dict[str, Any] = {"tunnel": None, "origin": ""}
     srv = make_server(key, port, state=state)

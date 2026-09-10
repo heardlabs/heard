@@ -88,7 +88,7 @@ def print_instructions(url: str | None, *, copied: bool) -> None:
         print("  free static domain: `heard config set mcp_tunnel ngrok` and")
         print("  `heard config set mcp_tunnel_domain <your>.ngrok-free.app`.")
         print()
-    print("  Reply from the terminal any time:  heard reply grok \"go with option 2\"")
+    print("  Reply from the terminal any time:  heard reply grok-bot \"go with option 2\"")
     print("  Status / URL later:                heard mcp url")
     print()
 
