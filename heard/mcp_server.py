@@ -133,12 +133,28 @@ def local_base(cfg: dict[str, Any] | None = None) -> str:
     return f"http://127.0.0.1:{int(cfg.get('mcp_port') or 7391)}"
 
 
-def server_alive(cfg: dict[str, Any] | None = None, timeout_s: float = 1.0) -> bool:
-    import urllib.request
+def _loopback_request(
+    cfg: dict[str, Any] | None, method: str, path: str, body: bytes | None, headers: dict[str, str], timeout_s: float
+) -> int:
+    """Talk to the local server over http.client (not urllib): loopback only,
+    never proxied, and it stays usable under the test suite's no-network
+    floor, which replaces ``urllib.request.urlopen`` wholesale."""
+    import http.client
 
+    port = int((cfg or config.load()).get("mcp_port") or 7391)
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout_s)
     try:
-        with urllib.request.urlopen(f"{local_base(cfg)}/health", timeout=timeout_s) as r:
-            return r.status == 200
+        conn.request(method, path, body=body, headers=headers)
+        r = conn.getresponse()
+        r.read()
+        return r.status
+    finally:
+        conn.close()
+
+
+def server_alive(cfg: dict[str, Any] | None = None, timeout_s: float = 1.0) -> bool:
+    try:
+        return _loopback_request(cfg, "GET", "/health", None, {}, timeout_s) == 200
     except Exception:
         return False
 
@@ -154,24 +170,19 @@ def post_reply(
 ) -> bool:
     """Deliver a user reply to a connector session (loopback). Used by the
     CLI and by the daemon's utterance seam. False if the server is down."""
-    import urllib.request
-
     cfg = cfg or config.load()
     key = cfg.get("mcp_key") or ""
-    body = {"session": session_id, "text": text}
+    body: dict[str, Any] = {"session": session_id, "text": text}
     if nonce:
         body["nonce"] = nonce
     if index is not None:
         body["index"] = index
-    req = urllib.request.Request(
-        f"{local_base(cfg)}/reply",
-        data=json.dumps(body).encode("utf-8"),
-        headers={"content-type": "application/json", "authorization": f"Bearer {key}"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as r:
-            return r.status == 200
+        status = _loopback_request(
+            cfg, "POST", "/reply", json.dumps(body).encode("utf-8"),
+            {"content-type": "application/json", "authorization": f"Bearer {key}"}, timeout_s,
+        )
+        return status == 200
     except Exception:
         return False
 
