@@ -26,6 +26,7 @@ import json
 import os
 import random
 import ssl
+import sys
 import threading
 import time
 import urllib.error
@@ -115,6 +116,23 @@ def _is_ci() -> bool:
     product analytics. Local source runs (no CI var) still emit, tagged
     $environment=dev so they stay filterable."""
     return bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
+
+
+def _is_macos() -> bool:
+    """Heard only runs on macOS, so an event from any other OS is synthetic:
+    a package scanner, mirror or cloud-agent sandbox installing the public
+    package or running its test suite on a Linux box. Measured 2026-09:
+    ~21k `app_first_launched` from x86_64 Linux hosts (SC/US/HK/SG, no macOS
+    version) over 30 days, each minting a fresh anonymous install and
+    burying the real dev numbers. Drop them at the source."""
+    return sys.platform == "darwin"
+
+
+def _suppressed() -> bool:
+    """One gate for every outbound event: CI runners and non-Mac hosts never
+    send. (The test suite is additionally stubbed at the network layer in
+    tests/conftest.py.)"""
+    return _is_ci() or not _is_macos()
 
 
 def _post(payload: dict, endpoint: str) -> None:
@@ -211,7 +229,7 @@ def capture(
     the person's profile properties (e.g. their current ``plan`` after an
     upgrade). Without this, person props only get set at sign-in and go
     stale the moment someone upgrades or churns."""
-    if _is_ci():
+    if _suppressed():
         return
     if not _consent_for(event):
         return
@@ -238,7 +256,7 @@ def identify(user_id: str, email: str = "", properties: dict[str, Any] | None = 
     $anon_distinct_id back-fills pre-signin events into the user's
     profile (so we can measure "did they go landing → signup → first
     narration" as one funnel)."""
-    if _is_ci():
+    if _suppressed():
         return
     if not user_id:
         return

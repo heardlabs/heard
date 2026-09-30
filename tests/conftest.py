@@ -29,6 +29,27 @@ import pytest
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _analytics_never_leaves_this_machine():
+    """Session-wide floor: the suite must never emit a REAL analytics event.
+
+    `analytics.capture()` is on by default and `_post()` does a live HTTPS
+    POST to PostHog on a daemon thread. Without this, every `pytest` run on a
+    developer's Mac (or anyone's fork) posts real events, and each run's
+    fresh config mints a new anonymous install: the heard-v3 suite made 98
+    such POSTs per run before it got the same floor (2026-09-09).
+
+    `_post` is replaced (not `capture`), so payload construction and every
+    call site stay under test and nothing leaves the machine. Plain
+    assignment, not monkeypatch, so it outlives every test: capture() posts
+    from a daemon thread that can fire after a test's own patches are torn
+    down. Do NOT opt out; assert on `analytics.capture` in your own test."""
+    from heard import analytics as _an
+
+    _an._post = lambda *_a, **_kw: None
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _heard_once_store_floor(tmp_path_factory):
     """Isolate notify's persistent one-shot store (~/.heard/notify-once.json) for the whole
     run. It's a module-level ~/.heard constant, not config.DATA_DIR-derived, so the per-test
