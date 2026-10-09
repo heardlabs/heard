@@ -51,6 +51,7 @@ The engine in this repo is open source under Apache 2.0 and needs no account or 
 - Speech comes from Kokoro text-to-speech on your Mac (the model downloads once on first use).
 - Without an Anthropic key, narration comes from local templates, so nothing about your session leaves the machine.
 - It speaks; it does not listen. Push to talk and voice replies are app features on Power.
+- Add your own keys only if you want ElevenLabs voices or LLM-written summaries.
 
 ```bash
 git clone https://github.com/heardlabs/heard.git && cd heard
