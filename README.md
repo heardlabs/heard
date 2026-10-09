@@ -44,6 +44,23 @@
 
 <br/>
 
+## Runs fully local
+
+The engine in this repo is open source under Apache 2.0 and needs no account or API keys:
+
+- Speech comes from Kokoro text-to-speech on your Mac (the model downloads once on first use).
+- Without an Anthropic key, narration comes from local templates, so nothing about your session leaves the machine.
+- It speaks; it does not listen. Push to talk and voice replies are app features on Power.
+- Add your own keys only if you want ElevenLabs voices or LLM-written summaries.
+
+```bash
+git clone https://github.com/heardlabs/heard.git && cd heard
+python3 -m venv .venv && source .venv/bin/activate && pip install -e .
+heard install claude-code        # or: heard install codex
+```
+
+Full options in [Self-host](#self-host-open-source). Comparing local voice tools for coding agents? See [open-source voice tools for coding agents](https://heard.dev/compare/open-source-voice-tools-for-coding-agents?utm_source=github&utm_medium=organic&utm_campaign=readme-local).
+
 ## See and hear it run
 🔊 Turn sound on for demo
 
