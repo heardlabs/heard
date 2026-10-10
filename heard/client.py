@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import json
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
 from typing import Any
 
 from heard import config, markdown, notify, spoken, templates
+from heard.platform import locks as _locks
+from heard.platform import process as _process
+from heard.platform import sockets as _sockets
 
 # Memory-guard threshold. If the system is using more than this fraction
 # of RAM, we refuse to spawn a daemon — better to drop a narration than
@@ -93,44 +93,25 @@ def _macos_memory_pressure() -> float | None:
 
 
 def _other_daemon_pids() -> list[int]:
-    """Find heard.daemon processes other than ourselves via pgrep.
-    Empty list if pgrep isn't available — we still have the file-lock
-    + socket-bind checks as belt-and-suspenders."""
-    pgrep = shutil.which("pgrep")
-    if not pgrep:
-        return []
-    try:
-        out = subprocess.run(
-            [pgrep, "-f", "heard.daemon"],
-            capture_output=True, text=True, timeout=1.0,
-        ).stdout
-    except Exception:
-        return []
-    pids: list[int] = []
-    me = os.getpid()
-    for line in out.splitlines():
-        try:
-            pid = int(line.strip())
-        except ValueError:
-            continue
-        if pid != me:
-            pids.append(pid)
-    return pids
+    """Find heard.daemon processes other than ourselves.
+
+    POSIX: ``pgrep -f`` (returns [] when absent — the file-lock and
+    socket-bind checks are the backstop).
+    Windows: ``psutil.process_iter``."""
+    return _process.find_pids_matching("heard.daemon")
 
 
 def is_daemon_alive() -> bool:
+    """True when a daemon answers a ``ping`` at the IPC endpoint.
+
+    On Windows there is no socket file to stat, so the fast-path
+    ``os.path.exists`` check is replaced by
+    :func:`platform.sockets.endpoint_exists`, which looks for the
+    sidecar files instead."""
     sock = str(config.SOCKET_PATH)
-    if not os.path.exists(sock):
+    if not _sockets.endpoint_exists(sock):
         return False
-    try:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(0.3)
-        s.connect(sock)
-        s.sendall(json.dumps({"cmd": "ping"}).encode())
-        s.close()
-        return True
-    except Exception:
-        return False
+    return _sockets.ping(sock, timeout_s=0.3)
 
 
 def _wait_for_daemon(timeout_s: float) -> bool:
@@ -182,21 +163,20 @@ def start_headless_daemon() -> bool:
     # holding it means a daemon is already starting up — wait briefly
     # for that other process's daemon to come up rather than racing.
     try:
-        lock_fd = os.open(str(_SPAWN_LOCK_PATH), os.O_CREAT | os.O_RDWR, 0o600)
+        lock = _locks.try_exclusive(_SPAWN_LOCK_PATH)
+    except _locks.LockBusy:
+        # Another caller is mid-spawn. Wait for *their* daemon.
+        return _wait_for_daemon(8.0)
     except OSError:
         # Couldn't even create the lockfile — give up gracefully.
         return is_daemon_alive()
 
-    acquired = False
+    acquired = True
     try:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
-        except OSError as e:
-            if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
-                return is_daemon_alive()
-            # Another caller is mid-spawn. Wait for *their* daemon.
-            return _wait_for_daemon(8.0)
+        # Re-check inside the lock — someone may have spawned a daemon
+        # between our first check and acquiring the lock.
+        if is_daemon_alive():
+            return True
 
         # Re-check inside the lock — someone may have spawned a daemon
         # between our first check and acquiring the lock.
@@ -236,16 +216,16 @@ def start_headless_daemon() -> bool:
         if others:
             for pid in others:
                 try:
-                    os.kill(pid, signal.SIGTERM)
-                except OSError:
+                    _process.terminate_pid(pid)
+                except Exception:
                     pass
             deadline = time.monotonic() + 2.0
-            while time.monotonic() < deadline and _other_daemon_pids():
+            while time.monotonic() < deadline and _process.find_pids_matching("heard.daemon"):
                 time.sleep(0.1)
-            for pid in _other_daemon_pids():
+            for pid in _process.find_pids_matching("heard.daemon"):
                 try:
-                    os.kill(pid, signal.SIGKILL)
-                except OSError:
+                    _process.terminate_pid(pid)
+                except Exception:
                     pass
             print(
                 f"heard: reaped {len(others)} wedged heard.daemon orphan(s) "
@@ -254,12 +234,9 @@ def start_headless_daemon() -> bool:
                 file=sys.stderr, flush=True,
             )
 
-        # Stale socket from a previous unclean shutdown — safe to remove
+        # Stale endpoint from a previous unclean shutdown — safe to remove
         # only because we've confirmed no other daemon owns it.
-        try:
-            os.unlink(config.SOCKET_PATH)
-        except FileNotFoundError:
-            pass
+        _sockets.unlink(config.SOCKET_PATH)
 
         # Open logf in a context — Popen dups the fd into the child
         # process, so closing on our side after spawn is safe and
@@ -277,33 +254,19 @@ def start_headless_daemon() -> bool:
             env["PYTHONHOME"] = f"{bundle_root}/Contents/Resources"
 
         with open(config.LOG_PATH, "a", encoding="utf-8") as logf:
-            subprocess.Popen(
+            _process.spawn_detached(
                 [exe, "-m", "heard.daemon"],
-                stdin=subprocess.DEVNULL,
                 stdout=logf,
                 stderr=logf,
-                start_new_session=True,
-                env=env,
             )
         return _wait_for_daemon(20.0)
     finally:
         if acquired:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            except Exception:
-                pass
-        try:
-            os.close(lock_fd)
-        except Exception:
-            pass
+            lock.close()
 
 
 def send(payload: dict) -> None:
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(2.0)
-    s.connect(str(config.SOCKET_PATH))
-    s.sendall(json.dumps(payload).encode())
-    s.close()
+    _sockets.send(str(config.SOCKET_PATH), payload, timeout_s=2.0)
 
 
 def request(payload: dict, timeout_s: float = 2.0) -> dict:
@@ -312,31 +275,7 @@ def request(payload: dict, timeout_s: float = 2.0) -> dict:
     our half-close before replying, so we shutdown(SHUT_WR) after
     sending. Returns {} on any failure — callers treat that as
     'daemon unreachable'."""
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout_s)
-    try:
-        s.connect(str(config.SOCKET_PATH))
-        s.sendall(json.dumps(payload).encode())
-        s.shutdown(socket.SHUT_WR)
-        buf = b""
-        while True:
-            chunk = s.recv(8192)
-            if not chunk:
-                break
-            buf += chunk
-    except Exception:
-        return {}
-    finally:
-        try:
-            s.close()
-        except Exception:
-            pass
-    if not buf:
-        return {}
-    try:
-        return json.loads(buf.decode("utf-8", errors="ignore"))
-    except Exception:
-        return {}
+    return _sockets.request(str(config.SOCKET_PATH), payload, timeout_s=timeout_s)
 
 
 def get_status() -> dict:

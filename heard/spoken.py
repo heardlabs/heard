@@ -12,8 +12,6 @@ which is more than enough for a single CC session's worth of messages.
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -22,6 +20,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from heard import config
+from heard.platform import locks as _locks
 
 # Cap so the file never grows past a few KB even on long sessions.
 _MAX_HASHES = 500
@@ -54,34 +53,25 @@ class _SessionLock:
 
     def __init__(self, session_id: str) -> None:
         self._path = _lock_path(session_id)
-        self._fd: int | None = None
+        self._lock: _locks.FileLock | None = None
 
     def __enter__(self) -> _SessionLock:
         try:
-            self._fd = os.open(str(self._path), os.O_CREAT | os.O_RDWR, 0o600)
-        except OSError:
-            self._fd = None
-            return self
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_EX)
-        except OSError as e:
-            if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
-                # Lock truly failed — give up, leave _fd open for close.
-                pass
+            self._lock = _locks.exclusive(self._path)
+        except Exception:
+            # Lock truly failed — proceed unlocked rather than blocking
+            # the user's hook. See module docstring on why we swallow.
+            self._lock = None
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if self._fd is None:
+        if self._lock is None:
             return
         try:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            self._lock.close()
         except Exception:
             pass
-        try:
-            os.close(self._fd)
-        except Exception:
-            pass
-        self._fd = None
+        self._lock = None
 
 
 def _hash(text: str) -> str:

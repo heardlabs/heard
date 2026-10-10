@@ -254,6 +254,18 @@ The engine in this repo is Apache 2.0. The easiest places to contribute are adap
 
 **Open-source engine:** macOS · Claude Code, Codex CLI and Codex app adapters · anything else through `heard run`.
 
+**Windows (headless, experimental):**
+```powershell
+   git clone https://github.com/heardlabs/heard.git
+   cd heard
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -e .
+   winget install Gyan.FFmpeg        # ffplay, needed for MP3 voices and speed changes
+   heard install claude-code
+```
+   Local Kokoro needs a one-time model download (see below). Windows has no menu-bar app yet, so run the daemon with `heard daemon` or let the first hook start it.
+
 ## Status
 
 **Releases on this repo are the official closed app** (the download surface); this open-source engine is built from source, see [Self-host](#self-host-open-source). The current app is **Heard 2.0**: rebuilt as a native app, with cloud-agent connectors, Parrot, push to talk and hands-free dictation, and the edge light that replaced the notch. The engine here keeps judgment-based narration, the three listening modes, multi-agent narration, and automatic failover across ElevenLabs, Speechify and local Kokoro. Used daily by the author.

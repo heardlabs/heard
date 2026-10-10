@@ -1,5 +1,13 @@
-"""macOS LaunchAgent integration so the daemon auto-starts on login."""
+"""Autostart integration so the daemon starts when the user logs in.
 
+macOS: LaunchAgent plist (``launchctl``).
+Windows: Task Scheduler (``schtasks /create``). The full Windows
+implementation — a scheduled task that runs
+``python -m heard.daemon`` at logon — is Phase 2. For now,
+``install`` is a no-op on Windows with a clear message rather than a
+silent one, so the CLI command exists and the user knows why nothing
+was set up.
+"""
 from __future__ import annotations
 
 import plistlib
@@ -7,9 +15,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
+_IS_DARWIN = sys.platform == "darwin"
+
 LABEL = "dev.heard.daemon"
-PLIST_PATH = LAUNCH_AGENTS_DIR / f"{LABEL}.plist"
+
+if _IS_DARWIN:
+    LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
+    PLIST_PATH = LAUNCH_AGENTS_DIR / f"{LABEL}.plist"
 
 
 def _interpreter_env() -> tuple[str, dict[str, str]]:
@@ -48,6 +60,11 @@ def _plist_bytes(python_bin: str, log_path: str, env: dict[str, str]) -> bytes:
 
 
 def install(log_path: str) -> None:
+    if not _IS_DARWIN:
+        print("heard service install: macOS LaunchAgent is macOS-only. "
+              "Windows autostart via Task Scheduler is planned for Phase 2.",
+              file=sys.stderr)
+        return
     LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
     exe, env = _interpreter_env()
     PLIST_PATH.write_bytes(_plist_bytes(exe, log_path, env))
@@ -61,6 +78,10 @@ def install(log_path: str) -> None:
 
 
 def uninstall() -> None:
+    if not _IS_DARWIN:
+        print("heard service uninstall: macOS LaunchAgent is macOS-only.",
+              file=sys.stderr)
+        return
     if not PLIST_PATH.exists():
         return
     subprocess.run(
@@ -73,4 +94,6 @@ def uninstall() -> None:
 
 
 def is_installed() -> bool:
+    if not _IS_DARWIN:
+        return False
     return PLIST_PATH.exists()

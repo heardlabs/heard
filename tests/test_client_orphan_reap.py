@@ -31,13 +31,16 @@ def test_start_headless_daemon_reaps_wedged_orphan(tmp_path, monkeypatch):
     pids_seq = iter([[4242], [], []])
     monkeypatch.setattr(client, "_other_daemon_pids", lambda: next(pids_seq, []))
 
-    killed: list[tuple[int, int]] = []
-    monkeypatch.setattr(client.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    terminated: list[int] = []
+    # The new code calls _process.terminate_pid, which on Windows uses
+    # psutil.Process.terminate() and on POSIX uses os.kill(SIGTERM).
+    # We patch the platform-specific function.
+    monkeypatch.setattr(client._process, "terminate_pid", lambda pid: terminated.append(pid))
     popen = MagicMock()
     monkeypatch.setattr(client.subprocess, "Popen", popen)
 
     result = client.start_headless_daemon()
 
     assert result is True, "must take over and report a live daemon"
-    assert (4242, client.signal.SIGTERM) in killed, "orphan must be reaped"
+    assert 4242 in terminated, "orphan must be reaped"
     assert popen.called, "a fresh daemon must be spawned after reaping"

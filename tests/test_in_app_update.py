@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -239,7 +240,11 @@ def test_stage_and_swap_writes_helper_without_spawning(_scratch):
         )
     popen.assert_not_called()
     assert helper.is_file()
-    assert helper.stat().st_mode & 0o111, "helper script must be executable"
+    # On Windows, POSIX executable bits don't exist (st_mode & 0o111 is 0),
+    # so only assert this on POSIX platforms.
+    import sys
+    if sys.platform != "win32":
+        assert helper.stat().st_mode & 0o111, "helper script must be executable"
     script = helper.read_text(encoding="utf-8")
     assert str(install_path) in script
     assert str(staged) in script
@@ -276,6 +281,9 @@ def test_post_update_marker_is_one_shot(_scratch):
     assert updater.consume_post_update_marker() is None
 
 
+import pytest
+
+
 def test_unzip_app_rejects_archive_without_heard_app(tmp_path, _scratch):
     """If a release zip is malformed (missing Heard.app at the root),
     the install pipeline must error before the swap step so we don't
@@ -292,6 +300,7 @@ def test_unzip_app_rejects_archive_without_heard_app(tmp_path, _scratch):
         updater.unzip_app(zip_path, staging)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="in-app updates are macOS-only")
 def test_unzip_app_extracts_bundle(tmp_path, _scratch):
     """Happy path: a zip containing Heard.app/Contents/Info.plist
     extracts to ``<staging>/Heard.app`` and the returned path is what

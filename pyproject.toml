@@ -28,6 +28,9 @@ dependencies = [
     "pyyaml>=6.0",
     "platformdirs>=4.0",
     "anthropic>=0.40.0",
+    # Cross-platform primitives for Windows port (Phase 1)
+    "portalocker>=3.0",
+    "psutil>=5.9",
     # The py2app-frozen Python has no system CA path, so urllib.request
     # / httpx / requests all fail CERTIFICATE_VERIFY_FAILED. Pin certifi
     # explicitly so it's installed and bundled, then point SSL_CERT_FILE
@@ -41,22 +44,12 @@ dependencies = [
     "charset-normalizer>=3.0",
     "idna>=3.0",
     "urllib3>=2.0",
-    "rumps>=0.4",
-    # Explicit pyobjc frameworks for the WKWebView onboarding window.
-    # rumps brings pyobjc-core but not these — without them, importing
-    # heard.key_window fails on a fresh CI runner.
-    "pyobjc-framework-Cocoa>=10.0",
-    "pyobjc-framework-WebKit>=10.0",
-    # CGEvent keystroke synthesis for the action seam (typing into the focused
-    # app / ambient cursor-typing). pyobjc-core has the bridge but not the
-    # Quartz/CoreGraphics framework, so declare it explicitly.
-    "pyobjc-framework-Quartz>=10.0",
-    # AXIsProcessTrustedWithOptions for the Accessibility trust check
-    # (accessibility.py). Imported but previously UNDECLARED — the release only
-    # got it transitively; without it is_trusted() throws on import and silently
-    # returns False, so AX features (hotkeys, action seam) never work. Declare
-    # it so every build has it.
-    "pyobjc-framework-ApplicationServices>=10.0",
+    # macOS-only UI and AppKit frameworks (guarded by markers for Windows compatibility)
+    "rumps>=0.4; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-WebKit>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10.0; sys_platform == 'darwin'",
     # Pulled in transitively by kokoro-onnx. Pinned <1.26 because
     # onnxruntime 1.26.0 dropped the macOS arm64 cp312 wheel (only
     # cp311 / cp313 / cp314 ship for Mac on that release), and our

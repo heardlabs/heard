@@ -16,8 +16,10 @@ log doesn't accumulate forever — it's meant to be ephemeral.
 
 Concurrency: the daemon is the sole writer (single process).
 Readers (`heard history`, `heard improve`) are separate CLI
-invocations that open the file read-only. We use ``fcntl.flock``
-when truncating so a reader doesn't see a half-truncated file.
+invocations that open the file read-only. We use an exclusive
+advisory lock when truncating so a reader doesn't see a half-truncated
+file. macOS/Linux uses ``fcntl.flock``; Windows uses ``msvcrt.locking``
+(see ``heard.platform.locks``).
 
 Privacy: strictly local. Nothing in this module touches the network.
 ``heard improve`` is the only thing that does, and only when YOU run
@@ -26,16 +28,14 @@ it.
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import json
-import os
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from heard import config
+from heard.platform import locks as _locks
 
 
 def new_utterance_id() -> str:
@@ -193,15 +193,14 @@ def commit_checkpoint_and_prune(new_offset: int) -> None:
     path = _history_path()
     if not path.exists() or new_offset <= 0:
         return
-    lock_fd = None
+    # Exclusive advisory lock so a concurrent append blocks rather than
+    # splicing into a half-truncated file. ``_locks.exclusive`` is the
+    # cross-platform wrapper: fcntl.flock on macOS/Linux, msvcrt.locking
+    # on Windows.
     try:
-        lock_fd = os.open(str(path), os.O_RDWR)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-    except OSError as e:
-        if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
-            if lock_fd is not None:
-                os.close(lock_fd)
-            return
+        lock = _locks.exclusive(path)
+    except Exception:
+        return
 
     try:
         # Read everything past new_offset, then rewrite the file
@@ -219,12 +218,10 @@ def commit_checkpoint_and_prune(new_offset: int) -> None:
         # the same entries next run than to lose them.
         pass
     finally:
-        if lock_fd is not None:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            except Exception:
-                pass
-            os.close(lock_fd)
+        try:
+            lock.close()
+        except Exception:
+            pass
 
 
 def _read_checkpoint() -> int:

@@ -635,8 +635,10 @@ def test_find_project_root_stops_at_home_dir(tmp_path, monkeypatch):
     plain = fake_home / "Downloads"
     plain.mkdir()
     (plain / "file.txt").write_text("")
+    # On Windows, expanduser uses USERPROFILE; on macOS, HOME.
+    # Set both so the test works on both platforms.
     monkeypatch.setenv("HOME", os.fspath(fake_home))
-    # _walk_stop_dirs() reads HOME via os.path.expanduser('~').
+    monkeypatch.setenv("USERPROFILE", os.fspath(fake_home))
     assert multi_agent._find_project_root(os.fspath(plain / "file.txt")) is None
 
 
@@ -699,7 +701,10 @@ def test_note_event_home_dir_without_path_hint_stays_empty(monkeypatch, tmp_path
     import os
     fake_home = tmp_path / "fakehome2"
     fake_home.mkdir()
+    # On Windows, expanduser uses USERPROFILE; on macOS, HOME.
+    # Set both so the test works on both platforms.
     monkeypatch.setenv("HOME", os.fspath(fake_home))
+    monkeypatch.setenv("USERPROFILE", os.fspath(fake_home))
     r = _new_router()
     r.note_event("s1", cwd=os.fspath(fake_home))
     info = r._sessions["s1"]
