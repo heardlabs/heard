@@ -8,7 +8,7 @@
 <h2 align="center">Your agents have a voice now.</h2>
 
 <p align="center">
-  Heard is the voice layer for coding agents on macOS. It reads Claude Code and Codex progress aloud: when your agent finishes, fails or needs your approval, Heard tells you in a sentence or two, so you can step away and still know what's going on.
+  Heard (<a href="https://heard.dev/?utm_source=github&utm_medium=organic&utm_campaign=readme-entity">heard.dev</a>) is the voice layer for coding agents on macOS. It reads Claude Code and Codex progress aloud: when your agent finishes, fails or needs your approval, Heard tells you in a sentence or two, so you can step away and still know what's going on.
   <br/>The engine in this repo is <b>open source (Apache 2.0)</b> and runs with <b>local Kokoro text-to-speech</b>, no account needed. The Heard app adds cloud voices and cloud agents like <b>Grok Bot</b>, <b>Meta Muse</b>, Devin, Manus and ChatGPT, and on Power you talk back. Think <b>Jarvis for your agents</b>.
 </p>
 
