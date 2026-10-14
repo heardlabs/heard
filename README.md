@@ -44,6 +44,14 @@
 
 <br/>
 
+## What is a voice layer for Claude Code?
+
+A voice layer lets your coding agent talk to you, not only you to it. Claude Code's `/voice` covers the input half. Heard covers the output half: it follows the session and tells you out loud what changed, what failed and what needs a decision. The Heard app adds input too (push to talk and hands-free dictation on Power), so the whole loop can run by voice.
+
+## Make Claude Code talk back, not just listen
+
+Can you use text-to-speech with Claude Code? Yes. Claude Code's built-in `/voice` command is voice input: you talk and it types your prompt. Heard adds the other direction. Run `heard install claude-code` and Heard adds hooks (Stop, PreToolUse, PostToolUse, UserPromptSubmit) to `~/.claude/settings.json`, then speaks a short summary of what the agent did instead of reading the whole reply back. Voices come from local Kokoro (free, on your Mac) or your own ElevenLabs or Speechify key. Hooks return immediately, so Claude Code never waits on speech.
+
 ## Runs fully local
 
 The engine in this repo is open source under Apache 2.0 and needs no account or API keys:
@@ -103,9 +111,9 @@ Set these up in **Settings → Connections → Cloud agents**: each agent has nu
 
 Cloud agents need a signed-in Heard account. Their reports pass through Heard's servers on the way to your Mac.
 
-## Parrot *(Power)*
+## Heard Parrot *(Power)*
 
-Say **"Hey Parrot"** and talk to it. Parrot knows your projects and every connected agent, local or cloud:
+Heard Parrot is the voice assistant in the Heard app. Say **"Hey Parrot"** and talk to it. Parrot knows your projects and every connected agent, local or cloud:
 
 - **"Catch me up."** A fresh spoken recap of what landed, what's still running and what needs you, across all your agents.
 - **Ask anything** about your projects, your agents, or what changed while you were away.
@@ -199,10 +207,6 @@ That's the DIY path: you own keys, updates and config. Everything's configurable
 
 ## FAQ
 
-### Can I use text-to-speech with Claude Code?
-
-Yes. Claude Code's built-in `/voice` command is voice input: you talk and it types your prompt. Heard adds the other direction. Run `heard install claude-code` and Heard adds hooks (Stop, PreToolUse, PostToolUse, UserPromptSubmit) to `~/.claude/settings.json`, then speaks a short summary of what the agent did instead of reading the whole reply back. Voices come from local Kokoro (free, on your Mac) or your own ElevenLabs or Speechify key. Hooks return immediately, so Claude Code never waits on speech.
-
 ### How do I get spoken notifications from OpenAI Codex?
 
 Run `heard install codex`. Heard adds itself to the Codex CLI hooks in `~/.codex/hooks.json` and also follows Codex desktop app sessions, so you hear when Codex finishes, hits an error or asks you something. The same engine handles Claude Code, so one voice covers both agents.
@@ -210,10 +214,6 @@ Run `heard install codex`. Heard adds itself to the Codex CLI hooks in `~/.codex
 ### Is there an open-source, local voice tool for coding agents?
 
 Heard's engine is open source under Apache 2.0 and can run fully local. Kokoro text-to-speech runs on your Mac (the model downloads once on first use), and without an Anthropic key the narration comes from local templates, so nothing about your session leaves the machine. Add keys only if you want ElevenLabs voices or LLM-written summaries. See [Self-host](#self-host-open-source).
-
-### What is a voice layer for Claude Code?
-
-A voice layer lets your coding agent talk to you, not only you to it. Claude Code's `/voice` covers the input half. Heard covers the output half: it follows the session and tells you out loud what changed, what failed and what needs a decision. The Heard app adds input too (push to talk and hands-free dictation on Power), so the whole loop can run by voice.
 
 ### How is Heard different from a sound or notification hook?
 
