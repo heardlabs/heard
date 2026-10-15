@@ -8,8 +8,8 @@
 <h2 align="center">Your agents have a voice now.</h2>
 
 <p align="center">
-  Heard (<a href="https://heard.dev/?utm_source=github&utm_medium=organic&utm_campaign=readme-entity">heard.dev</a>) is the voice layer for coding agents on macOS. It reads Claude Code and Codex progress aloud: when your agent finishes, fails or needs your approval, Heard tells you in a sentence or two, so you can step away and still know what's going on.
-  <br/>The engine in this repo is <b>open source (Apache 2.0)</b> and runs with <b>local Kokoro text-to-speech</b>, no account needed. The Heard app adds cloud voices and cloud agents like <b>Grok Bot</b>, <b>Meta Muse</b>, Devin, Manus and ChatGPT, and on Power you talk back. Think <b>Jarvis for your agents</b>.
+  Heard (<a href="https://heard.dev/?utm_source=github&utm_medium=organic&utm_campaign=readme-entity">heard.dev</a>) is the voice layer for coding agents on macOS: text-to-speech for Claude Code and Codex. When your agent finishes, fails or needs your approval, Heard tells you in a sentence or two, so you can step away and still know what's going on.
+  <br/>The engine in this repo is <b>open source (Apache 2.0)</b> and runs <b>fully local with Kokoro text-to-speech</b>, no account or API keys.
 </p>
 
 <p align="center">
@@ -77,6 +77,8 @@ https://github.com/user-attachments/assets/d823a946-fb6f-438b-904f-aa66d4268ed1
 ## Get the app
 
 The app is the **managed** experience: download, sign in, and you're narrating. Heard runs the cloud voices and the narration brain for you, with no keys to manage. Every new account starts with a 14-day Power trial, no card required. Prefer to run it yourself with your own keys? See [Self-host](#self-host-open-source).
+
+The app also adds cloud agents like **Grok Bot**, **Meta Muse**, Devin, Manus and ChatGPT, and on Power you talk back. Think **Jarvis for your agents**.
 
 ### Have your coding tool install it (recommended)
 
