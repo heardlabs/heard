@@ -128,10 +128,13 @@ def test_greeting_uses_bundled_mp3_when_present(tmp_path, monkeypatch):
         "heard.daemon.Daemon._welcome_mp3_path", lambda self: fake_mp3,
     )
     afplay_calls: list = []
-    class _FakePopen:
-        def __init__(self, args, **kw):
-            afplay_calls.append(args)
-    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    class _FakeHandle:
+        def __init__(self, *a, **kw):
+            afplay_calls.append(a)
+        def wait(self):
+            pass
+
+    monkeypatch.setattr("heard.platform.playback.spawn", _FakeHandle)
 
     daemon._maybe_greet()
     assert persisted.get("greeted") is True
@@ -140,7 +143,7 @@ def test_greeting_uses_bundled_mp3_when_present(tmp_path, monkeypatch):
     assert captured == []
     # afplay invoked with the bundled MP3.
     assert len(afplay_calls) == 1
-    assert str(fake_mp3) in afplay_calls[0]
+    assert str(fake_mp3) == str(afplay_calls[0][0])
 
 
 def test_greeting_not_repeated_when_already_greeted(tmp_path, monkeypatch):

@@ -35,7 +35,8 @@ _once_lock = threading.Lock()
 
 def _read_once() -> set[str]:
     try:
-        d = json.load(open(_ONCE_PATH))
+        with open(_ONCE_PATH, encoding="utf-8") as f:
+            d = json.load(f)
         return set(d) if isinstance(d, list) else set()
     except (OSError, ValueError):
         return set()
@@ -53,7 +54,8 @@ def _mark_once(kind: str) -> None:
         fired.add(kind)
         try:
             os.makedirs(os.path.dirname(_ONCE_PATH), exist_ok=True)
-            json.dump(sorted(fired), open(_ONCE_PATH, "w"))
+            with open(_ONCE_PATH, "w", encoding="utf-8") as f:
+                json.dump(sorted(fired), f)
         except OSError:
             pass
 
@@ -67,7 +69,8 @@ def clear_once(kind: str) -> None:
         fired.discard(kind)
         try:
             if fired:
-                json.dump(sorted(fired), open(_ONCE_PATH, "w"))
+                with open(_ONCE_PATH, "w", encoding="utf-8") as f:
+                    json.dump(sorted(fired), f)
             elif os.path.exists(_ONCE_PATH):
                 os.remove(_ONCE_PATH)
         except OSError:

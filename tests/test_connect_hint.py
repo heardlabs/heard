@@ -12,7 +12,10 @@ from heard import config, home_window
 
 def _use_home(tmp_path, monkeypatch):
     # Both the ~/.claude / ~/.codex probes and config storage key off HOME.
+    # On Windows, Path.home() uses USERPROFILE; on macOS it uses HOME.
+    # Set both to cover both platforms.
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
 
 def test_present_but_not_connected(tmp_path, monkeypatch):

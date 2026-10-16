@@ -41,6 +41,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -125,7 +126,12 @@ def resolved_current_version() -> str:
     try:
         import sys
         exe = sys.executable or ""
-        if ".app" in exe and "/Contents/MacOS/" in exe:
+        # Match .app bundle paths on both macOS (/Contents/MacOS/) and
+        # Windows (\Contents\MacOS\) — the test on Windows uses forward
+        # slashes in the mocked sys.executable, but real Windows builds
+        # use backslashes. Normalize to forward slashes for the check.
+        exe_norm = exe.replace("\\", "/")
+        if ".app" in exe_norm and "/Contents/MacOS/" in exe_norm:
             import plistlib
             from pathlib import Path
             plist = Path(exe).resolve().parents[1] / "Info.plist"
@@ -468,6 +474,7 @@ def unzip_app(zip_path: Path, staging_dir: Path) -> Path:
 
     # Zip-slip + layout validation, up front, before touching the disk.
     staging_resolved = staging_dir.resolve()
+    import zipfile
     try:
         with zipfile.ZipFile(zip_path) as zf:
             names = zf.namelist()
@@ -494,17 +501,29 @@ def unzip_app(zip_path: Path, staging_dir: Path) -> Path:
         # bundles with broken symlinks inside the Frameworks dir, which
         # the py2app build is known to produce. /bin/rm -rf is the path
         # the install script in the README uses for the same reason.
-        subprocess.run(["/bin/rm", "-rf", str(staged)], check=True)
+        # On Windows, shutil.rmtree works fine. On macOS/Linux, use
+        # /bin/rm -rf directly to match the original behavior.
+        if sys.platform == "win32":
+            import shutil
+            shutil.rmtree(staged)
+        else:
+            subprocess.run(["/bin/rm", "-rf", str(staged)], check=True)
 
-    result = subprocess.run(
-        ["/usr/bin/unzip", "-o", "-q", str(zip_path), "-d", str(staging_dir)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise UpdateInstallError(
-            f"unzip exited {result.returncode}: {result.stderr.strip() or 'unknown'}"
+    if sys.platform == "darwin":
+        # macOS: use /usr/bin/unzip to preserve executable bits and
+        # symlinks in the Heard.app bundle (Frameworks/ etc.).
+        result = subprocess.run(
+            ["/usr/bin/unzip", "-o", "-q", str(zip_path), "-d", str(staging_dir)],
+            capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            raise UpdateInstallError(
+                f"unzip exited {result.returncode}: {result.stderr.strip() or 'unknown'}"
+            )
+    else:
+        raise UpdateInstallError("in-app updates are macOS-only")
+
     if not staged.is_dir():
         raise UpdateInstallError(
             f"release zip did not contain Heard.app at the expected layout "
