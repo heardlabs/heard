@@ -74,6 +74,9 @@ DEFAULTS: dict[str, Any] = {
     # key monitoring unless the user opts in. Socket "" → ~/.heard_power.sock.
     "push_to_talk": False,
     "push_to_talk_socket": "",
+    # latch: hold Right-⌘ briefly, release, keep talking; press again to send.
+    # hold: classic walkie-talkie, listening only while held.
+    "push_to_talk_style": "latch",
     # Heard Power voice input. voice_mode is the menu-facing control:
     #   off | ptt (hold-to-talk) | ambient (always listening).
     # push_to_talk (the daemon hotkey gate) is kept in sync with mode == ptt.
