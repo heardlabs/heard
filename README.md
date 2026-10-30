@@ -52,6 +52,11 @@ A voice layer lets your coding agent talk to you, not only you to it. Claude Cod
 
 Can you use text-to-speech with Claude Code? Yes. Claude Code's built-in `/voice` command is voice input: you talk and it types your prompt. Heard adds the other direction. Run `heard install claude-code` and Heard adds hooks (Stop, PreToolUse, PostToolUse, UserPromptSubmit) to `~/.claude/settings.json`, then speaks a short summary of what the agent did instead of reading the whole reply back. Voices come from local Kokoro (free, on your Mac) or your own ElevenLabs or Speechify key. Hooks return immediately, so Claude Code never waits on speech.
 
+Want something smaller? Two single-purpose repos from the same team:
+
+- [claude-code-tts](https://github.com/heardlabs/claude-code-tts): text-to-speech for Claude Code and Codex, a free `/say` skill (MIT) that reads a short summary aloud with your computer's built-in voice. No API key, no account.
+- [claude-code-sound-notification](https://github.com/heardlabs/claude-code-sound-notification): a sound or desktop notification when Claude Code finishes or needs your input (MIT, one install command).
+
 ## Runs fully local
 
 The engine in this repo is open source under Apache 2.0 and needs no account or API keys:
