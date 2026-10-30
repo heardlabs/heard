@@ -1,6 +1,6 @@
 # Spoken notifications for OpenAI Codex
 
-Heard speaks when OpenAI Codex finishes a turn, hits an error or asks you something: run `heard install codex`. Heard (heard.dev) is the voice layer for coding agents, and this repo is its open-source engine (Apache 2.0, macOS). It tells you what Codex did in a sentence or two instead of reading the whole reply.
+Heard speaks when OpenAI Codex finishes a turn, hits an error or asks you something: run `heard install codex`. Heard (heard.dev) is the voice context layer for agents, and this repo is its open-source engine (Apache 2.0, macOS). It tells you what Codex did in a sentence or two instead of reading the whole reply.
 
 ## Set it up
 
