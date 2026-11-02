@@ -63,7 +63,7 @@ The engine in this repo is open source under Apache 2.0 and needs no account or 
 
 - Speech comes from Kokoro text-to-speech on your Mac, once you download its voice model (about 350 MB) from the menu bar.
 - With no AI key and no Heard sign-in, spoken updates are built on your Mac from templates and the agent's own text. If the `claude` command is installed, rolled-up project summaries can go through `claude -p` with your Claude login, so that text goes to Anthropic.
-- Narration text and source code are never sent to analytics, which are on by default; turn them off with `heard config set product_analytics false`.
+- Narration text and source code are never sent to analytics, which are on by default; turn them off by setting `product_analytics: false` in the config file that `heard config path` prints.
 - It speaks; it does not listen. Push to talk and voice replies are app features on Power.
 - Add your own keys only if you want ElevenLabs voices or LLM-written summaries.
 
