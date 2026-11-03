@@ -61,7 +61,7 @@ Want something smaller? Two single-purpose repos from the same team:
 
 The engine in this repo is open source under Apache 2.0 and needs no account or API keys:
 
-- Speech comes from Kokoro text-to-speech on your Mac, once you download its voice model (about 350 MB) from the menu bar app (`heard ui`, then Download offline voice…).
+- Speech comes from Kokoro text-to-speech on your Mac, once its voice model (about 350 MB) is on your Mac. The current build has no menu item for that download, so set a voice key or sign in until it does.
 - With no Anthropic key and no Heard sign-in, spoken updates are built on your Mac from templates and the agent's own text. If the `claude` command is installed, the engine can send agent activity to Anthropic through `claude -p`, with your Claude login, to write rolled-up project summaries. An ambiguous reply to Heard's catch-up prompt can go the same way.
 - Narration content and source code are never sent to analytics, which are on by default; turn them off by setting `product_analytics: false` in the config file that `heard config path` prints.
 - It speaks; it does not listen. Push to talk and voice replies are app features on Power.
@@ -219,7 +219,7 @@ Run `heard install codex`. Heard adds itself to the Codex CLI hooks in `~/.codex
 
 ### Is there an open-source, local voice tool for coding agents?
 
-Heard's engine is open source under Apache 2.0 and can speak locally. Kokoro text-to-speech runs on your Mac once you download its voice model from the menu bar. With no Anthropic key and no Heard sign-in, spoken updates are built on your Mac from templates and the agent's own text. If the `claude` command is installed, the engine can send agent activity to Anthropic through `claude -p`, with your Claude login, to write rolled-up project summaries. Add keys only if you want ElevenLabs voices or LLM-written summaries. See [Self-host](#self-host-open-source).
+Heard's engine is open source under Apache 2.0 and can speak locally. Kokoro text-to-speech runs on your Mac once its voice model is there; the current build has no menu item for that download. With no Anthropic key and no Heard sign-in, spoken updates are built on your Mac from templates and the agent's own text. If the `claude` command is installed, the engine can send agent activity to Anthropic through `claude -p`, with your Claude login, to write rolled-up project summaries. Add keys only if you want ElevenLabs voices or LLM-written summaries. See [Self-host](#self-host-open-source).
 
 ### How is Heard different from a sound or notification hook?
 
