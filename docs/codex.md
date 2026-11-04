@@ -12,7 +12,7 @@ python3 -m venv .venv && source .venv/bin/activate && pip install -e .
 heard install codex
 ```
 
-Voices come from local Kokoro text-to-speech on your Mac (the model downloads once on first use), or from your own ElevenLabs or Speechify key. Without an Anthropic key, narration comes from local templates, so nothing about your session leaves the machine.
+Voices come from local Kokoro text-to-speech on your Mac (run `heard download-voice` once to get the model), or from your own ElevenLabs or Speechify key. Without an Anthropic key, narration comes from local templates, so nothing about your session leaves the machine.
 
 ## What `heard install codex` changes
 
