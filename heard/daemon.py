@@ -1818,7 +1818,7 @@ class Daemon:
             notify.notify(
                 "Heard — add a voice to hear narration",
                 "Sign in to Heard for cloud voices, paste your ElevenLabs key "
-                "in Settings → Keys, or download the local voice in Options.",
+                "in Settings → Keys, or run `heard download-voice` for the local voice.",
                 kind="no_voice_configured",
                 once=True,
             )
@@ -1843,7 +1843,7 @@ class Daemon:
                 notify.notify(
                     "Heard — add a voice to hear narration",
                     "Sign in to Heard for cloud voices, paste your ElevenLabs "
-                    "key in Settings → Keys, or download the local voice in Options.",
+                    "key in Settings → Keys, or run `heard download-voice` for the local voice.",
                     kind="no_voice_configured",
                     once=True,
                 )
@@ -1949,7 +1949,7 @@ class Daemon:
                         notify.notify(
                             "Heard cloud voices ended",
                             "Your plan ended. Add an ElevenLabs key (Settings → Keys), "
-                            "download the local voice (Options), or upgrade to Pro.",
+                            "run `heard download-voice` for the local voice, or upgrade to Pro.",
                             kind="cloud_expired",
                         )
                     else:
