@@ -46,7 +46,7 @@
 
 ## What is a voice layer for Claude Code?
 
-A voice layer lets your coding agent talk to you, not only you to it. Claude Code's `/voice` covers the input half. Heard covers the output half: it follows the session and tells you out loud what changed, what failed and what needs a decision. The Heard app adds input too (push to talk and hands-free dictation on Power), so the whole loop can run by voice.
+A voice layer lets your coding agent talk to you, not only you to it. Claude Code's `/voice` covers the input half. Heard covers the output half: it follows the session and tells you out loud what changed, what failed and what needs a decision. The Heard app adds input too (on Power, press right ⌘ to talk to Parrot), so the whole loop can run by voice.
 
 ## Make Claude Code talk back, not just listen
 
@@ -85,13 +85,21 @@ https://github.com/user-attachments/assets/d823a946-fb6f-438b-904f-aa66d4268ed1
 
 The app is the **managed** experience: download, sign in, and you're narrating. Heard runs the cloud voices and the narration brain for you, with no keys to manage. Every new account starts with a 14-day Power trial, no card required. Prefer to run it yourself with your own keys? See [Self-host](#self-host-open-source).
 
-The app also adds cloud agents like **Grok Bot**, **Meta Muse**, Devin, Manus and ChatGPT, and on Power you talk back. Think **Jarvis for your agents**.
+The app also adds cloud agents like **Grok Bot**, **Meta Muse**, Devin, Manus and ChatGPT, and on Power you talk back.
+
+Heard gives coding agents a voice. Heard (heard.dev) is the voice context layer for agents.
 
 ### Have your coding tool install it (recommended)
 
 Paste this into Claude Code, Codex, or any AI coding tool:
 
 > Install Heard so you can narrate your work to me out loud. Run: `curl -L https://heard.dev/download/cc -o /tmp/heard.zip && unzip -o /tmp/heard.zip -d /Applications && xattr -dr com.apple.quarantine /Applications/Heard.app && open /Applications/Heard.app`, then hand it back to me - a quick setup window opens and I'll take it from there.
+
+### Homebrew
+
+```bash
+brew install --cask heardlabs/heard/heard
+```
 
 ### Manual
 
@@ -132,8 +140,7 @@ Heard Parrot is the voice assistant in the Heard app. Hold right ⌘ and talk to
 
 ## Voice in *(Power)*
 
-- **Push to talk**: hold right ⌘ to talk to an agent, or to dictate into whatever you're typing in, in any app.
-- **On-device speech-to-text**: transcription runs on your Mac.
+- **Push to talk**: press right ⌘ to talk to Parrot: ask about your sessions, or have it tell a session what to do.
 - **Call-aware**: Heard stays quiet while you're on a Zoom, Meet, Teams, Slack, Discord or FaceTime call.
 
 So on Power, Heard is the full voice loop: you speak, your agents do the work, Heard tells you how it went.
@@ -152,10 +159,10 @@ Invite a friend and they get a free month of Heard.
 ## What it does
 
 - **Narrates with judgment, not transcription.** Heard decides what to say from context: what just ran, whether it's a decision moment or routine progress, what you've already heard. Not every tool call gets the same airtime.
-- **Three listening modes.** **Co-pilot** for screen-on work, short signposts. **Companion** for eyes-off (driving, cooking, walking), fuller briefings. **Focus** for alert-only, quiet unless something needs you.
+- **Says what matters.** In the app: questions, approvals, results and failures, kept short. The open-source engine has three listening modes, see below.
 - **Every agent, one voice layer.** Claude Code and Codex through hooks, cloud agents through one MCP URL, all in the same spoken queue.
 - **Out of your way.** Holding right ⌘ shows a small Listening pill; a soft light at the screen edge is Parrot's, shown while it listens, thinks or answers; the corners hold mute (bottom left) and Settings (bottom right).
-- **Your iPhone as a remote** *(Power)*. Pair by QR code, listen live, and reply by voice or tap.
+- **Your iPhone** *(Power)*. Text or call Parrot from your iPhone.
 - **Four personas, fork-your-own.** Aria (calm, direct), Friday (bright, breezy), Jarvis (Marvel butler), Atlas (cinematic narrator).
 
 ## Personas
@@ -169,9 +176,9 @@ Invite a friend and they get a free month of Heard.
 
 In the app, Friday and Atlas need a paid plan. In the open-source engine, fork your own: drop a Markdown file with frontmatter into `~/Library/Application Support/heard/personas/`.
 
-## Listening modes
+## Listening modes (open-source engine)
 
-In the app: **Settings → Jarvis → How you work**.
+The app has no modes since 2.0.6. In the engine: `heard config set mode <copilot|companion|focus>`.
 
 | Mode | When | What you hear |
 |---|---|---|
@@ -187,7 +194,7 @@ In the app: **Settings → Jarvis → How you work**.
 
 ## Tuning
 
-In the app, Jarvis's voice, tone and how much it says live in **Settings → Jarvis**; dictation and custom words in **Settings → Your voice**; Pause and Mute are in the menu bar. Per-repo: drop `label: My Project` in a repo's `.heard.yaml` and Heard announces that project by the name you chose instead of the folder name.
+In the app, the voice and Mute updates live in **Settings → Parrot**; Mute updates is also in the menu bar. Per-repo: drop `label: My Project` in a repo's `.heard.yaml` and Heard announces that project by the name you chose instead of the folder name.
 
 In the open-source engine, `⇧⌥.` pauses and `⇧⌥,` resumes, and verbosity profiles and narration preferences live in `config.yaml` and `.heard.yaml`.
 
@@ -241,7 +248,6 @@ Depends on what you use.
 
 - **Voice synth.** ElevenLabs and Speechify send spoken text over HTTPS. **Kokoro** runs fully locally.
 - **Narration.** Heard sends compact event summaries (what tool ran, the agent's response text, recent context) to the Heard narration brain, a fast LLM pass that decides what to say. In the open-source engine that's your own Anthropic key, or neutral local templates with no key.
-- **Speech-to-text** for push to talk and dictation runs on your Mac.
 - **Cloud agents** send their reports to Heard's relay, which your Mac picks up while you're signed in.
 
 ### What does ElevenLabs actually cost in practice?
@@ -264,7 +270,7 @@ The engine in this repo is Apache 2.0. The easiest places to contribute are adap
 
 ## Status
 
-**Releases on this repo are the official closed app** (the download surface); this open-source engine is built from source, see [Self-host](#self-host-open-source). The current app is **Heard 2.0**: rebuilt as a native app, with cloud-agent connectors, Parrot, push to talk and hands-free dictation, and the edge light that replaced the notch. The engine here keeps judgment-based narration, the three listening modes, multi-agent narration, and automatic failover across ElevenLabs, Speechify and local Kokoro. Used daily by the author.
+**Releases on this repo are the official closed app** (the download surface); this open-source engine is built from source, see [Self-host](#self-host-open-source). The current app is **Heard 2.0**: rebuilt as a native app, with cloud-agent connectors, Parrot, push to talk, and the notch. The engine here keeps judgment-based narration, the three listening modes, multi-agent narration, and automatic failover across ElevenLabs, Speechify and local Kokoro. Used daily by the author.
 
 ## License
 
