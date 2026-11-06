@@ -18,18 +18,26 @@ from __future__ import annotations
 
 import errno
 import os
-import pty
 import re
-import select
-import signal
-import struct
 import sys
-import termios
 import time
-import tty
 from collections.abc import Sequence
 
 from heard import client, config, markdown
+
+# The PTY / ANSI / tee loop below is POSIX-only (pty, termios, tty,
+# select, SIGWINCH). On Windows there is no controlling TTY for a
+# child process to inherit, so `heard run` falls back to plain
+# subprocess exec — the agent still runs, it just isn't wrapped.
+_IS_DARWIN = sys.platform == "darwin"
+
+if _IS_DARWIN:
+    import pty
+    import select
+    import signal
+    import struct
+    import termios
+    import tty
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[=>]")
 # Bumped from 1500ms — agents routinely think for >1.5s mid-response,
@@ -88,6 +96,19 @@ def run(argv: Sequence[str]) -> int:
         return 2
 
     cfg = config.load(cwd=os.getcwd())
+
+    if not _IS_DARWIN:
+        # The PTY/ANSI/tee loop below is POSIX-only. On Windows we can't
+        # give the child a controlling TTY, so we exec the command
+        # directly — the agent still runs and its output still reaches
+        # the user's console; Heard just can't synthesise narration
+        # from it. Tell the user rather than fail silently.
+        print(
+            "heard run: PTY wrapping is macOS-only; running the command directly.",
+            file=sys.stderr,
+        )
+        os.execvp(argv[0], argv)
+        return 0  # unreachable
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         # no TTY — nothing to wrap meaningfully; just exec through

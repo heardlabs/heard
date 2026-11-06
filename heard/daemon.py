@@ -12,7 +12,6 @@ here so the first tool event in a new CC session is fast.
 
 from __future__ import annotations
 
-import errno
 import json
 import os
 import re
@@ -49,6 +48,9 @@ from heard import voice_service as voice_service_mod
 from heard import (
     working_memory as working_memory_mod,
 )
+from heard.platform import playback as _playback
+from heard.platform import process as _process
+from heard.platform import sockets as _sockets
 from heard.project_name import canonical_project_name
 from heard.session import SessionStore
 from heard.tts.elevenlabs import ElevenLabsError, ElevenLabsTTS
@@ -86,17 +88,16 @@ def _sanitize_spoken(text: str) -> str:
 
 
 def _socket_accepts_ping(sock_path: str, timeout_s: float = 0.25) -> bool:
-    if not os.path.exists(sock_path):
+    """True when a live daemon answers a ping at *sock_path*.
+
+    Replaces the inline ``AF_UNIX`` socket open/send/close — on Windows
+    there is no socket file to stat, so the fast-path
+    ``os.path.exists`` is replaced by
+    :func:`platform.sockets.endpoint_exists`, which looks for the
+    sidecar files instead."""
+    if not _sockets.endpoint_exists(sock_path):
         return False
-    try:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(timeout_s)
-        s.connect(sock_path)
-        s.sendall(json.dumps({"cmd": "ping"}).encode("utf-8"))
-        s.close()
-        return True
-    except Exception:
-        return False
+    return _sockets.ping(sock_path, timeout_s=timeout_s)
 
 
 def _pid_from_file(path: Path) -> int | None:
@@ -108,37 +109,20 @@ def _pid_from_file(path: Path) -> int | None:
 
 
 def _pid_is_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError as e:
-        return e.errno == errno.EPERM
+    """Cross-platform liveness check. POSIX: ``os.kill(pid, 0)``,
+    Windows: ``psutil.pid_exists``."""
+    return _process.pid_is_running(pid)
 
 
 def _terminate_pid(pid: int) -> None:
-    if pid == os.getpid():
-        return
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
-        return
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if not _pid_is_running(pid):
-            return
-        time.sleep(0.1)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
+    """SIGTERM, wait 2 s, then SIGKILL. Cross-platform."""
+    _process.terminate_pid(pid)
 
 
 def _unlink_if_present(path: str | Path) -> bool:
-    try:
-        os.unlink(path)
-        return True
-    except FileNotFoundError:
-        return False
+    """Remove the IPC endpoint and its sidecars. Returns True if
+    anything was removed."""
+    return _sockets.unlink(path)
 
 
 def _prepare_runtime_for_bind(sock_path: str, pid_path: Path) -> bool:
@@ -643,15 +627,10 @@ class Daemon:
             except Exception:
                 pass
             try:
-                import subprocess
-                # Detached — don't block the daemon's reload thread on
-                # afplay (~7s of audio). Stderr swallowed so a missing
-                # /usr/bin/afplay on a stripped image doesn't crash us.
-                subprocess.Popen(
-                    ["/usr/bin/afplay", str(mp3_path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                # Platform abstraction so afplay path on macOS, ffplay/sounddevice
+                # on Windows — same defect path if anything goes wrong.
+                handle = _playback.spawn(mp3_path, 1.0)
+                handle.wait()
             except Exception as exc:
                 _log("greet_play_failed", err=repr(exc))
             return
@@ -2254,19 +2233,21 @@ class Daemon:
                 return
             # If the requested speed is faster than the backend can
             # natively synthesise (ElevenLabs caps voice_settings.speed
-            # at 1.2), make up the difference with afplay -r. The
-            # backend already clamped its own synth, so we layer the
-            # remaining speed-up on playback.
+            # at 1.2), make up the difference on playback. The backend
+            # already clamped its own synth, so we layer the remaining
+            # speed-up on top: afplay -r on macOS, ffplay atempo on
+            # Windows. ``platform.playback.spawn`` returns a
+            # process-like handle (wait/returncode/kill) so the queue's
+            # cancel + defect-recording code below stays unchanged.
             if bool(cfg.get("muted")):
                 # Spool-only (muted + narration_spool): the phone already got this
-                # via the narration-out spool above; keep the Mac speaker silent.
+                # via the narration-out spool above; keep the speaker silent.
                 path.unlink(missing_ok=True)
                 continue
             max_native = float(getattr(self.tts, "MAX_NATIVE_SPEED", 1.2))
-            afplay_args = ["afplay", str(path)]
+            play_speed = speed
             if speed > max_native and max_native > 0:
-                afplay_rate = min(speed / max_native, 2.0)  # afplay -r upper bound
-                afplay_args = ["afplay", "-r", f"{afplay_rate:.3f}", str(path)]
+                play_speed = speed / max_native
             # Half-duplex: tell the Power voice service to stop listening while
             # we speak, so ambient input doesn't transcribe Heard's own voice
             # (echo). Best-effort; no-op unless in ambient mode.
@@ -2276,12 +2257,7 @@ class Daemon:
                     path.unlink(missing_ok=True)
                     self._voice_suppress("resume")
                     return
-                self._current_proc = subprocess.Popen(
-                    afplay_args,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                self._current_proc = _playback.spawn(path, play_speed)
                 proc = self._current_proc
             proc.wait()
             self._voice_suppress("resume")
@@ -2294,31 +2270,27 @@ class Daemon:
                 # knows whether to attribute itself to this utterance.
                 self._last_utterance_finished_at = time.monotonic()
             path.unlink(missing_ok=True)
-            # Abnormal exit: afplay exited non-zero AND we didn't kill
+            # Abnormal exit: the player exited non-zero AND we didn't kill
             # it. That's an audio-pipeline failure on its own — fire
             # an implicit cutoff defect so the sidecar sees it.
             if return_code != 0 and not killed_by_us:
                 self._record_implicit_feedback(
-                    "afplay_nonzero", kind="defect", defect_category="cut_off",
+                    "playback_nonzero", kind="defect", defect_category="cut_off",
                 )
 
     def _voice_suppress(self, action: str) -> None:
         """Pause/resume the Power voice service around narration so ambient
         input doesn't capture Heard's own speech (echo). Best-effort; only in
-        ambient mode — the service carries a short echo tail on resume."""
+        ambient mode — the service carries a short echo tail on resume.
+
+        The four duplicated ``AF_UNIX`` poke blocks the repo carried in
+        ``push_to_talk``, ``voice_service``, ``home_window`` and ``ui``
+        collapse here into :func:`platform.sockets.poke`."""
         if self.cfg.get("voice_mode") != "ambient":
             return
         sock_path = (self.cfg.get("push_to_talk_socket")
                      or os.path.expanduser("~/.heard_power.sock"))
-        try:
-            import socket as _socket
-            s = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            s.connect(sock_path)
-            s.sendall(action.encode())
-            s.close()
-        except Exception:
-            pass
+        _sockets.poke(sock_path, action, timeout_s=0.5)
 
     def _spool_narration(self, src: Path, text: str) -> None:
         """Narration-out seam (generic; gated by cfg['narration_spool']). Tee the
@@ -4340,21 +4312,13 @@ class Daemon:
 
     def serve(self) -> None:
         sock_path = str(config.SOCKET_PATH)
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         if not _prepare_runtime_for_bind(sock_path, config.PID_PATH):
-            srv.close()
             return
         try:
-            srv.bind(sock_path)
-        except OSError:
-            if _socket_accepts_ping(sock_path):
-                _log("daemon_bind_skip", reason="race_already_running")
-                srv.close()
-                return
-            _unlink_if_present(sock_path)
-            srv.bind(sock_path)
-        os.chmod(sock_path, 0o600)
-        srv.listen(4)
+            srv = _sockets.create_server(sock_path)
+        except _sockets.DaemonBusyError:
+            _log("daemon_bind_skip", reason="race_already_running")
+            return
         config.PID_PATH.write_text(str(os.getpid()))
         print(f"heard daemon ready at {sock_path}", flush=True)
         self._start_account_usage_poll()
@@ -4370,9 +4334,10 @@ class Daemon:
             except Exception:
                 pass
             try:
-                os.unlink(sock_path)
-            except FileNotFoundError:
+                srv.close()
+            except Exception:
                 pass
+            _sockets.unlink(sock_path)
             config.PID_PATH.unlink(missing_ok=True)
             sys.exit(0)
 

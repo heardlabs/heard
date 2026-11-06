@@ -23,13 +23,19 @@ import time
 import webbrowser
 from pathlib import Path
 
-import rumps
-
 from heard import client, config, notify, updater
 from heard.presets import list_bundled as list_presets
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 ICON_PATH = ASSETS_DIR / "menubar.png"
+
+# rumps is macOS-only; import lazily inside run() so `heard` CLI
+# commands work on Windows. The real AppKit-based menu bar lives
+# exclusively on macOS; a pystray-based Windows tray is Phase 2.
+try:
+    import rumps
+except ImportError:
+    rumps = None
 
 
 # pynput-style hotkey strings ("<shift>+<alt>+.") → mac-style glyphs
@@ -104,55 +110,58 @@ def _pretty_hotkey(binding: str) -> str:
     return "".join(out)
 
 
-class HeardApp(rumps.App):
-    def __init__(self) -> None:
-        # template=True asks macOS to auto-tint the icon to match the
-        # menu bar (white in dark mode, black in light mode). The
-        # title is a Unicode zero-width space (U+200B) — load-bearing
-        # quirk: rumps' fallbackOnName() decides "would this slot be
-        # empty?" by checking ``title() or image()`` during init, and
-        # the title is applied *before* the image mounts on the
-        # NSStatusItem. With title="" that check fires when both are
-        # falsy, rumps stamps in the app name ("Heard"), and the
-        # fallback persists even after the icon mounts. A regular
-        # space dodges fallback but renders as visible padding next
-        # to the icon. U+200B is truthy (skips fallback) AND has zero
-        # advance width (no visible gap) — best of both.
-        if ICON_PATH.exists():
-            super().__init__(
-                "Heard",
-                title="​",
-                icon=str(ICON_PATH),
-                template=True,
-                quit_button=None,
-            )
-        else:
-            super().__init__("Heard", title="Heard", quit_button=None)
-        # Register the heard:// URL handler here (not in ui.run) — the
-        # launched .app enters via packaging/app_entry.py → HeardApp().run(),
-        # which never touches ui.run(). Best-effort; the install-code paste
-        # field is the fallback if this can't register.
-        try:
-            from heard import url_scheme
-            url_scheme.register()
-        except Exception as e:
-            print(f"url scheme handler not registered: {e}", file=sys.stderr)
-        self._first_launch_checked = False
-        # Tracks whether the daemon has ever answered status. Until it
-        # does, we show "starting…" instead of "daemon stopped" — the
-        # menu polls every 3 s but the daemon takes 1-3 s to come up
-        # the first time, and "stopped" makes a fresh user think
-        # they're already broken.
-        self._daemon_ever_alive = False
-        # Tracks whether the menu-bar app's icon/title is currently
-        # in the "muted" presentation — flipping NSImage and title on
-        # every refresh tick would be wasteful even though rumps would
-        # accept it. Initialised to None so the first refresh always
-        # writes through and matches whatever state we boot into.
-        self._muted_indicator: bool | None = None
-        self._build_menu()
-        self.refresh(None)
-        rumps.Timer(self.refresh, 3).start()
+if rumps is not None:
+    class HeardApp(rumps.App):
+        """macOS menu-bar app. Only defined when rumps is available
+        (i.e. on macOS)."""
+        def __init__(self) -> None:
+            # template=True asks macOS to auto-tint the icon to match the
+            # menu bar (white in dark mode, black in light mode). The
+            # title is a Unicode zero-width space (U+200B) — load-bearing
+            # quirk: rumps' fallbackOnName() decides "would this slot be
+            # empty?" by checking ``title() or image()`` during init, and
+            # the title is applied *before* the image mounts on the
+            # NSStatusItem. With title="" that check fires when both are
+            # falsy, rumps stamps in the app name ("Heard"), and the
+            # fallback persists even after the icon mounts. A regular
+            # space dodges fallback but renders as visible padding next
+            # to the icon. U+200B is truthy (skips fallback) AND has zero
+            # advance width (no visible gap) — best of both.
+            if ICON_PATH.exists():
+                super().__init__(
+                    "Heard",
+                    title="​",
+                    icon=str(ICON_PATH),
+                    template=True,
+                    quit_button=None,
+                )
+            else:
+                super().__init__("Heard", title="Heard", quit_button=None)
+            # Register the heard:// URL handler here (not in ui.run) — the
+            # launched .app enters via packaging/app_entry.py → HeardApp().run(),
+            # which never touches ui.run(). Best-effort; the install-code paste
+            # field is the fallback if this can't register.
+            try:
+                from heard import url_scheme
+                url_scheme.register()
+            except Exception as e:
+                print(f"url scheme handler not registered: {e}", file=sys.stderr)
+            self._first_launch_checked = False
+            # Tracks whether the daemon has ever answered status. Until it
+            # does, we show "starting…" instead of "daemon stopped" — the
+            # menu polls every 3 s but the daemon takes 1-3 s to come up
+            # the first time, and "stopped" makes a fresh user think
+            # they're already broken.
+            self._daemon_ever_alive = False
+            # Tracks whether the menu-bar app's icon/title is currently
+            # in the "muted" presentation — flipping NSImage and title on
+            # every refresh tick would be wasteful even though rumps would
+            # accept it. Initialised to None so the first refresh always
+            # writes through and matches whatever state we boot into.
+            self._muted_indicator: bool | None = None
+            self._build_menu()
+            self.refresh(None)
+            rumps.Timer(self.refresh, 3).start()
 
     # --- menu construction --------------------------------------------------
 
@@ -1703,7 +1712,10 @@ class HeardApp(rumps.App):
             client.mute(source="quit")
         except Exception:
             pass
-        rumps.quit_application()
+        if rumps is not None:
+            rumps.quit_application()
+        else:
+            sys.exit(0)
 
 
 def _refresh_existing_hooks() -> None:
@@ -1739,4 +1751,8 @@ def run() -> None:
             return
     except Exception:
         pass
+    if rumps is None:
+        print("heard ui: menu-bar app is macOS-only; use `heard` commands from the CLI",
+              file=sys.stderr)
+        return
     HeardApp().run()

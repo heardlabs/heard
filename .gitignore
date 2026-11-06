@@ -40,3 +40,4 @@ daemon.pid
 
 # Local per-repo narration label (user-specific, never committed)
 .heard.yaml
+.claude/plans/
