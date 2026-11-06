@@ -307,6 +307,7 @@ class Daemon:
         # the seam; it stays None — and entirely inert — on OSS-only installs.
         self._utterance_listener = None  # Callable[[str, str], None] | None
         self._ptt_monitor = None  # hold-to-talk NSEvent monitor (kept alive)
+        self._ptt_stopped_at = float("-inf")  # monotonic time of last PTT "stop"
         # Supervises Heard Power's voice-input `serve` subprocess (open-core
         # seam — see voice_service.py). None + inert on OSS-only installs where
         # voice_service_cmd is empty. Created lazily in _sync_voice_service.
@@ -1029,7 +1030,11 @@ class Daemon:
         if self.cfg.get("push_to_talk") and self._voice_backend_available():
             sock = (self.cfg.get("push_to_talk_socket")
                     or os.path.expanduser("~/.heard_power.sock"))
-            self._ptt_monitor = push_to_talk.start(sock)
+            self._ptt_monitor = push_to_talk.start(
+                sock,
+                style=self.cfg.get("push_to_talk_style") or "latch",
+                on_stop=self._on_ptt_stop,
+            )
         self._sync_voice_service()
         self._start_voice_service_watch()
 
@@ -1206,6 +1211,11 @@ class Daemon:
     # agent event landing in that gap doesn't talk over the next
     # phrase.
     MIC_RELEASE_GRACE_S: float = 2.0
+    # When our own push-to-talk ended the utterance we KNOW the user is done
+    # talking — no phrase-pause to bridge — so release narration almost
+    # immediately instead of making them sit through the full grace.
+    PTT_RELEASE_GRACE_S: float = 0.3
+    _PTT_STOP_RECENT_S: float = 10.0
 
     def _on_mic_active(self) -> None:
         """Mic just started capturing — kill anything mid-stream and
@@ -1235,13 +1245,24 @@ class Daemon:
                 "mic_collide", kind="defect", defect_category="cut_off",
             )
 
+    def _on_ptt_stop(self) -> None:
+        """Push-to-talk just sent "stop" — remember when, so the mic release
+        that follows uses the short PTT grace (see _on_mic_released)."""
+        self._ptt_stopped_at = time.monotonic()
+        _log("ptt_stop")
+
     def _on_mic_released(self) -> None:
         """Mic released — defer the suppression-clear by
         ``MIC_RELEASE_GRACE_S`` seconds. Inter-phrase pauses in Wispr
         / dictation re-trip the mic before the timer fires, so the
         flag never actually drops mid-dictation; only a real
-        end-of-speech releases narration."""
-        _log("mic_released_pending")
+        end-of-speech releases narration. If our own push-to-talk just
+        ended the utterance, use the much shorter ``PTT_RELEASE_GRACE_S``."""
+        ptt_ended = (
+            time.monotonic() - self._ptt_stopped_at < self._PTT_STOP_RECENT_S
+        )
+        grace = self.PTT_RELEASE_GRACE_S if ptt_ended else self.MIC_RELEASE_GRACE_S
+        _log("mic_released_pending", grace_s=grace)
 
         def _clear() -> None:
             self._mic_active = False
@@ -1251,9 +1272,7 @@ class Daemon:
 
         if self._mic_release_timer is not None:
             self._mic_release_timer.cancel()
-        self._mic_release_timer = threading.Timer(
-            self.MIC_RELEASE_GRACE_S, _clear
-        )
+        self._mic_release_timer = threading.Timer(grace, _clear)
         self._mic_release_timer.daemon = True
         self._mic_release_timer.start()
 
@@ -1655,6 +1674,7 @@ class Daemon:
             bool(cfg.get("hotkey_enabled", True)),
             bool(cfg.get("push_to_talk")),
             cfg.get("push_to_talk_socket", ""),
+            cfg.get("push_to_talk_style", "latch"),
         )
 
     def _reload_config(self) -> None:
