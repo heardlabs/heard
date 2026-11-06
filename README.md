@@ -58,6 +58,17 @@ Want something smaller? Three single-purpose repos from the same team:
 - [claude-code-sound-notification](https://github.com/heardlabs/claude-code-sound-notification): a sound or desktop notification when Claude Code finishes or needs your input (MIT, one install command).
 - [codex-sound-notification](https://github.com/heardlabs/codex-sound-notification): a sound or desktop notification when OpenAI Codex CLI finishes a task or needs your approval (MIT, one install command).
 
+## Add a voice layer to any command-line agent
+
+To make any other command-line AI agent talk, put `heard run` in front of the command you normally use:
+
+```bash
+heard run aider
+heard run your-agent --project ./my-project
+```
+
+Heard starts the process under a PTY, passes its output through, and speaks what it prints. Quality depends on what the process emits: full-screen terminal interfaces may not give it enough to work with, and questions or approvals may still need the agent's own interface. Every wrapped command shares one session. `heard run` is part of this open source engine (see [Self-host](#self-host-open-source)), not the Mac app. Claude Code and Codex don't need it: `heard install claude-code` and `heard install codex` give richer events. More in the [docs](https://docs.heard.dev/other-agents).
+
 ## Runs locally
 
 The engine in this repo is open source under Apache 2.0 and needs no account or API keys:
