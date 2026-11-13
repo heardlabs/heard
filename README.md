@@ -69,9 +69,9 @@ heard run your-agent --project ./my-project
 
 Heard starts the process under a PTY, passes its output through, and speaks what it prints. Quality depends on what the process emits: full-screen terminal interfaces may not give it enough to work with, and questions or approvals may still need the agent's own interface. Every wrapped command shares one session. `heard run` is part of this open source engine (see [Self-host](#self-host-open-source)), not the Mac app. Claude Code and Codex don't need it: `heard install claude-code` and `heard install codex` give richer events. More in the [docs](https://docs.heard.dev/other-agents).
 
-## Runs locally
+## Open-source voice tool for coding agents that runs locally
 
-The engine in this repo is open source under Apache 2.0 and needs no account or API keys:
+The engine in this repo is open source under Apache 2.0 and needs no account or API keys. The voice runs on your Mac; the list below says exactly what can leave it:
 
 - Speech comes from Kokoro text-to-speech on your Mac, after you run `heard download-voice` once (about 350 MB).
 - With no Anthropic key and no Heard sign-in, spoken updates are built on your Mac from templates and the agent's own text. If the `claude` command is installed, the engine can send agent activity to Anthropic through `claude -p`, with your Claude login, to write rolled-up project summaries. An ambiguous reply to Heard's catch-up prompt can go the same way.
