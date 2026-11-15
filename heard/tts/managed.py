@@ -56,6 +56,12 @@ class ManagedError(RuntimeError):
       5xx ``proxy_error``        — proxy itself or upstream EL failure
     The daemon switches on these to decide whether to nag, fall back,
     or stay silent.
+
+    The transient modes (0, 5xx, and a 429 that is NOT
+    ``daily_cap_exceeded``) are retried on the next event — the daemon
+    keeps ManagedTTS selected — and the current utterance goes out via
+    local Kokoro when it's on disk. The entitlement modes (401 / 402 /
+    429 cap) are the user's to resolve and re-pick the backend instead.
     """
 
     def __init__(self, status: int, reason: str, detail: str = "") -> None:
