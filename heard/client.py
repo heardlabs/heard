@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -178,11 +177,6 @@ def start_headless_daemon() -> bool:
         if is_daemon_alive():
             return True
 
-        # Re-check inside the lock — someone may have spawned a daemon
-        # between our first check and acquiring the lock.
-        if is_daemon_alive():
-            return True
-
         # Memory guard: bail rather than OOM the system. Without this,
         # an orphan daemon plus a fresh spawn loading Kokoro can push
         # an 8 GB Mac into swap death.
@@ -224,7 +218,7 @@ def start_headless_daemon() -> bool:
                 time.sleep(0.1)
             for pid in _process.find_pids_matching("heard.daemon"):
                 try:
-                    _process.terminate_pid(pid)
+                    _process.kill_pid(pid)
                 except Exception:
                     pass
             print(
@@ -256,6 +250,7 @@ def start_headless_daemon() -> bool:
         with open(config.LOG_PATH, "a", encoding="utf-8") as logf:
             _process.spawn_detached(
                 [exe, "-m", "heard.daemon"],
+                env=env,
                 stdout=logf,
                 stderr=logf,
             )
