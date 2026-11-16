@@ -132,7 +132,9 @@ def test_greeting_uses_bundled_mp3_when_present(tmp_path, monkeypatch):
         def __init__(self, *a, **kw):
             afplay_calls.append(a)
         def wait(self):
-            pass
+            raise AssertionError(
+                "greeting must not block the reload thread on ~7s of audio"
+            )
 
     monkeypatch.setattr("heard.platform.playback.spawn", _FakeHandle)
 
