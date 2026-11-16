@@ -44,3 +44,33 @@ def test_start_headless_daemon_reaps_wedged_orphan(tmp_path, monkeypatch):
     assert result is True, "must take over and report a live daemon"
     assert 4242 in terminated, "orphan must be reaped"
     assert popen.called, "a fresh daemon must be spawned after reaping"
+
+
+def test_start_headless_daemon_keeps_bundle_pythonhome(tmp_path, monkeypatch):
+    """Inside the py2app bundle the frozen launcher needs PYTHONHOME or it
+    dies with "No module named 'encodings'". The platform spawn helper
+    must forward the env the client built."""
+    monkeypatch.setattr(client.config, "LOG_PATH", tmp_path / "daemon.log")
+    monkeypatch.setattr(client.config, "SOCKET_PATH", tmp_path / "daemon.sock")
+    monkeypatch.setattr(client, "_SPAWN_LOCK_PATH", tmp_path / "spawn.lock")
+    monkeypatch.setattr(client.config, "ensure_dirs", lambda: None)
+    monkeypatch.setattr(client, "is_daemon_alive", lambda: False)
+    monkeypatch.setattr(client, "_system_memory_pressure", lambda: None)
+    monkeypatch.setattr(client, "_wait_for_daemon", lambda *_a, **_kw: True)
+    monkeypatch.setattr(client, "_other_daemon_pids", lambda: [])
+    monkeypatch.setattr(
+        client.sys,
+        "executable",
+        "/Applications/Heard.app/Contents/MacOS/Heard",
+    )
+
+    popen = MagicMock()
+    monkeypatch.setattr(client.subprocess, "Popen", popen)
+
+    assert client.start_headless_daemon() is True
+
+    _args, kwargs = popen.call_args
+    assert (
+        kwargs["env"]["PYTHONHOME"]
+        == "/Applications/Heard.app/Contents/Resources"
+    )
