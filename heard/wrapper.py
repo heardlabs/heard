@@ -19,6 +19,7 @@ from __future__ import annotations
 import errno
 import os
 import re
+import subprocess
 import sys
 import time
 from collections.abc import Sequence
@@ -26,12 +27,13 @@ from collections.abc import Sequence
 from heard import client, config, markdown
 
 # The PTY / ANSI / tee loop below is POSIX-only (pty, termios, tty,
-# select, SIGWINCH). On Windows there is no controlling TTY for a
-# child process to inherit, so `heard run` falls back to plain
-# subprocess exec — the agent still runs, it just isn't wrapped.
-_IS_DARWIN = sys.platform == "darwin"
+# select, SIGWINCH). Windows has no controlling TTY for a child process
+# to inherit, so on Windows `heard run` falls back to a plain subprocess
+# invocation — the agent still runs, it just isn't wrapped or narrated.
+# Linux keeps the PTY path.
+_IS_WINDOWS = sys.platform == "win32"
 
-if _IS_DARWIN:
+if not _IS_WINDOWS:
     import pty
     import select
     import signal
@@ -97,18 +99,20 @@ def run(argv: Sequence[str]) -> int:
 
     cfg = config.load(cwd=os.getcwd())
 
-    if not _IS_DARWIN:
+    if _IS_WINDOWS:
         # The PTY/ANSI/tee loop below is POSIX-only. On Windows we can't
-        # give the child a controlling TTY, so we exec the command
-        # directly — the agent still runs and its output still reaches
-        # the user's console; Heard just can't synthesise narration
-        # from it. Tell the user rather than fail silently.
+        # give the child a controlling TTY, so run the command directly —
+        # it runs, but Heard cannot synthesise narration from its output
+        # (there is no PTY path yet). Wait for it so the child's exit
+        # code reaches the caller: os.execvp on Windows starts a new
+        # process and exits this one, returning the shell to the prompt
+        # before the command finishes.
         print(
-            "heard run: PTY wrapping is macOS-only; running the command directly.",
+            "heard run: no PTY narration path on Windows; running the command "
+            "directly without narration.",
             file=sys.stderr,
         )
-        os.execvp(argv[0], argv)
-        return 0  # unreachable
+        return int(subprocess.run(argv).returncode)
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         # no TTY — nothing to wrap meaningfully; just exec through
