@@ -1,0 +1,35 @@
+name: issue-slack
+
+# Pings the team's Slack channel whenever someone opens or reopens an issue.
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Post to Slack
+        env:
+          WEBHOOK: ${{ secrets.SLACK_ISSUES_WEBHOOK }}
+          ACTION: ${{ github.event.action }}
+          NUMBER: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+          URL: ${{ github.event.issue.html_url }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then echo "SLACK_ISSUES_WEBHOOK not set, skipping"; exit 0; fi
+          esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+          title=$(printf '%s' "$TITLE" | esc)
+          excerpt=$(printf '%s' "$BODY" | tr '\r\n' '  ' | cut -c1-300 | esc)
+          [ "${#BODY}" -gt 300 ] && excerpt="$excerpt…"
+          verb=$([ "$ACTION" = reopened ] && echo "Issue reopened" || echo "New issue")
+          nl=$'\n'
+          text="*$verb* <$URL|#$NUMBER $title>${nl}by $AUTHOR"
+          [ -n "$excerpt" ] && text="$text${nl}> $excerpt"
+          jq -n --arg text "$text" '{text: $text, unfurl_links: false}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$WEBHOOK"

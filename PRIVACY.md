@@ -107,7 +107,7 @@ Both default ON; opt out at any time and the stream is fully silenced.
 - **BYOK usage telemetry:** toggle `byok_telemetry` in Settings, or
   `heard config set byok_telemetry true|false`.
 - **All cloud text egress (TTS + LLM):** use the local **Kokoro** voice
-  (Options → Download voice) and a BYOK LLM you control, or **pause
+  (`heard download-voice`) and a BYOK LLM you control, or **pause
   Heard** from the menu bar so nothing is narrated at all.
 
 ## Contact

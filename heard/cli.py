@@ -784,6 +784,32 @@ def signup(email: str | None = typer.Option(None, help="Skip the prompt and use 
         pass
 
 
+@app.command(name="download-voice")
+def download_voice() -> None:
+    """Download the local Kokoro voice (~350 MB, one time) so Heard can
+    speak with no account and no API keys."""
+    from heard.tts.kokoro import DownloadError, KokoroTTS
+
+    tts = KokoroTTS(config.MODELS_DIR)
+    if tts.is_downloaded():
+        typer.echo("The local voice is already downloaded.")
+    else:
+        typer.echo("Downloading the local voice (~350 MB). This happens once.")
+        try:
+            tts.ensure_downloaded()
+        except (DownloadError, OSError) as exc:
+            typer.echo(f"Download failed: {exc}. Run the command again to retry.", err=True)
+            raise typer.Exit(1) from exc
+        typer.echo("Local voice ready.")
+    # A running daemon re-picks its backend on reload, so NullTTS becomes
+    # Kokoro without a restart. No daemon running is fine: it picks Kokoro
+    # when it next starts.
+    try:
+        client.send({"cmd": "reload"})
+    except Exception:
+        pass
+
+
 @app.command(name="signout", hidden=True)
 def signout() -> None:
     """Forget the saved Heard token. Daemon will fall back to BYOK
