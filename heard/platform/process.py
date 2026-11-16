@@ -81,6 +81,25 @@ def terminate_pid(pid: int) -> None:
         pass
 
 
+def kill_pid(pid: int) -> None:
+    """Force-kill *pid* immediately (SIGKILL / ``TerminateProcess``).
+    Never raises. Skips our own pid."""
+    if pid == os.getpid():
+        return
+    if _IS_WINDOWS:
+        try:
+            import psutil
+
+            psutil.Process(pid).kill()
+        except Exception:
+            return
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
 def _terminate_windows(pid: int) -> None:
     try:
         import psutil
@@ -111,6 +130,7 @@ def _terminate_windows(pid: int) -> None:
 def spawn_detached(
     argv: list[str],
     *,
+    env: dict[str, str] | None = None,
     stdout=None,
     stderr=None,
     stdin: int | None = subprocess.DEVNULL,
@@ -119,8 +139,13 @@ def spawn_detached(
 
     ``start_new_session=True`` is the POSIX ``setsid``; Windows has no
     sessions, so the equivalent isolation is a detached process in its
-    own group."""
+    own group.
+
+    ``env`` is forwarded verbatim to ``Popen``. The py2app bundle needs
+    ``PYTHONHOME`` here, or the frozen launcher can't find its stdlib
+    ("No module named 'encodings'")."""
     kwargs: dict = {
+        "env": env,
         "stdout": stdout,
         "stderr": stderr,
         "stdin": stdin,
