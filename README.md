@@ -290,7 +290,7 @@ The engine in this repo is Apache 2.0. The easiest places to contribute are adap
    winget install Gyan.FFmpeg        # ffplay, needed for MP3 voices and speed changes
    heard install claude-code
 ```
-   Local Kokoro needs a one-time model download (see below). Windows has no menu-bar app yet, so run the daemon with `heard daemon` or let the first hook start it.
+   Local Kokoro needs a one-time model download (see below). Windows has no menu-bar app yet, so run the daemon with `heard daemon` or let the first hook start it. `heard run` on Windows starts the command directly — it runs and its output reaches your console, but Heard does **not** narrate it (there is no PTY wrapping path on Windows yet). File locking uses the stdlib (`msvcrt` on Windows, `fcntl` on macOS/Linux); the daemon's Windows IPC owner lock uses `portalocker`.
 
 ## Status
 

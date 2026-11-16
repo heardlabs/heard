@@ -42,6 +42,11 @@ else:
 _DEFAULT_BLOCK_TIMEOUT_S = 10.0
 _RETRY_INTERVAL_S = 0.05
 
+# Windows locks a byte RANGE, and LK_UNLCK must cover exactly the range
+# that was locked. One shared constant keeps acquire/release in sync;
+# 1 GiB behaves like flock() for any realistic state file.
+_WINDOWS_LOCK_LEN = 1_073_741_824
+
 
 class LockBusy(BlockingIOError):
     """Raised by :func:`try_exclusive` when another process holds the lock."""
@@ -85,7 +90,7 @@ class FileLock:
     def _acquire_windows(self, *, blocking: bool, timeout_s: float | None) -> None:
         # Lock the entire file (offset 0, length large enough) so it
         # behaves like flock(). Use 1GB to cover any realistic file.
-        LOCK_LEN = 1_073_741_824  # 1 GiB
+        LOCK_LEN = _WINDOWS_LOCK_LEN
         if not blocking:
             try:
                 msvcrt.locking(self.fd, msvcrt.LK_NBLCK, LOCK_LEN)
@@ -109,7 +114,7 @@ class FileLock:
         self._held = False
         try:
             if _IS_WINDOWS:
-                msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
+                msvcrt.locking(self.fd, msvcrt.LK_UNLCK, _WINDOWS_LOCK_LEN)
             else:
                 fcntl.flock(self.fd, fcntl.LOCK_UN)
         except OSError:

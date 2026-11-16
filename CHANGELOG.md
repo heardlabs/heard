@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows support (experimental): the bundled `.app` daemon spawn keeps
+  `PYTHONHOME`, so a frozen launcher no longer dies with "No module named
+  'encodings'". Playback no longer applies the speed twice (the backend
+  already synthesised at that speed), ambient echo suppression speaks the
+  Heard Power voice service's plain-text protocol again, and `heard run`
+  propagates the child's exit code. Large hook payloads (>8 KB) now
+  authenticate over Windows IPC: the token travels as its own first line
+  instead of as a JSON key appended to a possibly-partial body.
+
 - Per-agent voices work on Speechify. The swarm voice pool now follows the
   active TTS backend; previously it always handed out ElevenLabs voice IDs,
   which Speechify maps to its default rather than rejecting — so every agent
