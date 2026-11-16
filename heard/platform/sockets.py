@@ -17,11 +17,19 @@ used to provide:
     port 0 always succeeds, so unlike a unix socket it cannot detect a
     second owner by itself.
 
-Message framing is unchanged: one connection, one request, client
-half-closes, server reads to EOF, replies, closes. On Windows the
-payload carries one extra ``_token`` key — the daemon's ``_handle``
-dispatches on ``cmd`` and ignores unknown keys, so no handler changes
-are needed.
+Message framing: one connection, one request, client half-closes, server
+reads to EOF, replies, closes. On POSIX the body is the JSON request
+itself. On Windows every request is prefixed with a ``<token>\n`` line;
+the server validates that line, strips it, and hands only the body to
+``_serve_one``. The token is deliberately a fixed first line rather than
+a JSON key: a hook payload with long assistant text routinely exceeds one
+``recv`` chunk, and appending a key to a partial JSON document used to
+make the whole request unparseable.
+
+``poke`` is the exception: it targets the Heard Power voice service,
+which speaks a plain-text protocol (``ping`` → ``pong``, ``start`` /
+``stop`` / ``pause`` / ``resume``), so the POSIX path sends the action
+bytes verbatim.
 """
 from __future__ import annotations
 
@@ -37,6 +45,9 @@ _HAS_AF_UNIX = hasattr(socket, "AF_UNIX")
 _TIMEOUT_S = 2.0
 _PING_TIMEOUT_S = 0.25
 _RECV_SIZE = 8192
+# The token is a 64-char hex string; 256 leaves room for future growth
+# while keeping a malformed/garbage first line from buffering forever.
+_MAX_TOKEN_LINE = 256
 
 
 class DaemonBusyError(OSError):
@@ -233,41 +244,54 @@ class _TcpServer:
 
 
 class _AuthedConn:
-    """Connection wrapper that requires the shared token as the first
-    key of the JSON request. Delegates everything else to the raw
-    socket, so ``daemon._serve_one`` (``recv`` / ``sendall`` / ``with``)
-    keeps working verbatim."""
+    """Connection wrapper that consumes the shared-token line before the
+    JSON body. Delegates everything else to the raw socket, so
+    ``daemon._serve_one`` (``recv`` / ``sendall`` / ``with``) keeps
+    working verbatim.
+
+    The token line is buffered independently of ``recv`` boundaries, so a
+    20 KB hook payload — or a token line split across two packets — is
+    still framed correctly."""
 
     def __init__(self, conn: socket.socket, token: str) -> None:
         self._conn = conn
         self._token = token
+        self._verified = False
+        self._buf = b""
 
     def recv(self, bufsize: int = _RECV_SIZE) -> bytes:
-        data = self._conn.recv(bufsize)
-        if not data:
-            return b""
         if not self._verified:
-            self._check(data)
-        return data
+            self._verify_token_line()
+        if self._buf:
+            out, self._buf = self._buf[:bufsize], self._buf[bufsize:]
+            return out
+        return self._conn.recv(bufsize)
 
-    @property
-    def _verified(self) -> bool:
-        return getattr(self, "_ok", False)
+    def _verify_token_line(self) -> None:
+        while b"\n" not in self._buf:
+            if len(self._buf) > _MAX_TOKEN_LINE:
+                self._reject()
+            chunk = self._conn.recv(_RECV_SIZE)
+            if not chunk:
+                # EOF before the newline = no token at all.
+                self._reject()
+            self._buf += chunk
+        line, _, rest = self._buf.partition(b"\n")
+        if len(line) > _MAX_TOKEN_LINE:
+            self._reject()
+        self._buf = rest
+        got = line.decode("utf-8", errors="ignore")
+        if not secrets.compare_digest(got, self._token):
+            self._reject()
+        self._verified = True
 
-    def _check(self, data: bytes) -> None:
+    def _reject(self) -> None:
+        # Fail closed: drop the connection, unreadable by _serve_one.
         try:
-            payload = json.loads(data.decode("utf-8", errors="ignore"))
-            got = payload.get("_token") if isinstance(payload, dict) else None
+            self._conn.close()
         except Exception:
-            got = None
-        if not isinstance(got, str) or not secrets.compare_digest(got, self._token):
-            # Fail closed: drop the connection, unreadable by _serve_one.
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-            raise PermissionError("heard daemon: missing or bad auth token")
-        self._ok = True
+            pass
+        raise PermissionError("heard daemon: missing or bad auth token")
 
     # -- pass-through surface used by _serve_one -------------------------
     def sendall(self, data: bytes) -> None:
@@ -343,13 +367,19 @@ def _connect(sock_path: str | Path, timeout_s: float) -> socket.socket:
 
 
 def _inject_token(sock_path: str | Path, payload: dict) -> bytes:
-    body = dict(payload)
-    if not _HAS_AF_UNIX:
-        token = _read_token(sock_path)
-        if token is None:
-            raise ConnectionError(f"no heard daemon token file at {sock_path}")
-        body["_token"] = token
-    return json.dumps(body).encode("utf-8")
+    """Encode *payload* for the wire.
+
+    POSIX sends the JSON body alone. Windows prefixes the shared-token
+    line (``<token>\\n``) — see the module docstring for why the token is
+    a line rather than a JSON key.
+    """
+    body = json.dumps(payload).encode("utf-8")
+    if _HAS_AF_UNIX:
+        return body
+    token = _read_token(sock_path)
+    if token is None:
+        raise ConnectionError(f"no heard daemon token file at {sock_path}")
+    return token.encode("utf-8") + b"\n" + body
 
 
 def ping(sock_path: str | Path, timeout_s: float = _PING_TIMEOUT_S) -> bool:
@@ -426,10 +456,21 @@ def poke(sock_path: str | Path, action: str, timeout_s: float = 0.5) -> bool:
     """Best-effort one-way send with no reply (push-to-talk / voice
     service echoes). Never raises — returns False if unreachable.
 
-    Replaces the four duplicated ``AF_UNIX`` poke blocks the repo
-    carried in ``push_to_talk``, ``voice_service``, ``home_window`` and
-    ``ui``."""
+    On POSIX this targets the Heard Power voice service, which speaks a
+    plain-text protocol (it answers ``b"ping"`` with ``b"pong"``), so the
+    action goes out as raw bytes — ``b"pause"``, never JSON. On Windows
+    there is no such service, so the daemon-IPC framing applies."""
     try:
+        if _HAS_AF_UNIX:
+            s = _connect(sock_path, timeout_s)
+            try:
+                s.sendall(action.encode("utf-8"))
+            finally:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            return True
         send(sock_path, {"cmd": action}, timeout_s=timeout_s)
         return True
     except Exception:
