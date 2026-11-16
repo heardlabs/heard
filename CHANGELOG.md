@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself on the next event. Token, plan and daily-cap errors are unchanged —
   those still need your attention.
 
+- The local fallback speaks in the configured Kokoro voice. It used to hand
+  Kokoro the caller's voice ID — an ElevenLabs alias such as `george` — which
+  Kokoro doesn't have, so the synth raised and the sentence was dropped after
+  all. `persona.kokoro_voice` / `cfg["kokoro_voice"]` are now resolved for the
+  fallback (and the BYOK ElevenLabs / Speechify fallback it shares).
+
 - Per-agent voices work on Speechify. The swarm voice pool now follows the
   active TTS backend; previously it always handed out ElevenLabs voice IDs,
   which Speechify maps to its default rather than rejecting — so every agent

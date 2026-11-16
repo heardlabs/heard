@@ -931,14 +931,40 @@ class Daemon:
 
         threading.Thread(target=_tick, daemon=True).start()
 
+    def _kokoro_voice(
+        self, cfg: dict | None = None, persona: persona_mod.Persona | None = None
+    ) -> str:
+        """Resolve the active Kokoro voice (``<accent_gender>_<name>``).
+
+        ElevenLabs aliases and Speechify slugs don't resolve under
+        Kokoro, so every Kokoro synth — including the fallback path,
+        whose caller holds a voice ID from a different namespace — goes
+        through this resolver instead of the caller's ``voice``.
+        """
+        cfg = cfg or self.cfg
+        persona = persona or self.persona
+        return persona.kokoro_voice or cfg.get("kokoro_voice") or "bm_george"
+
     def _kokoro_fallback_to(
-        self, text: str, voice: str, speed: float, lang: str, path: Path
+        self,
+        text: str,
+        speed: float,
+        lang: str,
+        path: Path,
+        cfg: dict | None = None,
+        persona: persona_mod.Persona | None = None,
     ) -> bool:
         """Try to synth via Kokoro into ``path``. Returns True on
         success. Used as a graceful-degradation backstop when the
         primary backend fails on the network side and the local model
         happens to be on disk — the BYOK providers (ElevenLabs /
         Speechify) and a *transient* managed failure both route here.
+
+        The voice is resolved here via ``_kokoro_voice`` rather than
+        taken from the caller: the caller failed on a backend whose
+        voice IDs (an ElevenLabs alias, a Speechify slug) are not valid
+        Kokoro voices, so passing one through would just make
+        kokoro-onnx raise "Voice <id> not found" on every fallback.
 
         Critically: we never trigger a download here. If the user
         hasn't opted into Kokoro via the Options → Download voice
@@ -958,7 +984,9 @@ class Daemon:
             # subprocess sees the right extension. The path was minted
             # with the primary backend's AUDIO_EXT.
             new_path = path.with_suffix(getattr(KokoroTTS, "AUDIO_EXT", ".wav"))
-            kokoro.synth_to_file(text, voice, speed, lang, new_path)
+            kokoro.synth_to_file(
+                text, self._kokoro_voice(cfg, persona), speed, lang, new_path
+            )
             if new_path != path:
                 # afplay handles either extension fine, but ensure the
                 # file the caller's path points to has the audio.
@@ -1760,7 +1788,7 @@ class Daemon:
         # every persona that ships with an ElevenLabs voice (= all of
         # them).
         if type(self.tts).__name__ == "KokoroTTS":
-            return persona.kokoro_voice or cfg.get("kokoro_voice") or "bm_george"
+            return self._kokoro_voice(cfg, persona)
         # Speechify IDs are readable slugs (`geffen_32`) — a third
         # disjoint namespace. Empty is fine here: the backend falls back
         # to its own curated default, and it filters ElevenLabs-shaped
@@ -1915,6 +1943,13 @@ class Daemon:
                 e = synth_result["err"]
             else:
                 e = None
+                # Managed is healthy again — re-arm the one-shot
+                # "using local voice" popup so a later outage can nudge
+                # once. (A successful *fallback* leaves self.tts as
+                # ManagedTTS too, but that path sets `e` below; clearing
+                # here only sees a real managed synth succeeding.)
+                if type(self.tts).__name__ == "ManagedTTS":
+                    notify.clear_once("managed_fallback_local")
             if isinstance(e, ManagedError):
                 # Transient managed failures — the proxy never answered
                 # (status 0), the proxy or upstream EL is down (5xx), or
@@ -1939,7 +1974,7 @@ class Daemon:
                     e.status == 429 and "daily_cap_exceeded" not in _reason
                 )
                 fell_back = is_transient and self._kokoro_fallback_to(
-                    chunk, voice, speed, lang, path
+                    chunk, speed, lang, path, cfg=cfg, persona=persona
                 )
                 if fell_back:
                     notify.notify(
@@ -1947,6 +1982,7 @@ class Daemon:
                         "Cloud voice is unreachable. Falling back to the "
                         "local model for now.",
                         kind="managed_fallback_local",
+                        once=True,
                     )
                     _log("synth_fallback_kokoro", err=str(e))
                     # Fall through to playback below — the file is on disk.
@@ -2177,7 +2213,7 @@ class Daemon:
                 # transient errors (network blips, 5xx) get the silent
                 # downgrade so the next narration goes out anyway.
                 if not is_auth and not is_rate and not is_bad_voice and self._kokoro_fallback_to(
-                    chunk, voice, speed, lang, path
+                    chunk, speed, lang, path, cfg=cfg, persona=persona
                 ):
                     notify.notify(
                         "Heard — using local voice",
