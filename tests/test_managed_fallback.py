@@ -25,7 +25,9 @@ file is about what the daemon does with it.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
+from heard import persona as persona_mod
 from heard.tts.managed import ManagedError
 
 
@@ -97,18 +99,18 @@ class _BoomManaged:
 
 
 class _FakePlayer:
-    """Minimal stand-in for platform.playback.spawn's handle.
+    """Minimal stand-in for the afplay subprocess ``_speak`` spawns.
 
     Snapshots the audio at spawn time — the daemon unlinks the temp file
     once playback returns, so reading it afterwards proves nothing."""
 
     returncode = 0
 
-    def __init__(self, path=None, speed=None) -> None:
-        self.path = path
-        self.speed = speed
+    def __init__(self, args) -> None:
+        self.args = list(args)
+        self.path = Path(self.args[-1])
         try:
-            self.audio = path.read_bytes()
+            self.audio = self.path.read_bytes()
         except OSError:
             self.audio = b""
 
@@ -126,6 +128,8 @@ def _drive(
     *,
     kokoro_available: bool,
     real_seam: bool = False,
+    cfg_overrides: dict | None = None,
+    persona: persona_mod.Persona | None = None,
 ) -> dict:
     """Run one utterance through the managed error path.
 
@@ -134,21 +138,29 @@ def _drive(
     exercises the daemon's real ``_kokoro_fallback_to`` against a stubbed
     KokoroTTS instead of stubbing the fallback itself.
 
-    Every recorded fallback/synth call is a ``(text, voice, speed, lang,
-    path)`` tuple, so both modes read the same.
+    Every recorded fallback call is a ``(text, speed, lang, path)``
+    tuple; with ``real_seam=True`` the records are Kokoro synth calls,
+    ``(text, voice, speed, lang, path)``, so the voice actually handed
+    to the local model is observable.
     """
     notes = _hush(monkeypatch)
-    daemon = _make_daemon(tmp_path, monkeypatch, {"greeted": True})
+    daemon = _make_daemon(
+        tmp_path, monkeypatch, {"greeted": True, **(cfg_overrides or {})}
+    )
+    if persona is not None:
+        daemon.persona = persona
     boom = _BoomManaged(err)
     daemon.tts = boom
 
+    synth_calls: list[tuple] = []
     if real_seam:
         fallback_calls = _fake_kokoro(monkeypatch, downloaded=kokoro_available)
+        synth_calls = fallback_calls
     else:
         fallback_calls = []
 
-        def _fallback(text, voice, speed, lang, path):
-            fallback_calls.append((text, voice, speed, lang, path))
+        def _fallback(text, speed, lang, path, **kw):
+            fallback_calls.append((text, speed, lang, path))
             if not kokoro_available:
                 return False
             path.write_bytes(b"local-audio")
@@ -157,10 +169,16 @@ def _drive(
         monkeypatch.setattr(daemon, "_kokoro_fallback_to", _fallback)
 
     played: list[_FakePlayer] = []
-    monkeypatch.setattr(
-        "heard.platform.playback.spawn",
-        lambda path, speed=1.0: played.append(_FakePlayer(path, speed)) or played[-1],
-    )
+
+    def _popen(args, **kw):
+        player = _FakePlayer(args)
+        played.append(player)
+        return player
+
+    # The daemon names subprocess directly (`heard.daemon.subprocess` is
+    # the stdlib module), so this is the seam that covers the afplay
+    # spawn in `_speak`.
+    monkeypatch.setattr("heard.daemon.subprocess.Popen", _popen)
 
     recorded: list[str] = []
     monkeypatch.setattr(
@@ -173,6 +191,7 @@ def _drive(
         "tts": boom,
         "notes": notes,
         "fallback_calls": fallback_calls,
+        "synth_calls": synth_calls,
         "played": played,
         "recorded": recorded,
     }
@@ -421,3 +440,45 @@ def test_real_fallback_declines_without_downloading(tmp_path, monkeypatch):
     assert r["played"] == []
     assert "cloud_unreachable" in _kinds(r["notes"])
     assert r["recorded"] == ["managed"]
+
+
+# --- the fallback speaks in a Kokoro voice -----------------------------
+
+
+def test_real_fallback_does_not_pass_the_elevenlabs_alias_to_kokoro(
+    tmp_path, monkeypatch
+):
+    """`_voice()` on ManagedTTS yields an ElevenLabs alias ("george").
+    Kokoro's namespace is disjoint ("bm_george"), so handing the alias
+    through made kokoro-onnx raise, the fallback return False, and the
+    user hear silence. The fallback must resolve its own voice."""
+    r = _drive(
+        tmp_path,
+        monkeypatch,
+        ManagedError(503, "proxy_error"),
+        kokoro_available=True,
+        real_seam=True,
+        persona=persona_mod.Persona(name="george", voice="george"),
+    )
+
+    assert len(r["synth_calls"]) == 1
+    voice = r["synth_calls"][0][1]
+    assert voice != "george"
+    assert voice == "bm_george"  # the default, since the persona pins none
+
+
+def test_real_fallback_prefers_cfg_kokoro_voice(tmp_path, monkeypatch):
+    """cfg["kokoro_voice"] beats the "bm_george" default when the persona
+    doesn't declare its own Kokoro voice."""
+    r = _drive(
+        tmp_path,
+        monkeypatch,
+        ManagedError(503, "proxy_error"),
+        kokoro_available=True,
+        real_seam=True,
+        cfg_overrides={"kokoro_voice": "af_nova"},
+        persona=persona_mod.Persona(name="george", voice="george"),
+    )
+
+    assert len(r["synth_calls"]) == 1
+    assert r["synth_calls"][0][1] == "af_nova"
