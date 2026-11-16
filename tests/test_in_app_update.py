@@ -281,9 +281,6 @@ def test_post_update_marker_is_one_shot(_scratch):
     assert updater.consume_post_update_marker() is None
 
 
-import pytest
-
-
 def test_unzip_app_rejects_archive_without_heard_app(tmp_path, _scratch):
     """If a release zip is malformed (missing Heard.app at the root),
     the install pipeline must error before the swap step so we don't
