@@ -627,10 +627,11 @@ class Daemon:
             except Exception:
                 pass
             try:
+                # Detached — don't block the daemon's reload thread on
+                # afplay (~7s of audio), exactly as the afplay Popen did.
                 # Platform abstraction so afplay path on macOS, ffplay/sounddevice
                 # on Windows — same defect path if anything goes wrong.
-                handle = _playback.spawn(mp3_path, 1.0)
-                handle.wait()
+                _playback.spawn(mp3_path, 1.0)
             except Exception as exc:
                 _log("greet_play_failed", err=repr(exc))
             return
@@ -2245,9 +2246,13 @@ class Daemon:
                 path.unlink(missing_ok=True)
                 continue
             max_native = float(getattr(self.tts, "MAX_NATIVE_SPEED", 1.2))
-            play_speed = speed
+            # The backend has already synthesised at ``speed`` (clamped to
+            # its own MAX_NATIVE_SPEED), so playback runs at 1.0 unless
+            # there's residual speed-up left over the cap. Passing
+            # ``speed`` here applied it twice (1.1 → ~1.21x).
+            play_speed = 1.0
             if speed > max_native and max_native > 0:
-                play_speed = speed / max_native
+                play_speed = min(speed / max_native, 2.0)  # afplay -r upper bound
             # Half-duplex: tell the Power voice service to stop listening while
             # we speak, so ambient input doesn't transcribe Heard's own voice
             # (echo). Best-effort; no-op unless in ambient mode.
