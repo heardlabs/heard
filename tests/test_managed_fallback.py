@@ -114,7 +114,7 @@ class _FakePlayer:
         except OSError:
             self.audio = b""
 
-    def wait(self) -> int:
+    def wait(self, timeout=None) -> int:
         return 0
 
     def kill(self) -> None:
