@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows support (experimental): headless core: `heard say`, the daemon,
+  Claude Code hooks; `heard run` runs without narration on Windows.
+
 - `multi_agent_voice_scope: window` — give every agent window its own
   voice instead of one per project. Assigned round-robin as windows appear,
   so concurrent agents never collide (the project hash does: 10 projects can
@@ -27,14 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Windows support (experimental): the bundled `.app` daemon spawn keeps
-  `PYTHONHOME`, so a frozen launcher no longer dies with "No module named
-  'encodings'". Playback no longer applies the speed twice (the backend
-  already synthesised at that speed), ambient echo suppression speaks the
-  Heard Power voice service's plain-text protocol again, and `heard run`
-  propagates the child's exit code. Large hook payloads (>8 KB) now
-  authenticate over Windows IPC: the token travels as its own first line
-  instead of as a JSON key appended to a possibly-partial body.
+- Cloud voices no longer drop a sentence when the Heard proxy is briefly
+  unreachable. A network blip, a proxy or upstream 5xx, or a Cloudflare edge
+  rate-limit (429 with no cap reason) now renders the utterance with the local
+  Kokoro model when it's on disk, instead of showing "Heard cloud voices
+  unreachable" and skipping it. Cloud voice stays selected, so it returns by
+  itself on the next event. Token, plan and daily-cap errors are unchanged —
+  those still need your attention.
+
+- The local fallback speaks in the configured Kokoro voice. It used to hand
+  Kokoro the caller's voice ID — an ElevenLabs alias such as `george` — which
+  Kokoro doesn't have, so the synth raised and the sentence was dropped after
+  all. `persona.kokoro_voice` / `cfg["kokoro_voice"]` are now resolved for the
+  fallback (and the BYOK ElevenLabs / Speechify fallback it shares).
 
 - Per-agent voices work on Speechify. The swarm voice pool now follows the
   active TTS backend; previously it always handed out ElevenLabs voice IDs,

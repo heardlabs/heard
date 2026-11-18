@@ -911,18 +911,45 @@ class Daemon:
 
         threading.Thread(target=_tick, daemon=True).start()
 
+    def _kokoro_voice(
+        self, cfg: dict | None = None, persona: persona_mod.Persona | None = None
+    ) -> str:
+        """Resolve the active Kokoro voice (``<accent_gender>_<name>``).
+
+        ElevenLabs aliases and Speechify slugs don't resolve under
+        Kokoro, so every Kokoro synth — including the fallback path,
+        whose caller holds a voice ID from a different namespace — goes
+        through this resolver instead of the caller's ``voice``.
+        """
+        cfg = cfg or self.cfg
+        persona = persona or self.persona
+        return persona.kokoro_voice or cfg.get("kokoro_voice") or "bm_george"
+
     def _kokoro_fallback_to(
-        self, text: str, voice: str, speed: float, lang: str, path: Path
+        self,
+        text: str,
+        speed: float,
+        lang: str,
+        path: Path,
+        cfg: dict | None = None,
+        persona: persona_mod.Persona | None = None,
     ) -> bool:
         """Try to synth via Kokoro into ``path``. Returns True on
         success. Used as a graceful-degradation backstop when the
-        primary backend (ElevenLabs) fails on the network side and
-        the local model happens to be on disk.
+        primary backend fails on the network side and the local model
+        happens to be on disk — the BYOK providers (ElevenLabs /
+        Speechify) and a *transient* managed failure both route here.
+
+        The voice is resolved here via ``_kokoro_voice`` rather than
+        taken from the caller: the caller failed on a backend whose
+        voice IDs (an ElevenLabs alias, a Speechify slug) are not valid
+        Kokoro voices, so passing one through would just make
+        kokoro-onnx raise "Voice <id> not found" on every fallback.
 
         Critically: we never trigger a download here. If the user
         hasn't opted into Kokoro via the Options → Download voice
         model menu, this returns False and the caller surfaces the
-        original ElevenLabs error. We don't want a "voice unreachable"
+        original backend error. We don't want a "voice unreachable"
         moment to silently turn into a 30-second 350 MB download.
         """
         try:
@@ -937,7 +964,9 @@ class Daemon:
             # subprocess sees the right extension. The path was minted
             # with the primary backend's AUDIO_EXT.
             new_path = path.with_suffix(getattr(KokoroTTS, "AUDIO_EXT", ".wav"))
-            kokoro.synth_to_file(text, voice, speed, lang, new_path)
+            kokoro.synth_to_file(
+                text, self._kokoro_voice(cfg, persona), speed, lang, new_path
+            )
             if new_path != path:
                 # afplay handles either extension fine, but ensure the
                 # file the caller's path points to has the audio.
@@ -1739,7 +1768,7 @@ class Daemon:
         # every persona that ships with an ElevenLabs voice (= all of
         # them).
         if type(self.tts).__name__ == "KokoroTTS":
-            return persona.kokoro_voice or cfg.get("kokoro_voice") or "bm_george"
+            return self._kokoro_voice(cfg, persona)
         # Speechify IDs are readable slugs (`geffen_32`) — a third
         # disjoint namespace. Empty is fine here: the backend falls back
         # to its own curated default, and it filters ElevenLabs-shaped
@@ -1894,14 +1923,61 @@ class Daemon:
                 e = synth_result["err"]
             else:
                 e = None
+                # Managed is healthy again — re-arm the one-shot
+                # "using local voice" popup so a later outage can nudge
+                # once. (A successful *fallback* leaves self.tts as
+                # ManagedTTS too, but that path sets `e` below; clearing
+                # here only sees a real managed synth succeeding.)
+                if type(self.tts).__name__ == "ManagedTTS":
+                    notify.clear_once("managed_fallback_local")
             if isinstance(e, ManagedError):
-                # Server-side entitlement signal. 402 fires for trial
-                # expiry AND Pro cancellation (subscription.deleted)
-                # — same code path either way: flip local plan to
-                # "expired", re-pick TTS so the next utterance goes
-                # through whatever backend the selector picks (BYOK,
-                # downloaded-Kokoro, or none), notify the user once.
-                if e.status == 402:
+                # Transient managed failures — the proxy never answered
+                # (status 0), the proxy or upstream EL is down (5xx), or
+                # Cloudflare's edge returned a 429 that is NOT the account's
+                # daily cap. None are the user's to fix and all clear on
+                # their own, so try the local model (when it's on disk) and
+                # let the utterance go out instead of dropping it — same
+                # graceful downgrade the BYOK branch below performs.
+                # `self.tts` and `_managed_capped_at` are deliberately left
+                # alone: managed stays selected, so the next event retries
+                # the cloud voice and it auto-recovers with no restart.
+                #
+                # 401 (dead token) / 402 (plan ended) / 429
+                # daily_cap_exceeded are excluded on purpose — user-fixable
+                # or state transitions, each already re-picks the backend
+                # below, and a silent downgrade would hide the thing the
+                # user has to act on. The cap reason is matched as a
+                # substring because the proxy's body reads
+                # "trial_daily_cap_exceeded (0 chars left)".
+                _reason = getattr(e, "reason", "") or ""
+                is_transient = e.status == 0 or 500 <= e.status < 600 or (
+                    e.status == 429 and "daily_cap_exceeded" not in _reason
+                )
+                fell_back = is_transient and self._kokoro_fallback_to(
+                    chunk, speed, lang, path, cfg=cfg, persona=persona
+                )
+                if fell_back:
+                    notify.notify(
+                        "Heard — using local voice",
+                        "Cloud voice is unreachable. Falling back to the "
+                        "local model for now.",
+                        kind="managed_fallback_local",
+                        once=True,
+                    )
+                    _log("synth_fallback_kokoro", err=str(e))
+                    # Fall through to playback below — the file is on disk.
+                    # Clear `e` first: the generic `elif e is not None:`
+                    # handler further down is a separate statement, so an
+                    # error left set here would be reported a second time
+                    # ("couldn't generate audio") over audio we already have.
+                    e = None
+                elif e.status == 402:
+                    # Server-side entitlement signal. 402 fires for trial
+                    # expiry AND Pro cancellation (subscription.deleted)
+                    # — same code path either way: flip local plan to
+                    # "expired", re-pick TTS so the next utterance goes
+                    # through whatever backend the selector picks (BYOK,
+                    # downloaded-Kokoro, or none), notify the user once.
                     _prev_plan = self.cfg.get("heard_plan", "")
                     self.cfg["heard_plan"] = "expired"
                     try:
@@ -2003,6 +2079,9 @@ class Daemon:
                     # would silence the user until UTC midnight for a transient
                     # block. Keep managed selected so the next event retries;
                     # voice auto-recovers the moment the edge clears (no restart).
+                    # (This is also the no-local-model path: the transient
+                    # fallback above already saved the utterance when Kokoro is
+                    # on disk, so reaching here means we had nothing to play.)
                     _log("managed_edge_429", reason=getattr(e, "reason", ""))
                     notify.notify(
                         "Heard voice paused",
@@ -2044,27 +2123,32 @@ class Daemon:
                         "Open Heard from the menu and paste your own ElevenLabs key, or use local voices.",
                         kind="cloud_unreachable",
                     )
-                # 402 (trial expired) is a *graceful* state transition,
-                # not a persistent error: the daemon already flipped the
-                # plan + re-picked TTS to local above, and the user got
-                # a one-time notification. Recording it would also park
-                # a ⚠ in the menu bar status row that lingers until the
-                # next successful synth — confusing for someone who
-                # never wanted cloud in the first place. 429/401/5xx
-                # remain real ongoing conditions and DO get badged.
-                if e.status != 402:
-                    self._record_error("managed", str(e))
-                _log("synth_failed", backend=type(self.tts).__name__, err=str(e))
-                try:
-                    from heard import analytics
-                    analytics.capture("synth_failed", {
-                        "backend": type(self.tts).__name__,
-                        "error_kind": f"ManagedHTTP{getattr(e, 'status', '')}",
-                    })
-                except Exception:
-                    pass
-                path.unlink(missing_ok=True)
-                continue
+                # A successful local fallback means the utterance goes out
+                # (and the file is already on disk) — nothing failed from the
+                # user's side, so skip the badge/analytics/drop below and fall
+                # through to playback.
+                if not fell_back:
+                    # 402 (trial expired) is a *graceful* state transition,
+                    # not a persistent error: the daemon already flipped the
+                    # plan + re-picked TTS to local above, and the user got
+                    # a one-time notification. Recording it would also park
+                    # a ⚠ in the menu bar status row that lingers until the
+                    # next successful synth — confusing for someone who
+                    # never wanted cloud in the first place. 429/401/5xx
+                    # remain real ongoing conditions and DO get badged.
+                    if e.status != 402:
+                        self._record_error("managed", str(e))
+                    _log("synth_failed", backend=type(self.tts).__name__, err=str(e))
+                    try:
+                        from heard import analytics
+                        analytics.capture("synth_failed", {
+                            "backend": type(self.tts).__name__,
+                            "error_kind": f"ManagedHTTP{getattr(e, 'status', '')}",
+                        })
+                    except Exception:
+                        pass
+                    path.unlink(missing_ok=True)
+                    continue
             if isinstance(e, (ElevenLabsError, SpeechifyError)):
                 msg = str(e)
                 # Both BYOK voice providers are plain HTTPS TTS with the
@@ -2109,7 +2193,7 @@ class Daemon:
                 # transient errors (network blips, 5xx) get the silent
                 # downgrade so the next narration goes out anyway.
                 if not is_auth and not is_rate and not is_bad_voice and self._kokoro_fallback_to(
-                    chunk, voice, speed, lang, path
+                    chunk, speed, lang, path, cfg=cfg, persona=persona
                 ):
                     notify.notify(
                         "Heard — using local voice",
