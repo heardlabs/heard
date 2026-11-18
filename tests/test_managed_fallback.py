@@ -99,22 +99,22 @@ class _BoomManaged:
 
 
 class _FakePlayer:
-    """Minimal stand-in for the afplay subprocess ``_speak`` spawns.
+    """Stand-in for the handle ``playback.spawn`` returns.
 
     Snapshots the audio at spawn time — the daemon unlinks the temp file
     once playback returns, so reading it afterwards proves nothing."""
 
     returncode = 0
 
-    def __init__(self, args) -> None:
-        self.args = list(args)
-        self.path = Path(self.args[-1])
+    def __init__(self, path, speed) -> None:
+        self.path = Path(path)
+        self.speed = speed
         try:
             self.audio = self.path.read_bytes()
         except OSError:
             self.audio = b""
 
-    def wait(self) -> int:
+    def wait(self, timeout=None) -> int:
         return 0
 
     def kill(self) -> None:
@@ -170,15 +170,16 @@ def _drive(
 
     played: list[_FakePlayer] = []
 
-    def _popen(args, **kw):
-        player = _FakePlayer(args)
+    def _spawn(path, speed=1.0):
+        player = _FakePlayer(path, speed)
         played.append(player)
         return player
 
-    # The daemon names subprocess directly (`heard.daemon.subprocess` is
-    # the stdlib module), so this is the seam that covers the afplay
-    # spawn in `_speak`.
-    monkeypatch.setattr("heard.daemon.subprocess.Popen", _popen)
+    # Stub the playback seam itself, not the process it may spawn: this
+    # is platform-independent, whereas patching `subprocess.Popen` only
+    # covers the afplay path — on Windows `_spawn_windows` prefers
+    # ffplay/sounddevice and never touches Popen when they're absent.
+    monkeypatch.setattr("heard.platform.playback.spawn", _spawn)
 
     recorded: list[str] = []
     monkeypatch.setattr(

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows support (experimental): headless core: `heard say`, the daemon,
+  Claude Code hooks; `heard run` runs without narration on Windows.
+
 - `multi_agent_voice_scope: window` — give every agent window its own
   voice instead of one per project. Assigned round-robin as windows appear,
   so concurrent agents never collide (the project hash does: 10 projects can

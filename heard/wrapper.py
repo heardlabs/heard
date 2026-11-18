@@ -18,18 +18,28 @@ from __future__ import annotations
 
 import errno
 import os
-import pty
 import re
-import select
-import signal
-import struct
+import subprocess
 import sys
-import termios
 import time
-import tty
 from collections.abc import Sequence
 
 from heard import client, config, markdown
+
+# The PTY / ANSI / tee loop below is POSIX-only (pty, termios, tty,
+# select, SIGWINCH). Windows has no controlling TTY for a child process
+# to inherit, so on Windows `heard run` falls back to a plain subprocess
+# invocation — the agent still runs, it just isn't wrapped or narrated.
+# Linux keeps the PTY path.
+_IS_WINDOWS = sys.platform == "win32"
+
+if not _IS_WINDOWS:
+    import pty
+    import select
+    import signal
+    import struct
+    import termios
+    import tty
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[=>]")
 # Bumped from 1500ms — agents routinely think for >1.5s mid-response,
@@ -88,6 +98,21 @@ def run(argv: Sequence[str]) -> int:
         return 2
 
     cfg = config.load(cwd=os.getcwd())
+
+    if _IS_WINDOWS:
+        # The PTY/ANSI/tee loop below is POSIX-only. On Windows we can't
+        # give the child a controlling TTY, so run the command directly —
+        # it runs, but Heard cannot synthesise narration from its output
+        # (there is no PTY path yet). Wait for it so the child's exit
+        # code reaches the caller: os.execvp on Windows starts a new
+        # process and exits this one, returning the shell to the prompt
+        # before the command finishes.
+        print(
+            "heard run: no PTY narration path on Windows; running the command "
+            "directly without narration.",
+            file=sys.stderr,
+        )
+        return int(subprocess.run(argv).returncode)
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         # no TTY — nothing to wrap meaningfully; just exec through
