@@ -27,7 +27,10 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import pytest
+
 from heard import persona as persona_mod
+from heard.tts.elevenlabs import ElevenLabsError
 from heard.tts.managed import ManagedError
 
 
@@ -98,6 +101,29 @@ class _BoomManaged:
         raise self.err
 
 
+class _ScriptedTTS:
+    """Stand-in for a cloud backend that fails ``fail_times`` synth calls
+    and then recovers — what a transient blip actually looks like across
+    two utterances. ``fail_times=0`` is a healthy backend (no fallback)."""
+
+    AUDIO_EXT = ".mp3"
+    MAX_NATIVE_SPEED = 1.2
+
+    def __init__(self, err: Exception | None = None, fail_times: int = 0) -> None:
+        self.err = err
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def is_configured(self) -> bool:
+        return True
+
+    def synth_to_file(self, text, voice, speed, lang, path) -> None:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise self.err
+        Path(path).write_bytes(b"cloud-audio")
+
+
 class _FakePlayer:
     """Stand-in for the handle ``playback.spawn`` returns.
 
@@ -124,24 +150,28 @@ class _FakePlayer:
 def _drive(
     tmp_path,
     monkeypatch,
-    err: Exception,
+    err: Exception | None = None,
     *,
     kokoro_available: bool,
     real_seam: bool = False,
     cfg_overrides: dict | None = None,
     persona: persona_mod.Persona | None = None,
+    tts=None,
+    texts: tuple[str, ...] = ("hello there",),
 ) -> dict:
-    """Run one utterance through the managed error path.
+    """Run ``texts`` through the managed error path, one utterance each.
 
     ``kokoro_available=False`` stands in for a machine that never opted
     into the local model (never auto-downloaded). ``real_seam=True``
     exercises the daemon's real ``_kokoro_fallback_to`` against a stubbed
-    KokoroTTS instead of stubbing the fallback itself.
+    KokoroTTS instead of stubbing the fallback itself. ``tts`` swaps the
+    always-raising managed stand-in for another backend — e.g. one that
+    recovers, or one that raises a BYOK error.
 
     Every recorded fallback call is a ``(text, speed, lang, path)``
     tuple; with ``real_seam=True`` the records are Kokoro synth calls,
-    ``(text, voice, speed, lang, path)``, so the voice actually handed
-    to the local model is observable.
+    ``(text, voice, speed, lang, path)``, so the voice and speed actually
+    handed to the local model are observable.
     """
     notes = _hush(monkeypatch)
     daemon = _make_daemon(
@@ -149,8 +179,8 @@ def _drive(
     )
     if persona is not None:
         daemon.persona = persona
-    boom = _BoomManaged(err)
-    daemon.tts = boom
+    backend = _BoomManaged(err) if tts is None else tts
+    daemon.tts = backend
 
     synth_calls: list[tuple] = []
     if real_seam:
@@ -186,10 +216,11 @@ def _drive(
         daemon, "_record_error", lambda kind, msg: recorded.append(kind)
     )
 
-    daemon._speak("hello there", threading.Event())
+    for text in texts:
+        daemon._speak(text, threading.Event())
     return {
         "daemon": daemon,
-        "tts": boom,
+        "tts": backend,
         "notes": notes,
         "fallback_calls": fallback_calls,
         "synth_calls": synth_calls,
@@ -483,3 +514,108 @@ def test_real_fallback_prefers_cfg_kokoro_voice(tmp_path, monkeypatch):
 
     assert len(r["synth_calls"]) == 1
     assert r["synth_calls"][0][1] == "af_nova"
+
+
+# --- playback speed is measured against whoever synthesised ------------
+
+
+def _played_speeds(r: dict) -> list[float]:
+    return [p.speed for p in r["played"]]
+
+
+def test_managed_fallback_does_not_reapply_the_cloud_cap(tmp_path, monkeypatch):
+    """Kokoro rendered the 1.5x itself, so playback adds nothing. Measured
+    against the *managed* 1.2 cap it re-applied 1.25x on top and the user
+    heard ~1.87x."""
+    r = _drive(
+        tmp_path,
+        monkeypatch,
+        ManagedError(503, "proxy_error"),
+        kokoro_available=True,
+        cfg_overrides={"speed": 1.5},
+    )
+
+    assert len(r["fallback_calls"]) == 1
+    assert _played_speeds(r) == [pytest.approx(1.0)]
+
+
+def test_byok_fallback_does_not_reapply_the_elevenlabs_cap(tmp_path, monkeypatch):
+    """Same for the BYOK branch (ElevenLabs / Speechify share one handler,
+    and with it the same 1.2x false residue)."""
+    r = _drive(
+        tmp_path,
+        monkeypatch,
+        # One utterance = one synth call, so fail_times=1 keeps it down
+        # for the whole run without pretending it recovers mid-utterance.
+        tts=_ScriptedTTS(ElevenLabsError("connection reset by peer"), fail_times=1),
+        kokoro_available=True,
+        cfg_overrides={"speed": 1.5, "elevenlabs_api_key": "sk_x"},
+    )
+
+    assert len(r["fallback_calls"]) == 1
+    assert _played_speeds(r) == [pytest.approx(1.0)]
+
+
+def test_non_fallback_utterance_still_pays_the_residue(tmp_path, monkeypatch):
+    """Unchanged behaviour for the normal path: the cloud backend clamped
+    its own synth at 1.2, so playback carries the remaining 1.25x."""
+    r = _drive(
+        tmp_path,
+        monkeypatch,
+        tts=_ScriptedTTS(),  # healthy — never raises
+        kokoro_available=True,
+        cfg_overrides={"speed": 1.5},
+    )
+
+    assert r["fallback_calls"] == []
+    assert _played_speeds(r) == [pytest.approx(1.25)]
+
+
+def test_later_utterance_does_not_inherit_the_kokoro_cap(tmp_path, monkeypatch):
+    """The per-utterance tracker must reset: utterance 2's audio came from
+    the (recovered) cloud backend, so the 1.2 cap applies again and
+    playback carries the residue rather than sitting at 1.0."""
+    r = _drive(
+        tmp_path,
+        monkeypatch,
+        tts=_ScriptedTTS(ManagedError(503, "proxy_error"), fail_times=1),
+        kokoro_available=True,
+        cfg_overrides={"speed": 1.5},
+        texts=("first", "second"),
+    )
+
+    # Only the blipped utterance needed the local model.
+    assert [c[0] for c in r["fallback_calls"]] == ["first"]
+    assert _played_speeds(r) == [pytest.approx(1.0), pytest.approx(1.25)]
+
+
+@pytest.mark.parametrize(
+    ("requested", "rendered", "playback"),
+    [
+        # kokoro-onnx raises "Speed should be between 0.5 and 2.0, got X"
+        # outside the window and the fallback swallows it — so a
+        # hand-edited `speed: 3.0` used to mean silence, not a fast voice.
+        (3.0, 2.0, 1.5),
+        # Below the window Kokoro can't render slower than 0.5 and playback
+        # never layers a slow-down back on (same as the cloud backends'
+        # 0.7 floor), so the utterance just comes out at the floor.
+        (0.3, 0.5, 1.0),
+    ],
+)
+def test_out_of_window_speed_is_clamped_not_swallowed(
+    tmp_path, monkeypatch, requested, rendered, playback
+):
+    """Kokoro clamps into its supported window, and playback makes up
+    whatever speed-up is left over the clamp — up to the usual 2.0."""
+    r = _drive(
+        tmp_path,
+        monkeypatch,
+        ManagedError(503, "proxy_error"),
+        kokoro_available=True,
+        real_seam=True,
+        cfg_overrides={"speed": requested},
+    )
+
+    assert len(r["synth_calls"]) == 1
+    assert r["synth_calls"][0][2] == pytest.approx(rendered)
+    assert _played_speeds(r) == [pytest.approx(playback)]

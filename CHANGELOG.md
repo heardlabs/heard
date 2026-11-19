@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a multi-agent session spoke in the same voice, with nothing in the log
   to say why.
 
+- A local-voice fallback no longer speaks too fast. Playback layered the cloud
+  backend's 1.2x cap on top of audio Kokoro had already rendered at the full
+  speed — a 1.5x utterance came out at ~1.87x. The residue is now measured
+  against whichever backend actually synthesised, and speeds outside Kokoro's
+  supported 0.5x–2x window are clamped instead of failing to silence.
+
 ## [1.1.21]
 
 ### Fixed

@@ -951,6 +951,12 @@ class Daemon:
         model menu, this returns False and the caller surfaces the
         original backend error. We don't want a "voice unreachable"
         moment to silently turn into a 30-second 350 MB download.
+
+        ``speed`` is clamped into ``KokoroTTS.SPEED_RANGE`` first:
+        kokoro-onnx raises outside that window, and the swallow-all
+        below would turn a fast-but-playable request into silence.
+        Callers that need the remainder of a clamped speed-up get it
+        from ``_kokoro_render_speed`` at playback time.
         """
         try:
             from heard.tts.kokoro import KokoroTTS
@@ -960,6 +966,7 @@ class Daemon:
             kokoro = KokoroTTS(config.MODELS_DIR)
             if not kokoro.is_downloaded():
                 return False
+            speed = KokoroTTS.clamp_speed(speed)
             # Kokoro outputs WAV; rename so afplay's downstream
             # subprocess sees the right extension. The path was minted
             # with the primary backend's AUDIO_EXT.
@@ -978,6 +985,19 @@ class Daemon:
         except Exception as e:
             _log("kokoro_fallback_failed", err=str(e))
             return False
+
+    @staticmethod
+    def _kokoro_render_speed(speed: float) -> float:
+        """The speed a successful Kokoro fallback renders at for ``speed``.
+
+        Asked of ``KokoroTTS`` rather than read off ``self.tts``: after a
+        fallback the actual audio came from the local model, not from
+        whatever backend ``self.tts.MAX_NATIVE_SPEED`` describes, and
+        Kokoro renders inside its own (narrower) window. Playback only
+        has to make up the part Kokoro couldn't bake in."""
+        from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415 — lazy, as elsewhere
+
+        return KokoroTTS.clamp_speed(speed)
 
     def _record_error(self, kind: str, message: str) -> None:
         """Capture the latest failure so the menu bar can show it.
@@ -1840,6 +1860,12 @@ class Daemon:
         speed = float(cfg["speed"])
         lang = cfg["lang"]
         for chunk in _split(text):
+            # Speed the local model baked in, when a Kokoro fallback — not
+            # ``self.tts`` — produces this chunk's audio. Reset at the top
+            # of every chunk so one fallback can't leak its (wider) cap
+            # onto the next chunk or the next utterance; see the
+            # play_speed calc below.
+            kokoro_render_speed: float | None = None
             if cancel.is_set():
                 return
             # Mid-utterance switch to NullTTS (e.g. a 429 in an earlier
@@ -1957,6 +1983,7 @@ class Daemon:
                     chunk, speed, lang, path, cfg=cfg, persona=persona
                 )
                 if fell_back:
+                    kokoro_render_speed = self._kokoro_render_speed(speed)
                     notify.notify(
                         "Heard — using local voice",
                         "Cloud voice is unreachable. Falling back to the "
@@ -2195,6 +2222,7 @@ class Daemon:
                 if not is_auth and not is_rate and not is_bad_voice and self._kokoro_fallback_to(
                     chunk, speed, lang, path, cfg=cfg, persona=persona
                 ):
+                    kokoro_render_speed = self._kokoro_render_speed(speed)
                     notify.notify(
                         "Heard — using local voice",
                         f"{provider} is unreachable. Falling back to the local model for now.",
@@ -2329,7 +2357,16 @@ class Daemon:
                 # via the narration-out spool above; keep the speaker silent.
                 path.unlink(missing_ok=True)
                 continue
-            max_native = float(getattr(self.tts, "MAX_NATIVE_SPEED", 1.2))
+            # A Kokoro fallback synthesised this chunk itself, at its own
+            # (clamped) speed — so its render speed, not the primary
+            # backend's cap, is the baseline the residue is measured
+            # against. Miss this and a 1.5x request came out ~1.87x
+            # (Kokoro at 1.5, then playback's 1.5/1.2 on top).
+            max_native = (
+                kokoro_render_speed
+                if kokoro_render_speed is not None
+                else float(getattr(self.tts, "MAX_NATIVE_SPEED", 1.2))
+            )
             # The backend has already synthesised at ``speed`` (clamped to
             # its own MAX_NATIVE_SPEED), so playback runs at 1.0 unless
             # there's residual speed-up left over the cap. Passing

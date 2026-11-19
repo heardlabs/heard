@@ -146,6 +146,22 @@ class KokoroTTS:
     # within the user-facing range, so the daemon never adds -r for
     # this backend.
     MAX_NATIVE_SPEED = 4.0
+    # ...but kokoro-onnx itself only accepts this window: ``create()``
+    # raises "Speed should be between 0.5 and 2.0" outside it (see
+    # ``Kokoro._prepare``), so this — not MAX_NATIVE_SPEED — is the real
+    # ceiling on what the local model renders. Callers that need to go
+    # further clamp here and let playback (-r / atempo) make up the rest.
+    SPEED_RANGE = (0.5, 2.0)
+
+    @classmethod
+    def clamp_speed(cls, speed: float) -> float:
+        """Clamp ``speed`` into the window kokoro-onnx accepts.
+
+        An out-of-window value raises inside ``create()``, which the
+        daemon's fallback swallows — so an unclamped 3x request meant
+        silence rather than a fast voice."""
+        lo, hi = cls.SPEED_RANGE
+        return min(max(float(speed), lo), hi)
 
     def __init__(self, models_dir: Path):
         self.model_path = models_dir / "kokoro-v1.0.onnx"
