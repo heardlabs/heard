@@ -236,7 +236,8 @@ repository file.
 On a self-hosted install with no active managed account, voice backend priority
 is ElevenLabs key, Speechify key, downloaded local Kokoro model, then no-audio
 `NullTTS`. Managed builds can insert their signed-in cloud voice before local
-Kokoro and apply account-level BYOK rules.
+Kokoro and apply account-level BYOK rules. To get the local Kokoro model (about
+350 MB, one time), run `heard download-voice`.
 
 ### Updates and privacy
 
