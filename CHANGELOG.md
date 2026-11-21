@@ -56,6 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against whichever backend actually synthesised, and speeds outside Kokoro's
   supported 0.5x–2x window are clamped instead of failing to silence.
 
+- Kokoro as the selected voice handles a speed outside its 0.5x–2x window
+  instead of going silent. A hand-edited `speed: 3.0` raised inside the local
+  model on every sentence and lost the audio; it now renders at 2x, the model's
+  real ceiling, with the remaining 1.5x applied at playback.
+
 ## [1.1.21]
 
 ### Fixed
