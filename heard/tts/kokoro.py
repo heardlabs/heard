@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import urllib.request
 from pathlib import Path
@@ -30,6 +31,32 @@ MODEL_SIZE = 325_532_387
 VOICES_SIZE = 28_214_398
 
 _CHUNK_BYTES = 1 << 20  # 1 MiB
+
+
+# Curated pool for per-agent auto-assignment (multi_agent.voice_pool_for_backend).
+# Kokoro voice IDs are ``<accent+gender>_<name>`` — a namespace disjoint from
+# ElevenLabs IDs, so this backend needs its own pool. Mix of US/British and
+# female/male so agents are told apart on the first syllable. Every ID is in
+# voices-v1.0.bin (checked against the released file, 54 voices).
+AUTO_VOICE_POOL = (
+    "af_sarah",     # US female
+    "am_michael",   # US male
+    "bf_emma",      # British female
+    "bm_daniel",    # British male
+    "af_nicole",    # US female
+    "am_fenrir",    # US male
+    "bf_isabella",  # British female
+)
+
+# Shape of a Kokoro voice ID: a two-letter language+gender prefix, then a name
+# (``bm_george``, ``af_heart``, ``jf_alpha``). ElevenLabs aliases (``george``)
+# and 20-char IDs never match, nor do Speechify slugs (``geffen_32``).
+_VOICE_ID_RE = re.compile(r"^[a-z]{2}_[a-z]+$")
+
+
+def is_kokoro_voice(voice: str | None) -> bool:
+    """True when ``voice`` is shaped like a Kokoro voice ID."""
+    return bool(voice) and bool(_VOICE_ID_RE.match(voice))
 
 
 class DownloadError(RuntimeError):

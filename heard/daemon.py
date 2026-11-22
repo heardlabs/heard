@@ -1857,6 +1857,17 @@ class Daemon:
         # — used by per-agent voice mappings so e.g. agent api speaks
         # in Rachel even when the persona is jarvis.
         voice = voice or self._voice(cfg, persona)
+        # Backstop for Kokoro: an override can still carry another provider's
+        # ID — a hand-written `agent_voices` entry, or a pool voice picked
+        # before a backend switch. Kokoro raises on those and the sentence
+        # is lost, so speak in the configured Kokoro voice instead
+        # (heardlabs/heard#22).
+        if type(self.tts).__name__ == "KokoroTTS":
+            from heard.tts.kokoro import is_kokoro_voice  # noqa: PLC0415
+
+            if not is_kokoro_voice(voice):
+                _log("kokoro_voice_replaced", requested=voice)
+                voice = self._kokoro_voice(cfg, persona)
         speed = float(cfg["speed"])
         lang = cfg["lang"]
         for chunk in _split(text):

@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Per-agent voices work on the local Kokoro voice. With
+  `multi_agent_auto_voices` on, background agents were handed ElevenLabs voice
+  IDs, which Kokoro doesn't have, so every one of their sentences failed and
+  was dropped. Kokoro now has its own pool of seven voices (US and British,
+  female and male). An `agent_voices` entry from another provider falls back to
+  your Kokoro voice instead of going silent.
+
 - The Settings → "Speak up on" toggles (errors, blocked, completions) are
   saved. The config file only keeps keys it knows, and these weren't among
   them, so switching one off was dropped on save: the toggle came back on and
