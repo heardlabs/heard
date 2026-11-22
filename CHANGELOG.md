@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Settings → "Speak up on" toggles (errors, blocked, completions) are
+  saved. The config file only keeps keys it knows, and these weren't among
+  them, so switching one off was dropped on save: the toggle came back on and
+  Heard kept speaking that category. They are now regular settings, and
+  `heard config set notify_errors false` saves a real `false`.
+
 - Cloud voices no longer drop a sentence when the Heard proxy is briefly
   unreachable. A network blip, a proxy or upstream 5xx, or a Cloudflare edge
   rate-limit (429 with no cap reason) now renders the utterance with the local

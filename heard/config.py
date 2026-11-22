@@ -264,6 +264,13 @@ DEFAULTS: dict[str, Any] = {
     # re-synthesising. Generic + inert when False (default) — off changes
     # nothing for OSS-only installs.
     "narration_spool": False,
+    # Settings → "Speak up on" toggles (daemon._speakup_allows). Every one
+    # defaults ON and can only REMOVE narration for its category. They must
+    # live in DEFAULTS: save() writes only DEFAULTS keys, so without these
+    # entries the Home window's toggles were silently dropped on save.
+    "notify_errors": True,
+    "notify_blocked": True,
+    "notify_completions": True,
     # Codex integration preference. CLI hooks are still stored in
     # ~/.codex/hooks.json, but Codex Desktop narration tails session
     # logs directly, so "enabled" must not depend solely on the hook
