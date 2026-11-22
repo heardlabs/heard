@@ -141,25 +141,24 @@ class KokoroTTS:
     # File extension the daemon should mint a tempfile with. Kokoro
     # writes WAV via soundfile — afplay handles it natively.
     AUDIO_EXT = ".wav"
-    # Kokoro can synthesise at any speed natively (it just resamples
-    # the model output). No need for afplay-rate post-processing
-    # within the user-facing range, so the daemon never adds -r for
-    # this backend.
-    MAX_NATIVE_SPEED = 4.0
-    # ...but kokoro-onnx itself only accepts this window: ``create()``
-    # raises "Speed should be between 0.5 and 2.0" outside it (see
-    # ``Kokoro._prepare``), so this — not MAX_NATIVE_SPEED — is the real
-    # ceiling on what the local model renders. Callers that need to go
-    # further clamp here and let playback (-r / atempo) make up the rest.
+    # The window kokoro-onnx itself accepts: ``create()`` raises "Speed
+    # should be between 0.5 and 2.0" outside it (see ``Kokoro._prepare``).
     SPEED_RANGE = (0.5, 2.0)
+    # What the local model renders unaided — the ceiling of that window,
+    # derived so the two can't drift. This used to read 4.0 on the theory
+    # that Kokoro resamples to any speed; kokoro-onnx rejects anything
+    # past 2.0, which made an out-of-window request fail instead of play.
+    # The daemon's playback-rate adjustment (-r / atempo) carries only the
+    # residue above this, and nothing below it (playback never slows audio
+    # down — same as the cloud backends' floors).
+    MAX_NATIVE_SPEED = SPEED_RANGE[1]
 
     @classmethod
     def clamp_speed(cls, speed: float) -> float:
         """Clamp ``speed`` into the window kokoro-onnx accepts.
 
-        An out-of-window value raises inside ``create()``, which the
-        daemon's fallback swallows — so an unclamped 3x request meant
-        silence rather than a fast voice."""
+        An out-of-window value raises inside ``create()``, so an
+        unclamped 3x request meant silence rather than a fast voice."""
         lo, hi = cls.SPEED_RANGE
         return min(max(float(speed), lo), hi)
 
@@ -225,5 +224,12 @@ class KokoroTTS:
     ) -> None:
         import soundfile as sf  # noqa: PLC0415
 
-        samples, sr = self._load().create(text, voice=voice, speed=speed, lang=lang)
+        # The one choke point for every Kokoro synth — the primary backend
+        # and the daemon's fallback both land here — so this clamp is what
+        # keeps an out-of-window ``speed`` (a hand-edited config.yaml, say)
+        # audible instead of raising inside create(). The daemon adds
+        # playback rate for whatever speed-up is left above the ceiling.
+        samples, sr = self._load().create(
+            text, voice=voice, speed=self.clamp_speed(speed), lang=lang
+        )
         sf.write(str(out_path), samples, sr)

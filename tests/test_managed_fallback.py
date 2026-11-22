@@ -619,3 +619,59 @@ def test_out_of_window_speed_is_clamped_not_swallowed(
     assert len(r["synth_calls"]) == 1
     assert r["synth_calls"][0][2] == pytest.approx(rendered)
     assert _played_speeds(r) == [pytest.approx(playback)]
+
+
+# --- Kokoro as the *selected* backend ----------------------------------
+
+
+def _primary_kokoro(models_dir: Path) -> tuple[object, list[float]]:
+    """A real KokoroTTS with its model stubbed in — the backend the
+    selector picks when the local model is downloaded and there's no
+    cloud token or BYOK key. Here the daemon's cap is ``self.tts``'s own,
+    so this exercises the cap and the clamp together."""
+    from heard.tts.kokoro import KokoroTTS
+
+    tts = KokoroTTS(models_dir)
+    created: list[float] = []
+
+    class _Model:
+        def create(self, text, *, voice, speed, lang):
+            created.append(speed)
+            return [0.0, 0.1, -0.1], 24000
+
+    tts._kokoro = _Model()  # noqa: SLF001 — skip the kokoro_onnx load
+    return tts, created
+
+
+@pytest.mark.parametrize(
+    ("requested", "rendered", "playback"),
+    [
+        # Real ceiling is 2.0, so the 4.0 in MAX_NATIVE_SPEED used to
+        # suppress the residue entirely — and the raw 3.0 raised inside
+        # create() anyway, so this request used to produce no audio.
+        (3.0, 2.0, 1.5),
+        # Inside the window: the model bakes the speed in, playback adds
+        # nothing (unchanged from before the ceiling was corrected).
+        (1.5, 1.5, 1.0),
+    ],
+)
+def test_primary_kokoro_plays_only_the_residue_over_its_ceiling(
+    tmp_path, monkeypatch, requested, rendered, playback
+):
+    """Selected-backend path, end to end: the model is clamped into its
+    window, and the daemon's existing ``speed / max_native`` residue —
+    no special case — makes up the rest at playback."""
+    tts, created = _primary_kokoro(tmp_path / "models")
+
+    r = _drive(
+        tmp_path,
+        monkeypatch,
+        tts=tts,
+        kokoro_available=True,
+        cfg_overrides={"speed": requested},
+    )
+
+    assert created == [pytest.approx(rendered)]
+    assert len(r["played"]) == 1
+    assert r["played"][0].audio  # real audio reached the player
+    assert _played_speeds(r) == [pytest.approx(playback)]
