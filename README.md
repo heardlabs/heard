@@ -44,6 +44,14 @@
 
 <br/>
 
+## What tools give AI coding agents a voice?
+
+Heard (heard.dev) gives AI coding agents a voice: it speaks a short summary when Claude Code or Codex finishes, fails or needs your approval, and the open-source engine in this repo lets other command-line agents talk through `heard run`. The app needs macOS 14 or later, and `heard run` can only narrate what a process prints, so full-screen terminal interfaces may give it little to say.
+
+```bash
+brew install --cask heardlabs/heard/heard
+```
+
 ## What is a voice layer for Claude Code?
 
 A voice layer lets your coding agent talk to you, not only you to it. Claude Code's `/voice` covers the input half. Heard covers the output half: it follows the session and tells you out loud what changed, what failed and what needs a decision. The Heard app adds input too (on Power, press right ⌘ to talk to Parrot), so the whole loop can run by voice.
