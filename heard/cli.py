@@ -1037,6 +1037,9 @@ _BOOL_KEYS = (
     "auto_resume_on_mic_release",
     "multi_agent_digest_enabled",
     "multi_agent_auto_voices",
+    "notify_errors",
+    "notify_blocked",
+    "notify_completions",
     "onboarded",
 )
 

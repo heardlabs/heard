@@ -58,8 +58,9 @@ values that equal their built-in defaults when it saves the file.
 
 The CLI currently coerces booleans only for `narrate_tools`,
 `narrate_tool_results`, `hotkey_enabled`, `auto_silence_on_mic`,
-`auto_resume_on_mic_release`, `multi_agent_digest_enabled`, and
-`multi_agent_auto_voices` (plus the internal `onboarded` key). For other
+`auto_resume_on_mic_release`, `multi_agent_digest_enabled`,
+`multi_agent_auto_voices`, `notify_errors`, `notify_blocked`, and
+`notify_completions` (plus the internal `onboarded` key). For other
 boolean controls in this guide—such as `product_analytics`, `byok_telemetry`,
 `update_check_enabled`, `auto_update`, `codex_enabled`, `narration_spool`, and
 `harness_think_say`—edit global YAML with an unquoted `true` or `false` instead
@@ -155,7 +156,7 @@ Scope meanings:
 - **Global + project** — safe to set globally or override in `.heard.yaml`.
 - **Global** — app-wide; set it in `config.yaml`, with the CLI, or in Settings.
 - **Direct YAML** — recognized at runtime but not part of `config.DEFAULTS`, so
-  `heard config set` will not persist it. See [Direct-YAML event filters](#direct-yaml-event-filters).
+  `heard config set` will not persist it. See [Direct-YAML settings](#direct-yaml-settings).
 
 ### Narration
 
@@ -255,19 +256,26 @@ Kokoro and apply account-level BYOK rules. To get the local Kokoro model (about
 |---|---|---|---|
 | `narration_spool` | Global | `false` | Writes synthesized audio and text to the global config directory's `narration-out/` folder for an external renderer. When Heard is muted and spooling is enabled, synthesis can continue for the external consumer while local playback stays silent. |
 
-### Direct-YAML event filters
+### Event filters
 
-These event filters are read by the current daemon but are not members of
-`config.DEFAULTS`. Edit them directly in YAML; `heard config set` cannot
-persist them and a later CLI or Settings save can remove unknown keys from the
-global file. They are most useful in `.heard.yaml`, where Heard never rewrites
-the file.
+These are the Settings → "Speak up on" toggles. Each one defaults to `true` and
+can only remove narration for its category. Set them in Settings, with
+`heard config set`, or per project in `.heard.yaml`.
+
+| Key | Scope | Default | What it does |
+|---|---|---|---|
+| `notify_errors` | Global + project | `true` | When false, suppresses events tagged as errors or failures. |
+| `notify_blocked` | Global + project | `true` | When false, suppresses agent questions that look like approval, review, confirmation, or decision requests. Ordinary clarification questions still speak. |
+| `notify_completions` | Global + project | `true` | When false, suppresses final/completion narration for that scope. |
+
+### Direct-YAML settings
+
+`announce_project_switch` is read by the current daemon but is not a member of
+`config.DEFAULTS`. Edit it directly in global YAML; `heard config set` cannot
+persist it, and a later CLI or Settings save can remove it from the global file.
 
 | Key | Scope | Runtime default | What it does |
 |---|---|---|---|
-| `notify_errors` | Direct YAML; global + project | `true` | When false, suppresses events tagged as errors or failures. |
-| `notify_blocked` | Direct YAML; global + project | `true` | When false, suppresses agent questions that look like approval, review, confirmation, or decision requests. Ordinary clarification questions still speak. |
-| `notify_completions` | Direct YAML; global + project | `true` | When false, suppresses final/completion narration for that scope. |
 | `announce_project_switch` | Direct global YAML only | `true` | When false, disables “Now on …” tags when speech switches projects in a multi-agent session. The speech-drain path reads daemon-global state, so a project override does not affect it. |
 
 ### Persisted keys that are not controls
@@ -316,7 +324,7 @@ session or restart the daemon after changing a label for an existing session.
 
 Narration preferences shape brain-routed prose and final updates. They normally
 change the format of failures and user questions rather than whether those
-events are heard; the separate direct-YAML event filters can suppress an event
+events are heard; the separate [event filters](#event-filters) can suppress an event
 category before it reaches the brain. Set project preferences under the
 `preferences:` key:
 
@@ -452,8 +460,7 @@ mapping of keys to values, not a list or a scalar.
 4. Use `heard preferences list --cwd /exact/project/path` for preference
    sources. `heard config get` shows only defaults plus global config; it does
    not resolve a project's top-level overrides.
-5. Check that the key is marked **Global + project** or **Direct YAML; global +
-   project** in this guide.
+5. Check that the key is marked **Global + project** in this guide.
 
 ### Heard ignored a malformed project file
 
