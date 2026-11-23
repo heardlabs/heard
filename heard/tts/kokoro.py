@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import urllib.request
 from pathlib import Path
@@ -30,6 +31,32 @@ MODEL_SIZE = 325_532_387
 VOICES_SIZE = 28_214_398
 
 _CHUNK_BYTES = 1 << 20  # 1 MiB
+
+
+# Curated pool for per-agent auto-assignment (multi_agent.voice_pool_for_backend).
+# Kokoro voice IDs are ``<accent+gender>_<name>`` — a namespace disjoint from
+# ElevenLabs IDs, so this backend needs its own pool. Mix of US/British and
+# female/male so agents are told apart on the first syllable. Every ID is in
+# voices-v1.0.bin (checked against the released file, 54 voices).
+AUTO_VOICE_POOL = (
+    "af_sarah",     # US female
+    "am_michael",   # US male
+    "bf_emma",      # British female
+    "bm_daniel",    # British male
+    "af_nicole",    # US female
+    "am_fenrir",    # US male
+    "bf_isabella",  # British female
+)
+
+# Shape of a Kokoro voice ID: a two-letter language+gender prefix, then a name
+# (``bm_george``, ``af_heart``, ``jf_alpha``). ElevenLabs aliases (``george``)
+# and 20-char IDs never match, nor do Speechify slugs (``geffen_32``).
+_VOICE_ID_RE = re.compile(r"^[a-z]{2}_[a-z]+$")
+
+
+def is_kokoro_voice(voice: str | None) -> bool:
+    """True when ``voice`` is shaped like a Kokoro voice ID."""
+    return bool(voice) and bool(_VOICE_ID_RE.match(voice))
 
 
 class DownloadError(RuntimeError):
@@ -141,11 +168,26 @@ class KokoroTTS:
     # File extension the daemon should mint a tempfile with. Kokoro
     # writes WAV via soundfile — afplay handles it natively.
     AUDIO_EXT = ".wav"
-    # Kokoro can synthesise at any speed natively (it just resamples
-    # the model output). No need for afplay-rate post-processing
-    # within the user-facing range, so the daemon never adds -r for
-    # this backend.
-    MAX_NATIVE_SPEED = 4.0
+    # The window kokoro-onnx itself accepts: ``create()`` raises "Speed
+    # should be between 0.5 and 2.0" outside it (see ``Kokoro._prepare``).
+    SPEED_RANGE = (0.5, 2.0)
+    # What the local model renders unaided — the ceiling of that window,
+    # derived so the two can't drift. This used to read 4.0 on the theory
+    # that Kokoro resamples to any speed; kokoro-onnx rejects anything
+    # past 2.0, which made an out-of-window request fail instead of play.
+    # The daemon's playback-rate adjustment (-r / atempo) carries only the
+    # residue above this, and nothing below it (playback never slows audio
+    # down — same as the cloud backends' floors).
+    MAX_NATIVE_SPEED = SPEED_RANGE[1]
+
+    @classmethod
+    def clamp_speed(cls, speed: float) -> float:
+        """Clamp ``speed`` into the window kokoro-onnx accepts.
+
+        An out-of-window value raises inside ``create()``, so an
+        unclamped 3x request meant silence rather than a fast voice."""
+        lo, hi = cls.SPEED_RANGE
+        return min(max(float(speed), lo), hi)
 
     def __init__(self, models_dir: Path):
         self.model_path = models_dir / "kokoro-v1.0.onnx"
@@ -209,5 +251,12 @@ class KokoroTTS:
     ) -> None:
         import soundfile as sf  # noqa: PLC0415
 
-        samples, sr = self._load().create(text, voice=voice, speed=speed, lang=lang)
+        # The one choke point for every Kokoro synth — the primary backend
+        # and the daemon's fallback both land here — so this clamp is what
+        # keeps an out-of-window ``speed`` (a hand-edited config.yaml, say)
+        # audible instead of raising inside create(). The daemon adds
+        # playback rate for whatever speed-up is left above the ceiling.
+        samples, sr = self._load().create(
+            text, voice=voice, speed=self.clamp_speed(speed), lang=lang
+        )
         sf.write(str(out_path), samples, sr)

@@ -24,7 +24,7 @@ def test_speechify_backend_gets_speechify_pool():
 
 
 def test_other_backends_keep_elevenlabs_pool():
-    for backend in ("ElevenLabsTTS", "ManagedTTS", "KokoroTTS", "NullTTS", ""):
+    for backend in ("ElevenLabsTTS", "ManagedTTS", "NullTTS", ""):
         assert voice_pool_for_backend(backend) == _AUTO_VOICE_POOL
 
 

@@ -48,7 +48,7 @@ class _FakeKokoro:
     just to exercise the type-name branch in `_voice`."""
 
     AUDIO_EXT = ".wav"
-    MAX_NATIVE_SPEED = 4.0
+    MAX_NATIVE_SPEED = 2.0
 
 
 _FakeKokoro.__name__ = "KokoroTTS"

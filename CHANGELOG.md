@@ -40,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the queue holds nothing but priority lines (then the oldest one goes). The
   held-while-you-dictate buffer follows the same rule, so a long dictation can
   no longer evict the result held alongside it.
+- Per-agent voices work on the local Kokoro voice. With
+  `multi_agent_auto_voices` on, background agents were handed ElevenLabs voice
+  IDs, which Kokoro doesn't have, so every one of their sentences failed and
+  was dropped. Kokoro now has its own pool of seven voices (US and British,
+  female and male). An `agent_voices` entry from another provider falls back to
+  your Kokoro voice instead of going silent.
+
+- The Settings → "Speak up on" toggles (errors, blocked, completions) are
+  saved. The config file only keeps keys it knows, and these weren't among
+  them, so switching one off was dropped on save: the toggle came back on and
+  Heard kept speaking that category. They are now regular settings, and
+  `heard config set notify_errors false` saves a real `false`.
 
 - Cloud voices no longer drop a sentence when the Heard proxy is briefly
   unreachable. A network blip, a proxy or upstream 5xx, or a Cloudflare edge
@@ -60,6 +72,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which Speechify maps to its default rather than rejecting — so every agent
   in a multi-agent session spoke in the same voice, with nothing in the log
   to say why.
+
+- A local-voice fallback no longer speaks too fast. Playback layered the cloud
+  backend's 1.2x cap on top of audio Kokoro had already rendered at the full
+  speed — a 1.5x utterance came out at ~1.87x. The residue is now measured
+  against whichever backend actually synthesised, and speeds outside Kokoro's
+  supported 0.5x–2x window are clamped instead of failing to silence.
+
+- Kokoro as the selected voice handles a speed outside its 0.5x–2x window
+  instead of going silent. A hand-edited `speed: 3.0` raised inside the local
+  model on every sentence and lost the audio; it now renders at 2x, the model's
+  real ceiling, with the remaining 1.5x applied at playback.
 
 ## [1.1.21]
 
