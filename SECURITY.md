@@ -8,7 +8,7 @@ GitHub issue for a vulnerability.
 - Preferred: open a private advisory via GitHub Security Advisories
   ("Report a vulnerability") on the [heardlabs/heard](https://github.com/heardlabs/heard)
   repository.
-- Or email **security@heard.dev** with details and reproduction steps.
+- Or email **support@heardlabs.ai** (put "Security" in the subject) with details and reproduction steps.
 
 We aim to acknowledge reports within a few business days. Please give us
 a reasonable window to ship a fix before any public disclosure.

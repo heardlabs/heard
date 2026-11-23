@@ -112,5 +112,5 @@ Both default ON; opt out at any time and the stream is fully silenced.
 
 ## Contact
 
-Privacy questions: **privacy@heard.dev**. Security issues: see
+Privacy questions: **support@heardlabs.ai** (put "Privacy" in the subject). Security issues: see
 [`SECURITY.md`](./SECURITY.md).
