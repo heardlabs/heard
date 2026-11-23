@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from heard import (
@@ -189,6 +190,57 @@ def _maybe_rotate_log() -> None:
     except Exception:
         # Best-effort; don't block startup on a rotation hiccup.
         pass
+
+
+def _item_is_priority(item: tuple) -> bool:
+    """Is this speech-queue entry a priority line (a result, a failure, a
+    tool question, a focus alert)? The flag rides on the entry's own
+    history meta (``item[5]``) so it travels with the entry — never infer
+    priority from queue position: priority lines are inserted at the
+    front and routine ones appended, so position says nothing about what
+    a line is worth."""
+    return bool((item[5] or {}).get("priority"))
+
+
+def _pair_is_priority(entry: tuple) -> bool:
+    """Priority flag for an entry in the held-while-dictating buffer,
+    which stores ``(item, priority)`` — the item's meta carries the same
+    flag (see ``_item_is_priority``)."""
+    return bool(entry[1])
+
+
+def _evict_over_cap(
+    items: list,
+    cap: int,
+    priority_of: Callable[[tuple], bool],
+    *,
+    oldest_priority_at: str = "front",
+) -> tuple[list, int]:
+    """Trim ``items`` down to ``cap`` entries, dropping the oldest ROUTINE
+    entry first: routine narration is stale by definition, while a
+    priority one is the thing the listener is actually waiting on. Only a
+    set of entries that are ALL priority drops a priority one, and then it
+    drops the oldest of those.
+
+    ``oldest_priority_at`` says which end of ``items`` holds the oldest
+    priority entry, and is consulted only in that all-priority case. The
+    held-while-dictating buffer is append-ordered, so its oldest is at the
+    "front". The live speech queue is not: priority entries are inserted
+    at the front, so its run of priority entries reads newest-first and
+    the oldest sits at the "back".
+
+    Returns ``(kept, dropped_priority)`` so callers can log how close the
+    queue came to losing a priority line. Pure — no logging, no state.
+    """
+    kept = list(items)
+    dropped_priority = 0
+    while len(kept) > cap:
+        idx = next((i for i, e in enumerate(kept) if not priority_of(e)), None)
+        if idx is None:
+            idx = 0 if oldest_priority_at == "front" else len(kept) - 1
+            dropped_priority += 1
+        del kept[idx]
+    return kept, dropped_priority
 
 
 def _split(text: str) -> list[str]:
@@ -360,10 +412,10 @@ class Daemon:
         # dictation), narration would otherwise be dropped — instead we
         # stash it here and replay it through the queue once the mic
         # frees up, so the listener hears what happened while they
-        # talked. Bounded to _queue_max and stale-pruned (a fresh result
-        # drops held routine progress) so release plays the freshest
-        # signal, never a minute-long backlog. Each entry is (item,
-        # priority); item matches a _queue tuple.
+        # talked. Bounded to _DEFERRED_MIC_MAX with the same priority-aware
+        # eviction as the live queue: the oldest held routine line goes
+        # first, so a held result outlives held progress. Each entry is
+        # (item, priority); item matches a _queue tuple.
         self._deferred_while_mic: list[tuple[tuple, bool]] = []
         # Cap on the held-while-dictating buffer (separate from the live
         # queue's _queue_max). Larger, because this is a catch-up of a
@@ -2573,8 +2625,13 @@ class Daemon:
 
         The queue is bounded; if events accumulate faster than we can
         speak (long monologue + a burst of tool calls), the oldest
-        entry is dropped — better to drop one stale announcement than
-        keep the user listening for thirty seconds of catch-up.
+        ROUTINE entry is dropped — better to drop one stale announcement
+        than keep the user listening for thirty seconds of catch-up.
+        Priority lines (a final, a failure, a tool question, a focus
+        alert) are the last thing Heard may drop: a routine line never
+        evicts one, and neither does the cross-session clear below. The
+        flag rides on the entry itself (``priority`` in its history
+        meta), so it survives reordering.
 
         Multi-session priority: when a new event arrives from a
         different session_id than what's queued, the queued items
@@ -2583,7 +2640,8 @@ class Daemon:
         through Heard's single audio output; the freshest-session-wins
         rule means whichever terminal you're actively driving is the
         one Heard tracks. Items still play to completion (we don't
-        cancel the in-flight one), but the queue clears.
+        cancel the in-flight one), but the queue clears. Priority lines
+        from the other session stay queued — they're owed, not stale.
         """
         text = (text or "").strip()
         if not text:
@@ -2625,16 +2683,24 @@ class Daemon:
         # it and replay on mic-release (_flush_deferred_while_mic). We
         # keep BOTH progress and results so the listener gets a fuller
         # catch-up of what happened while they talked — the only bound is
-        # the buffer cap (most recent _DEFERRED_MIC_MAX), so a very long
-        # dictation still can't dump an unbounded backlog.
+        # the buffer cap (_DEFERRED_MIC_MAX, evicting the oldest routine
+        # line first), so a very long dictation still can't dump an
+        # unbounded backlog.
+        # Mark the priority flag ON the entry (its history meta) rather
+        # than leaving callers to infer it from queue position: every
+        # eviction site below reads the flag off the entry.
+        hmeta = dict(history_meta or {})
+        if priority:
+            hmeta["priority"] = True
+        item = (text, cfg, persona, session_id, voice_override, hmeta)
         if self._mic_active:
-            item = (text, cfg, persona, session_id, voice_override, history_meta or {})
             with self._queue_cv:
                 self._deferred_while_mic.append((item, priority))
-                if len(self._deferred_while_mic) > self._DEFERRED_MIC_MAX:
-                    self._deferred_while_mic = (
-                        self._deferred_while_mic[-self._DEFERRED_MIC_MAX:]
-                    )
+                self._deferred_while_mic, _dropped_priority = _evict_over_cap(
+                    self._deferred_while_mic,
+                    self._DEFERRED_MIC_MAX,
+                    _pair_is_priority,
+                )
                 held = len(self._deferred_while_mic)
             _log("speech_deferred_mic", session=session_id, held=held)
             return
@@ -2647,11 +2713,24 @@ class Daemon:
             # an agent still clears them, since by then they're stale.
             if session_id and self._queue and not coexists:
                 before = len(self._queue)
-                self._queue = [e for e in self._queue if e[3] == session_id]
+                # Another session's queued ROUTINE lines are stale — but a
+                # priority line from it is a result/failure the listener is
+                # still owed, so it crosses the session switch with us.
+                self._queue = [
+                    e for e in self._queue
+                    if e[3] == session_id or _item_is_priority(e)
+                ]
                 dropped = before - len(self._queue)
                 if dropped:
-                    _log("queue_drop_other_session", dropped=dropped, session=session_id)
-            item = (text, cfg, persona, session_id, voice_override, history_meta or {})
+                    _log(
+                        "queue_drop_other_session",
+                        dropped=dropped,
+                        session=session_id,
+                        priority_kept=sum(
+                            1 for e in self._queue
+                            if e[3] != session_id and _item_is_priority(e)
+                        ),
+                    )
             if priority:
                 # Results / decisions / errors — the thing the listener is
                 # actually waiting on. The moment one lands, any queued
@@ -2659,7 +2738,7 @@ class Daemon:
                 # wants the result NOW, not behind "still structuring the
                 # network." So drop pending routine progress, then jump the
                 # result to the FRONT so it plays next (after whatever's
-                # mid-sentence). Trim drops the oldest tail if still over cap.
+                # mid-sentence).
                 before = len(self._queue)
                 self._queue = [
                     e for e in self._queue
@@ -2669,16 +2748,25 @@ class Daemon:
                 if dropped_stale:
                     _log("queue_drop_stale", dropped=dropped_stale)
                 self._queue.insert(0, item)
-                if len(self._queue) > self._queue_max:
-                    dropped = len(self._queue) - self._queue_max
-                    self._queue = self._queue[:self._queue_max]
-                    _log("queue_drop", dropped=dropped)
             else:
                 self._queue.append(item)
-                if len(self._queue) > self._queue_max:
-                    dropped = len(self._queue) - self._queue_max
-                    self._queue = self._queue[-self._queue_max:]
-                    _log("queue_drop", dropped=dropped)
+            # Overflow: the oldest routine line goes, never a priority one.
+            # The queue is trimmed in one place so both lanes share the
+            # policy — and because the priority lane inserts at the front,
+            # the oldest entry of an all-priority queue is at the back.
+            if len(self._queue) > self._queue_max:
+                before = len(self._queue)
+                self._queue, dropped_priority = _evict_over_cap(
+                    self._queue,
+                    self._queue_max,
+                    _item_is_priority,
+                    oldest_priority_at="back",
+                )
+                _log(
+                    "queue_drop",
+                    dropped=before - len(self._queue),
+                    priority_dropped=dropped_priority,
+                )
             if self._speech_worker is None or not self._speech_worker.is_alive():
                 self._speech_worker = threading.Thread(
                     target=self._drain_queue, daemon=True

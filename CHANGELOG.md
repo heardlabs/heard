@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A queued result, failure or question survives the routine tool line that
+  arrives behind it, and survives switching to another agent window. The speech
+  queue is capped at 5, and both eviction rules were positional: a routine line
+  arriving at a full queue cut the FRONT of the queue (usually a result waiting
+  its turn), and a live event from another session cleared every queued line
+  from the session you left. Priority narration — finals, failures, tool
+  questions, focus alerts — is now tagged at enqueue and is dropped only when
+  the queue holds nothing but priority lines (then the oldest one goes). The
+  held-while-you-dictate buffer follows the same rule, so a long dictation can
+  no longer evict the result held alongside it.
+
 - Cloud voices no longer drop a sentence when the Heard proxy is briefly
   unreachable. A network blip, a proxy or upstream 5xx, or a Cloudflare edge
   rate-limit (429 with no cap reason) now renders the utterance with the local
