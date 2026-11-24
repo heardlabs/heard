@@ -15,6 +15,7 @@ lazy init has settled and it's safe to touch CF from another thread.
 import os
 import sys
 import threading
+import time
 
 # Point Python's SSL stack at certifi's CA bundle BEFORE any module
 # that performs HTTPS (anthropic, urllib in tts/elevenlabs, etc.) is
@@ -30,6 +31,7 @@ except Exception:
 
 from heard import config as config_mod  # noqa: E402
 from heard import daemon as daemon_mod  # noqa: E402
+from heard import notify as notify_mod  # noqa: E402
 from heard.ui import HeardApp  # noqa: E402
 
 
@@ -55,17 +57,79 @@ def _redirect_stdio_to_log() -> None:
     sys.stderr = log
 
 
-def _run_daemon() -> None:
-    try:
-        daemon_mod.Daemon().serve()
-    except Exception:
-        # Print the full traceback — without it, "daemon crashed" is
-        # untraceable in /tmp/heard-stderr or the menu-bar console
-        # log, and we lose the exact failing import chain.
-        import traceback
+# Crash supervision for the in-process daemon thread. serve() returns only
+# when it stopped on purpose (listener closed, or another daemon owns the
+# IPC channel); an exception out of it — or a return we can't account for —
+# is a crash. The bundle runs the daemon in-process and client.ensure_daemon()
+# never respawns, so a crashed daemon thread used to mean the menu bar stayed
+# up with narration silently dead until the user relaunched Heard. Now a
+# crash notifies and restarts, bounded so a broken environment can't spin.
+_RESTART_BACKOFF_START_S = 1.0
+_RESTART_BACKOFF_MAX_S = 60.0
+_RESTART_WINDOW_S = 300.0
+_MAX_RESTARTS_PER_WINDOW = 3
+# The reasons daemon.Daemon.serve() returns when it meant to stop.
+_INTENTIONAL_EXITS = ("stopped", "not_owner")
 
-        traceback.print_exc(file=sys.stderr)
-        sys.stderr.flush()
+
+def _run_daemon() -> None:
+    backoff = _RESTART_BACKOFF_START_S
+    restarts: list[float] = []
+    while True:
+        reason: str | None = None
+        err = ""
+        try:
+            reason = daemon_mod.Daemon().serve()
+        except Exception as e:
+            err = type(e).__name__
+            # Full traceback — without it, "daemon crashed" is
+            # untraceable in daemon.log or the menu-bar console.
+            import traceback
+
+            traceback.print_exc(file=sys.stderr)
+            sys.stderr.flush()
+        else:
+            if reason in _INTENTIONAL_EXITS:
+                # A clean stop, or another daemon already owns the socket.
+                # Either way it is not ours to bring back.
+                daemon_mod._log("daemon_serve_exit", reason=reason)
+                return
+            err = "serve_returned"
+
+        now = time.monotonic()
+        restarts = [t for t in restarts if now - t < _RESTART_WINDOW_S]
+        if len(restarts) >= _MAX_RESTARTS_PER_WINDOW:
+            daemon_mod._log(
+                "daemon_crash_giveup",
+                restarts=len(restarts),
+                window_s=_RESTART_WINDOW_S,
+            )
+            notify_mod.notify(
+                "Heard narration stopped",
+                "The voice daemon keeps failing to start, so Heard won't speak "
+                "until you relaunch it. Use Report a problem from the menu if "
+                "it stays quiet.",
+                kind="daemon_crash",
+            )
+            return
+        restarts.append(now)
+        # _log is the daemon's structured line (stdio is redirected into
+        # daemon.log by _redirect_stdio_to_log), so a restart is greppable
+        # next to the accept_error it usually follows.
+        daemon_mod._log(
+            "daemon_crash",
+            err=err,
+            restarts=len(restarts),
+            backoff_s=backoff,
+        )
+        notify_mod.notify(
+            "Heard narration restarted",
+            "The voice daemon hit an error and was restarted. Use Report a "
+            "problem from the menu if narration keeps stopping.",
+            kind="daemon_crash",
+        )
+        time.sleep(backoff)
+        backoff = min(backoff * 2, _RESTART_BACKOFF_MAX_S)
 
 
 if __name__ == "__main__":
