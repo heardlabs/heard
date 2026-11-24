@@ -25,6 +25,7 @@ import types
 from pathlib import Path
 
 from heard import daemon
+from heard.platform import sockets as _sockets
 
 CAPACITY = daemon._MAX_CONCURRENT_CONNS
 
@@ -35,7 +36,7 @@ CAPACITY = daemon._MAX_CONCURRENT_CONNS
 
 
 def _bare_daemon() -> daemon.Daemon:
-    """A Daemon carrying only the socket-ingress state.
+    """A Daemon carrying only the state these tests touch.
 
     __new__ rather than Daemon(): the full constructor loads config, starts
     the updater's real network poll and the codex observer, and loads
@@ -44,8 +45,50 @@ def _bare_daemon() -> daemon.Daemon:
     """
     d = daemon.Daemon.__new__(daemon.Daemon)
     d._conn_slots = threading.BoundedSemaphore(CAPACITY)
+    # The start-once thread handles the idempotency tests exercise, plus an
+    # empty config (their closures read it; nothing in them runs here).
+    d.cfg = {}
+    d._usage_poll_thread = None
+    d._digest_thread = None
+    d._update_thread = None
     d._handle = lambda text: None  # type: ignore[method-assign]
     return d
+
+
+class _RecordingThread:
+    """Thread stand-in that records construction instead of running.
+
+    Lets the start-once tests count starter threads deterministically and
+    flip one to "dead" to check it can be replaced."""
+
+    created: list[_RecordingThread] = []
+
+    def __init__(self, *args, **kwargs):
+        self.started = False
+        self.alive = False
+        _RecordingThread.created.append(self)
+
+    def start(self) -> None:
+        self.started = True
+        self.alive = True
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+
+def _patch_threads(monkeypatch) -> list[_RecordingThread]:
+    """Shim only daemon.py's view of threading, so nothing runs for real."""
+    _RecordingThread.created = []
+    monkeypatch.setattr(
+        daemon,
+        "threading",
+        types.SimpleNamespace(
+            Thread=_RecordingThread,
+            current_thread=threading.current_thread,
+            main_thread=threading.main_thread,
+        ),
+    )
+    return _RecordingThread.created
 
 
 def _capture_logs(monkeypatch) -> list[tuple[str, dict]]:
@@ -154,6 +197,23 @@ def _patch_serve(monkeypatch, tmp_path, srv) -> None:
     monkeypatch.setattr(daemon, "_prepare_runtime_for_bind", lambda *_a, **_kw: True)
     monkeypatch.setattr(daemon._sockets, "create_server", lambda _path: srv)
     monkeypatch.setattr(daemon.Daemon, "_start_account_usage_poll", lambda self: None)
+
+
+def _endpoint_files(tmp_path) -> list[Path]:
+    """The runtime files _sockets.unlink() owns on this platform: the socket
+    itself on Unix, the port/token sidecars on Windows."""
+    base = tmp_path / "daemon.sock"
+    if _sockets.uses_unix_sockets():
+        return [base]
+    return [Path(str(base) + ".port"), Path(str(base) + ".token")]
+
+
+def _stage_runtime_files(tmp_path) -> list[Path]:
+    for path in _endpoint_files(tmp_path):
+        path.write_text("stale", encoding="utf-8")
+    pid = tmp_path / "daemon.pid"
+    pid.write_text("999999", encoding="utf-8")
+    return [*_endpoint_files(tmp_path), pid]
 
 
 def _run_serve(d: daemon.Daemon, timeout: float = 3.0) -> str | None:
@@ -279,17 +339,51 @@ def test_saturated_slots_shed_connections_and_keep_accepting(tmp_path, monkeypat
 
 def test_closing_the_listener_stops_serve_cleanly(tmp_path, monkeypatch):
     """The shutdown path closes the listener; serve() reports "stopped" so
-    the supervisor knows it was deliberate, not a crash."""
+    the supervisor knows it was deliberate, not a crash — and releases the
+    runtime files either way."""
     events = _capture_logs(monkeypatch)
     d = _bare_daemon()
     srv = _FakeServer([])  # closes itself and raises on the first accept
     _patch_serve(monkeypatch, tmp_path, srv)
+    staged = _stage_runtime_files(tmp_path)
 
     assert _run_serve(d) == "stopped"
 
     assert srv.closed
+    assert not any(p.exists() for p in staged), f"runtime files left behind: {staged}"
     assert _events_named(events, "accept_error") == [], "a closed listener is not an error"
     assert _events_named(events, "serve_stopped") == [{"reason": "server_closed"}]
+
+
+def test_unexpected_exception_releases_the_listener(tmp_path, monkeypatch):
+    """A non-transient failure propagates — the supervisor has to see the
+    crash — but must not leave the endpoint bound. On Windows that endpoint
+    is held by a file lock, so a daemon that died holding it can never
+    rebind: every restart would come back "not_owner" with nothing
+    serving."""
+    events = _capture_logs(monkeypatch)
+    d = _bare_daemon()
+    srv = _FakeServer([ValueError("not a transient failure")])
+    _patch_serve(monkeypatch, tmp_path, srv)
+    staged = _stage_runtime_files(tmp_path)
+
+    raised: dict[str, BaseException] = {}
+
+    def _run() -> None:
+        try:
+            d.serve()
+        except Exception as e:
+            raised["err"] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=3.0)
+
+    assert not t.is_alive(), "serve() never came back"
+    assert isinstance(raised.get("err"), ValueError), "the crash must reach the supervisor"
+    assert srv.closed, "the listener must be closed on the way out"
+    assert not any(p.exists() for p in staged), f"runtime files left behind: {staged}"
+    assert _events_named(events, "accept_error") == [], "not a transient accept error"
 
 
 def test_server_is_closed_covers_every_listener_shape():
@@ -371,6 +465,62 @@ def test_oversize_request_is_rejected_without_reaching_the_handler(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# start-once threads
+# --------------------------------------------------------------------------
+
+
+def test_start_account_usage_poll_is_idempotent(monkeypatch):
+    """serve() calls this on every pass, and a restarted serve() must not
+    stack a second /v1/me poller on the live one. A thread that has died is
+    replaceable, so the guard is 'alive', not 'ever started'."""
+    created = _patch_threads(monkeypatch)
+    d = _bare_daemon()
+
+    d._start_account_usage_poll()
+    d._start_account_usage_poll()
+    assert len(created) == 1, "a second poller was started"
+    assert created[0].started
+
+    created[0].alive = False  # the poller died
+    d._start_account_usage_poll()
+    assert len(created) == 2, "a dead poller must be replaceable"
+
+
+def test_start_digest_timer_is_idempotent(monkeypatch):
+    """Two digest timers would drain the same project piles twice and say
+    every summary twice."""
+    created = _patch_threads(monkeypatch)
+    d = _bare_daemon()
+
+    d._start_digest_timer()
+    d._start_digest_timer()
+
+    assert len(created) == 1
+
+
+def test_start_update_check_is_idempotent(monkeypatch):
+    """Two release pollers would double the checks (and the notification)."""
+    d = _bare_daemon()
+    handles: list[_RecordingThread] = []
+
+    def _start_periodic_check(**_kwargs):
+        # Mirrors updater.start_periodic_check: it starts the thread before
+        # handing it back, so a returned handle is alive.
+        thread = _RecordingThread()
+        thread.start()
+        handles.append(thread)
+        return thread
+
+    monkeypatch.setattr(daemon.updater, "start_periodic_check", _start_periodic_check)
+
+    d._start_update_check()
+    d._start_update_check()
+
+    assert len(handles) == 1
+    assert d._update_thread is handles[0], "the handle must be kept on the instance"
+
+
+# --------------------------------------------------------------------------
 # supervision (packaging/app_entry.py)
 # --------------------------------------------------------------------------
 
@@ -408,32 +558,44 @@ class _ScriptedDaemon:
 
     def __init__(self, outcomes: list):
         self._outcomes = outcomes
+        self.serve_calls = 0
 
     def serve(self) -> str:
+        self.serve_calls += 1
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
 
 
-def _supervisor(monkeypatch, outcomes):
+def _supervisor(monkeypatch, outcomes, *, constructor_error=None):
     """Wire app_entry._run_daemon to a scripted daemon and a fake clock.
 
-    Returns (app_entry, notes, events, sleeps): subject module,
-    notifications, structured log lines, and the backoffs observed.
+    Returns (app_entry, notes, events, sleeps, created): subject module,
+    notifications, structured log lines, the backoffs observed, and the
+    Daemon instances the supervisor built (so tests can prove it builds
+    one, not one per pass).
     """
     app_entry = _load_app_entry()
     notes: list[tuple[str, str, str]] = []
     events: list[tuple[str, dict]] = []
     sleeps: list[float] = []
+    created: list[_ScriptedDaemon] = []
     clock = {"now": 1000.0}
 
     def _sleep(seconds: float) -> None:
         sleeps.append(seconds)
         clock["now"] += seconds
 
+    def _make_daemon() -> _ScriptedDaemon:
+        if constructor_error is not None:
+            raise constructor_error
+        daemon_instance = _ScriptedDaemon(outcomes)
+        created.append(daemon_instance)
+        return daemon_instance
+
     monkeypatch.setattr(app_entry, "daemon_mod", types.SimpleNamespace(
-        Daemon=lambda: _ScriptedDaemon(outcomes),
+        Daemon=_make_daemon,
         _log=lambda ev, **kw: events.append((ev, kw)),
     ))
     monkeypatch.setattr(app_entry, "notify_mod", types.SimpleNamespace(
@@ -443,14 +605,14 @@ def _supervisor(monkeypatch, outcomes):
         monotonic=lambda: clock["now"],
         sleep=_sleep,
     ))
-    return app_entry, notes, events, sleeps
+    return app_entry, notes, events, sleeps, created
 
 
 def test_supervisor_restarts_a_crash_then_stops_on_a_clean_exit(monkeypatch):
     """A crashed serve() is logged, announced once per attempt (kind is
     deduped by notify), and restarted with growing backoff. The clean
     "stopped" return that follows must not restart it."""
-    app_entry, notes, events, sleeps = _supervisor(
+    app_entry, notes, events, sleeps, _created = _supervisor(
         monkeypatch,
         [RuntimeError("boom"), RuntimeError("boom"), "stopped"],
     )
@@ -466,12 +628,51 @@ def test_supervisor_restarts_a_crash_then_stops_on_a_clean_exit(monkeypatch):
     assert sleeps == [1.0, 2.0], "backoff must grow and stay capped"
 
 
+def test_supervisor_reuses_one_daemon_across_restarts(monkeypatch):
+    """A restart must not build a second Daemon: __init__ owns long-lived
+    threads (hotkey, mic monitor, digest timer, update poller, Codex
+    observer, harness warmup) that a crashed instance is still running, so
+    a fresh one stacks duplicates — two Codex observers speak every Codex
+    event twice."""
+    app_entry, _notes, events, _sleeps, created = _supervisor(
+        monkeypatch,
+        [RuntimeError("boom"), RuntimeError("boom"), "stopped"],
+    )
+
+    app_entry._run_daemon()
+
+    assert len(created) == 1, "a restart constructed another Daemon"
+    assert created[0].serve_calls == 3, "every pass must run on that one instance"
+    assert len(_events_named(events, "daemon_crash")) == 2
+
+
+def test_supervisor_reports_a_constructor_failure_without_restarting(monkeypatch):
+    """If Daemon() itself fails there is nothing to re-run — every pass
+    would fail identically — so it is reported once and the supervisor
+    stops instead of looping on it."""
+    app_entry, notes, events, sleeps, created = _supervisor(
+        monkeypatch, [], constructor_error=RuntimeError("config unreadable")
+    )
+
+    app_entry._run_daemon()
+
+    assert created == []
+    assert [kw["err"] for kw in _events_named(events, "daemon_start_failed")] == [
+        "RuntimeError"
+    ]
+    assert _events_named(events, "daemon_crash") == []
+    assert _events_named(events, "daemon_crash_giveup") == []
+    assert sleeps == [], "no restart loop for a constructor that can't succeed"
+    assert len(notes) == 1, "exactly one message"
+    assert notes[0][2] == "daemon_crash"
+
+
 def test_supervisor_gives_up_instead_of_spinning(monkeypatch):
     """A daemon that crashes on every start is stopped after a bounded
     number of restarts in the window, with one message telling the user
     narration is gone."""
     limit = int(_load_app_entry()._MAX_RESTARTS_PER_WINDOW)
-    app_entry, notes, events, sleeps = _supervisor(
+    app_entry, notes, events, sleeps, _created = _supervisor(
         monkeypatch, [RuntimeError("boom")] * (limit + 1)
     )
 
@@ -491,7 +692,7 @@ def test_supervisor_gives_up_instead_of_spinning(monkeypatch):
 def test_supervisor_does_not_restart_an_intentional_exit(monkeypatch):
     """"not_owner" (another daemon already owns the socket) is a clean stop
     — restarting would loop on a socket someone else is serving."""
-    app_entry, notes, events, sleeps = _supervisor(monkeypatch, ["not_owner"])
+    app_entry, notes, events, sleeps, _created = _supervisor(monkeypatch, ["not_owner"])
 
     app_entry._run_daemon()
 
