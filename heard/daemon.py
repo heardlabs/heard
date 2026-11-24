@@ -65,6 +65,34 @@ DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # per-event lines accumulate into hundreds of MB.
 _LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
+# --- socket ingress budgets ------------------------------------------------
+# The accept loop is the daemon's entire control surface. If it dies, every
+# hook in every agent session goes quietly unheard — client.ensure_daemon()
+# never respawns — so it absorbs transient failures instead of exiting on
+# them, and it bounds what one client can cost it.
+# Backoff after a failed accept(): 50ms, doubling to a 2s ceiling. Long
+# enough to let an fd/thread table drain, short enough that a recovered
+# daemon answers its next hook promptly.
+_ACCEPT_BACKOFF_START_S = 0.05
+_ACCEPT_BACKOFF_MAX_S = 2.0
+# Idle time allowed between recv() chunks of one request. The wire protocol
+# is one connection / one request / client half-closes, and a live hook
+# writes its whole payload in one go, so 5s is generous for that — and it
+# is what makes a client that connects and then says nothing cost one
+# handler slot for five seconds instead of for the life of the daemon.
+_CONN_TIMEOUT_S = 5.0
+_RECV_CHUNK_BYTES = 8192
+# Bodies are one hook payload: CC / Codex events are a few KB, and the
+# longest narration payloads observed are well under 100 KB. 1 MiB is ~10x
+# headroom, and it stops a client from making the daemon buffer without
+# bound.
+_MAX_REQUEST_BYTES = 1 << 20
+# Concurrent handler threads. Requests are one-shot and answered in
+# milliseconds, so 32 covers a burst of parallel agent sessions with room
+# for a few stalled clients; past that we shed (close) rather than queue,
+# because a client stuck behind 32 stalled peers is worse than a retry.
+_MAX_CONCURRENT_CONNS = 32
+
 # A path-like token: one or more "dir/" segments then a final stem with an
 # optional file extension. Templates already basename their own file
 # references; this is the deterministic backstop for the OTHER path —
@@ -273,6 +301,108 @@ def _split(text: str) -> list[str]:
     return [s for s in out if s.strip()]
 
 
+# --------------------------------------------------------------------------
+# socket ingress
+# --------------------------------------------------------------------------
+
+
+def _server_is_closed(srv: object) -> bool:
+    """Has the listener been closed? That is the shutdown path: accept()
+    on a closed socket raises forever, so the loop ends instead of
+    spinning on it.
+
+    Covers every shape the loop can see: a raw socket (``fileno()`` goes
+    negative), the Unix wrapper (keeps its socket, same check), the TCP
+    wrapper (drops its socket to None on close), and a test double that
+    just reports ``closed``.
+    """
+    if getattr(srv, "closed", False):
+        return True
+    sock = getattr(srv, "_srv", srv)  # the wrappers hold theirs on _srv
+    if sock is None:
+        return True
+    try:
+        return sock.fileno() < 0
+    except (AttributeError, OSError):
+        return False
+
+
+def _release_listener(srv: object, sock_path: str) -> None:
+    """Let go of the listener and its runtime files however serve() ended.
+
+    serve() calls this from a ``finally``, so it runs on the clean stop and
+    on the path that matters more: the accept loop exiting by exception.
+    Leaving the endpoint bound there is not merely untidy — on Windows the
+    channel is held by a file lock, so a daemon that died holding it can
+    never rebind, and every supervised restart would come back "not_owner"
+    with nothing serving the socket.
+
+    Idempotent, and every step is logged rather than silently swallowed:
+    the shutdown handler has usually closed ``srv`` and unlinked both files
+    already by the time this runs.
+    """
+    try:
+        srv.close()
+    except Exception as e:
+        _log("listener_close_failed", err=type(e).__name__)
+    _sockets.unlink(sock_path)
+    try:
+        config.PID_PATH.unlink(missing_ok=True)
+    except OSError as e:
+        # Must not raise: serve() may already be unwinding an exception,
+        # and a failure here would replace it with this one.
+        _log("pid_unlink_failed", err=type(e).__name__)
+
+
+def _close_conn(conn: object) -> None:
+    """Best-effort close of a connection we are dropping (shed, or a
+    handler thread that never started). A client that already hung up
+    makes this raise — hence the log rather than a silent pass."""
+    if conn is None:
+        return
+    try:
+        conn.close()
+    except Exception as e:
+        # Nothing useful to do but record it — see the docstring.
+        _log("conn_close_failed", err=type(e).__name__)
+
+
+def _next_backoff(current: float) -> float:
+    """Next accept-loop backoff: 50ms, doubling to the 2s ceiling. A
+    success resets the caller to 0, which restarts the ramp."""
+    if current <= 0:
+        return _ACCEPT_BACKOFF_START_S
+    return min(current * 2, _ACCEPT_BACKOFF_MAX_S)
+
+
+def _read_request(conn: object) -> bytes | None:
+    """Read one request body to EOF (the wire protocol's framing).
+
+    Returns the body, or None — logged — when the client timed out,
+    errored, or sent more than ``_MAX_REQUEST_BYTES``. Each of those is a
+    reason the handler should end without answering, and each gets a
+    structured line so a stalled or oversize request is visible in
+    daemon.log rather than looking like a client that simply went away.
+    """
+    buf = bytearray()
+    while True:
+        try:
+            chunk = conn.recv(_RECV_CHUNK_BYTES)
+        except TimeoutError:
+            _log("conn_read_timeout", timeout_s=_CONN_TIMEOUT_S)
+            return None
+        except OSError as e:
+            # Includes the Windows path's PermissionError for a bad token.
+            _log("conn_read_error", err=type(e).__name__)
+            return None
+        if not chunk:
+            return bytes(buf)
+        buf += chunk
+        if len(buf) > _MAX_REQUEST_BYTES:
+            _log("conn_rejected_oversize", bytes=len(buf), cap=_MAX_REQUEST_BYTES)
+            return None
+
+
 class Daemon:
     def __init__(self) -> None:
         config.ensure_dirs()
@@ -304,6 +434,11 @@ class Daemon:
         # interrupts the sleep for an immediate poll.
         self._usage_poll_wake = threading.Event()
         self._usage_poll_accelerate_until: float = 0.0
+        # The poll thread's handle. serve() calls _start_account_usage_poll
+        # on every pass (a restarted daemon rebinds and re-enters the loop),
+        # so the starter has to be idempotent — two pollers would double
+        # every /v1/me fetch and fight over _account_usage.
+        self._usage_poll_thread: threading.Thread | None = None
         self.tts = self._make_tts()
         # No anonymous-trial first-launch path — anon trials were retired
         # 2026-06-02 (sign-in now required; /v1/auth/anonymous returns 410
@@ -403,6 +538,10 @@ class Daemon:
         self._queue_lock = threading.Lock()
         self._queue_cv = threading.Condition(self._queue_lock)
         self._speech_worker: threading.Thread | None = None
+        # Socket-ingress admission control. One slot per in-flight
+        # connection handler; see Daemon._spawn_handler for why it is
+        # shed rather than queued at the cap.
+        self._conn_slots = threading.BoundedSemaphore(_MAX_CONCURRENT_CONNS)
         # 5 leaves room for "long prose + 4 quick tool calls" without
         # dropping early announcements. 3 was too tight in practice;
         # bursts during a normal turn would silently lose the first
@@ -479,6 +618,12 @@ class Daemon:
         # daemon restart clears mutes (acceptable — a session is bounded).
         self._muted_sessions: set[str] = set()
         self._codex_app_observer: codex_app.CodexAppObserver | None = None
+        # Handles for the two start-once daemon threads below. Kept so their
+        # starters can be idempotent — a serve() restart reuses this same
+        # Daemon instance, and a doubled digest timer or release poller would
+        # speak every summary twice and double the update checks.
+        self._digest_thread: threading.Thread | None = None
+        self._update_thread: threading.Thread | None = None
         self._start_hotkey()
         self._start_audio_monitor()
         # Layer 3 — Working Memory compressor thread. Idle-loops on
@@ -817,7 +962,12 @@ class Daemon:
         """Spawn the GitHub-Releases poller. Notification + menu-bar
         affordance live entirely in this daemon process — the poller
         itself is logic-only and re-evaluates the config toggle on
-        every tick so users can disable mid-session."""
+        every tick so users can disable mid-session.
+
+        Idempotent, and the handle is kept: two pollers would double every
+        release check (and double the update notification)."""
+        if self._update_thread is not None and self._update_thread.is_alive():
+            return
 
         def _on_update(info: updater.UpdateInfo) -> None:
             self.pending_update = info
@@ -828,7 +978,7 @@ class Daemon:
                 kind="update_available",
             )
 
-        updater.start_periodic_check(
+        self._update_thread = updater.start_periodic_check(
             current_version=updater.resolved_current_version(),
             on_update=_on_update,
             enabled=lambda: bool(self.cfg.get("update_check_enabled", True)),
@@ -884,7 +1034,10 @@ class Daemon:
         boundary) or its total pending count hits
         ``CHANNEL_MAX_PENDING`` (backpressure cap on a busy agent).
         Largest pile first; coexists=True so several flushes in the
-        same tick don't cancel each other."""
+        same tick don't cancel each other. Idempotent: a second timer
+        would drain the same piles twice and speak every digest twice."""
+        if self._digest_thread is not None and self._digest_thread.is_alive():
+            return
 
         def _tick() -> None:
             while True:
@@ -961,7 +1114,8 @@ class Daemon:
                         coexists=True,
                     )
 
-        threading.Thread(target=_tick, daemon=True).start()
+        self._digest_thread = threading.Thread(target=_tick, daemon=True)
+        self._digest_thread.start()
 
     def _kokoro_voice(
         self, cfg: dict | None = None, persona: persona_mod.Persona | None = None
@@ -4505,7 +4659,13 @@ class Daemon:
         """Kick off a 5-minute /v1/me refresh thread. First fetch fires
         ~3 seconds after the daemon comes up so the menu bar has data
         on the first user interaction. Daemonised so a daemon shutdown
-        doesn't wait for the sleep."""
+        doesn't wait for the sleep.
+
+        Idempotent: serve() runs this on entry, and a restarted serve()
+        must not add a second poller on top of a live one."""
+        if self._usage_poll_thread is not None and self._usage_poll_thread.is_alive():
+            return
+
         def _loop() -> None:
             self._usage_poll_wake.wait(3.0)
             while True:
@@ -4524,7 +4684,8 @@ class Daemon:
                 )
                 self._usage_poll_wake.wait(interval)
 
-        threading.Thread(target=_loop, daemon=True).start()
+        self._usage_poll_thread = threading.Thread(target=_loop, daemon=True)
+        self._usage_poll_thread.start()
 
     def _request_account_refresh(self, accelerate_s: float = 600.0) -> None:
         """Poll /v1/me now and keep polling fast for ``accelerate_s``
@@ -4535,15 +4696,25 @@ class Daemon:
         self._usage_poll_accelerate_until = time.monotonic() + accelerate_s
         self._usage_poll_wake.set()
 
-    def serve(self) -> None:
+    def serve(self) -> str:
+        """Accept connections until told to stop.
+
+        Returns why it stopped: ``"stopped"`` when the listener was closed
+        (the shutdown path) and ``"not_owner"`` when another daemon already
+        owns the IPC channel. Anything else — an exception out of the loop
+        — is a crash, which is what the in-process supervisor in
+        packaging/app_entry.py watches for: a daemon thread that dies
+        without a reason is narration that is silently gone, because
+        client.ensure_daemon() never respawns.
+        """
         sock_path = str(config.SOCKET_PATH)
         if not _prepare_runtime_for_bind(sock_path, config.PID_PATH):
-            return
+            return "not_owner"
         try:
             srv = _sockets.create_server(sock_path)
         except _sockets.DaemonBusyError:
             _log("daemon_bind_skip", reason="race_already_running")
-            return
+            return "not_owner"
         config.PID_PATH.write_text(str(os.getpid()))
         print(f"heard daemon ready at {sock_path}", flush=True)
         self._start_account_usage_poll()
@@ -4573,25 +4744,107 @@ class Daemon:
             signal.signal(signal.SIGTERM, shutdown)
             signal.signal(signal.SIGINT, shutdown)
 
-        while True:
-            conn, _ = srv.accept()
-            threading.Thread(target=self._serve_one, args=(conn,), daemon=True).start()
+        # Accept loop. Failures here are transient (EMFILE: fd table full;
+        # ECONNABORTED: client gave up mid-handshake; RuntimeError from
+        # Thread.start(): thread table full) or they are the shutdown path
+        # (the socket was closed under us). Exiting on the former takes
+        # narration down for the rest of the session, so: log, drop the
+        # half-open connection, back off, carry on. Closing `srv` is how
+        # the shutdown handler stops us, and that is the one case we return.
+        #
+        # The try/finally is the other exit: an exception out of the loop
+        # (anything that isn't transient — a bug, or a failure from the
+        # handler spawn) propagates to the supervisor, and it must not leave
+        # the listener bound. On Windows that is fatal rather than untidy:
+        # the endpoint is held by a file lock, so a daemon that died holding
+        # it can never rebind, and every restart would come back "not_owner"
+        # with nothing serving.
+        try:
+            backoff = 0.0
+            while True:
+                conn = None
+                try:
+                    conn, _ = srv.accept()
+                    self._spawn_handler(conn)
+                    conn = None  # the handler thread owns it now
+                    backoff = 0.0
+                except OSError as e:
+                    # accept() failed (no connection to drop), or the spawn
+                    # raised something other than RuntimeError — close
+                    # whatever we hold before deciding whether to carry on.
+                    _close_conn(conn)
+                    if _server_is_closed(srv):
+                        _log("serve_stopped", reason="server_closed")
+                        return "stopped"
+                    backoff = _next_backoff(backoff)
+                    _log(
+                        "accept_error",
+                        err=type(e).__name__,
+                        errno=e.errno,
+                        backoff_s=backoff,
+                    )
+                    time.sleep(backoff)
+                except RuntimeError as e:
+                    # Thread.start() refused the handler: drop this
+                    # connection rather than take the whole loop down.
+                    _close_conn(conn)
+                    backoff = _next_backoff(backoff)
+                    _log("accept_error", err=type(e).__name__, backoff_s=backoff)
+                    time.sleep(backoff)
+        finally:
+            _release_listener(srv, sock_path)
+
+    def _spawn_handler(self, conn) -> None:
+        """Hand one connection to a worker thread.
+
+        Concurrency is capped: past ``_MAX_CONCURRENT_CONNS`` in-flight
+        handlers the connection is shed — closed immediately — instead of
+        queued, so a client stuck behind a pile of stalled peers fails
+        fast and the accept loop never blocks on it. Raises RuntimeError
+        (from Thread.start) so the caller can drop the connection.
+        """
+        if not self._conn_slots.acquire(blocking=False):
+            _log("conn_shed", max=_MAX_CONCURRENT_CONNS)
+            _close_conn(conn)
+            return
+        try:
+            threading.Thread(
+                target=self._run_handler, args=(conn,), daemon=True
+            ).start()
+        except RuntimeError:
+            self._conn_slots.release()
+            raise
+
+    def _run_handler(self, conn) -> None:
+        """Thread body for one connection: serve it, then give the slot
+        back. The slot is released here (not in _serve_one) so that the
+        acquire in _spawn_handler and the release stay paired."""
+        try:
+            self._serve_one(conn)
+        finally:
+            self._conn_slots.release()
 
     def _serve_one(self, conn: socket.socket) -> None:
+        """Read one request and answer it, on a bounded budget.
+
+        The protocol is read-to-EOF, which is fine for a live hook but
+        unbounded means a client that connects and then says nothing
+        holds a thread — and one of the ``_MAX_CONCURRENT_CONNS`` slots —
+        until the process dies. The socket timeout and the size cap are
+        what turn that into one slot held for ``_CONN_TIMEOUT_S``.
+        """
         try:
             with conn:
-                buf = b""
-                while True:
-                    chunk = conn.recv(8192)
-                    if not chunk:
-                        break
-                    buf += chunk
+                conn.settimeout(_CONN_TIMEOUT_S)
+                buf = _read_request(conn)
+                if buf is None:
+                    return
                 resp = self._handle(buf.decode("utf-8", errors="ignore"))
                 if resp is not None:
                     try:
                         conn.sendall(resp)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _log("conn_send_failed", err=type(e).__name__)
         except Exception as e:
             print(f"request error: {e}", file=sys.stderr, flush=True)
 

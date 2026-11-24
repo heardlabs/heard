@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Heard keeps listening when its socket hiccups. The daemon's accept loop used
+  to end on the first transient failure — a full file-descriptor table, a
+  client that gave up mid-handshake, a refused worker thread — and, in the app
+  bundle, that left the menu bar up with narration silently dead until the app
+  was relaunched. It now logs the failure, backs off, and carries on; one
+  connection can cost at most a 5s read timeout and a 1 MiB body (a client that
+  stalls is dropped and logged, and never again holds a thread forever), no
+  more than 32 connections are handled at once, and a daemon thread that
+  crashes outright is announced and restarted instead of going quiet. The
+  restart releases the socket before it comes back and reuses the same daemon,
+  so it can't come back unable to listen — or with a second copy of the agent
+  observers, which spoke every Codex event twice.
+
 - A queued result, failure or question survives the routine tool line that
   arrives behind it, and survives switching to another agent window. The speech
   queue is capped at 5, and both eviction rules were positional: a routine line
