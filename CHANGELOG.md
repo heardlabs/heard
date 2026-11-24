@@ -38,7 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection can cost at most a 5s read timeout and a 1 MiB body (a client that
   stalls is dropped and logged, and never again holds a thread forever), no
   more than 32 connections are handled at once, and a daemon thread that
-  crashes outright is announced and restarted instead of going quiet.
+  crashes outright is announced and restarted instead of going quiet. The
+  restart releases the socket before it comes back and reuses the same daemon,
+  so it can't come back unable to listen — or with a second copy of the agent
+  observers, which spoke every Codex event twice.
 
 - A queued result, failure or question survives the routine tool line that
   arrives behind it, and survives switching to another agent window. The speech
