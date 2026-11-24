@@ -13,14 +13,24 @@ import time
 
 import pytest
 
+_DAEMONS: list = []
+
 
 @pytest.fixture(autouse=True)
 def _quiet(monkeypatch):
-    
     monkeypatch.setattr("heard.hotkey.start", lambda *a, **kw: None)
     monkeypatch.setattr("heard.accessibility.ensure_trusted", lambda **kw: True)
     monkeypatch.setattr("heard.audio_monitor.start", lambda *a, **kw: None)
     yield
+    # Let each daemon's speech worker finish BEFORE monkeypatch restores the
+    # config paths. Several tests end by releasing a blocked fake speaker
+    # (`proceed.set()`), so the worker is still draining when the test
+    # returns; anything it wrote after teardown (a "final" goes to
+    # history.jsonl) used to land in the real config dir.
+    while _DAEMONS:
+        worker = _DAEMONS.pop()._speech_worker
+        if worker is not None:
+            worker.join(timeout=5.0)
 
 
 def _make_daemon(tmp_path, monkeypatch):
@@ -51,7 +61,9 @@ def _make_daemon(tmp_path, monkeypatch):
 
     from heard.daemon import Daemon
 
-    return Daemon()
+    daemon = Daemon()
+    _DAEMONS.append(daemon)
+    return daemon
 
 
 def test_queue_serialises_utterances(tmp_path, monkeypatch):
