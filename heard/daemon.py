@@ -327,6 +327,33 @@ def _server_is_closed(srv: object) -> bool:
         return False
 
 
+def _release_listener(srv: object, sock_path: str) -> None:
+    """Let go of the listener and its runtime files however serve() ended.
+
+    serve() calls this from a ``finally``, so it runs on the clean stop and
+    on the path that matters more: the accept loop exiting by exception.
+    Leaving the endpoint bound there is not merely untidy — on Windows the
+    channel is held by a file lock, so a daemon that died holding it can
+    never rebind, and every supervised restart would come back "not_owner"
+    with nothing serving the socket.
+
+    Idempotent, and every step is logged rather than silently swallowed:
+    the shutdown handler has usually closed ``srv`` and unlinked both files
+    already by the time this runs.
+    """
+    try:
+        srv.close()
+    except Exception as e:
+        _log("listener_close_failed", err=type(e).__name__)
+    _sockets.unlink(sock_path)
+    try:
+        config.PID_PATH.unlink(missing_ok=True)
+    except OSError as e:
+        # Must not raise: serve() may already be unwinding an exception,
+        # and a failure here would replace it with this one.
+        _log("pid_unlink_failed", err=type(e).__name__)
+
+
 def _close_conn(conn: object) -> None:
     """Best-effort close of a connection we are dropping (shed, or a
     handler thread that never started). A client that already hung up
@@ -407,6 +434,11 @@ class Daemon:
         # interrupts the sleep for an immediate poll.
         self._usage_poll_wake = threading.Event()
         self._usage_poll_accelerate_until: float = 0.0
+        # The poll thread's handle. serve() calls _start_account_usage_poll
+        # on every pass (a restarted daemon rebinds and re-enters the loop),
+        # so the starter has to be idempotent — two pollers would double
+        # every /v1/me fetch and fight over _account_usage.
+        self._usage_poll_thread: threading.Thread | None = None
         self.tts = self._make_tts()
         # No anonymous-trial first-launch path — anon trials were retired
         # 2026-06-02 (sign-in now required; /v1/auth/anonymous returns 410
@@ -586,6 +618,12 @@ class Daemon:
         # daemon restart clears mutes (acceptable — a session is bounded).
         self._muted_sessions: set[str] = set()
         self._codex_app_observer: codex_app.CodexAppObserver | None = None
+        # Handles for the two start-once daemon threads below. Kept so their
+        # starters can be idempotent — a serve() restart reuses this same
+        # Daemon instance, and a doubled digest timer or release poller would
+        # speak every summary twice and double the update checks.
+        self._digest_thread: threading.Thread | None = None
+        self._update_thread: threading.Thread | None = None
         self._start_hotkey()
         self._start_audio_monitor()
         # Layer 3 — Working Memory compressor thread. Idle-loops on
@@ -924,7 +962,12 @@ class Daemon:
         """Spawn the GitHub-Releases poller. Notification + menu-bar
         affordance live entirely in this daemon process — the poller
         itself is logic-only and re-evaluates the config toggle on
-        every tick so users can disable mid-session."""
+        every tick so users can disable mid-session.
+
+        Idempotent, and the handle is kept: two pollers would double every
+        release check (and double the update notification)."""
+        if self._update_thread is not None and self._update_thread.is_alive():
+            return
 
         def _on_update(info: updater.UpdateInfo) -> None:
             self.pending_update = info
@@ -935,7 +978,7 @@ class Daemon:
                 kind="update_available",
             )
 
-        updater.start_periodic_check(
+        self._update_thread = updater.start_periodic_check(
             current_version=updater.resolved_current_version(),
             on_update=_on_update,
             enabled=lambda: bool(self.cfg.get("update_check_enabled", True)),
@@ -991,7 +1034,10 @@ class Daemon:
         boundary) or its total pending count hits
         ``CHANNEL_MAX_PENDING`` (backpressure cap on a busy agent).
         Largest pile first; coexists=True so several flushes in the
-        same tick don't cancel each other."""
+        same tick don't cancel each other. Idempotent: a second timer
+        would drain the same piles twice and speak every digest twice."""
+        if self._digest_thread is not None and self._digest_thread.is_alive():
+            return
 
         def _tick() -> None:
             while True:
@@ -1068,7 +1114,8 @@ class Daemon:
                         coexists=True,
                     )
 
-        threading.Thread(target=_tick, daemon=True).start()
+        self._digest_thread = threading.Thread(target=_tick, daemon=True)
+        self._digest_thread.start()
 
     def _kokoro_voice(
         self, cfg: dict | None = None, persona: persona_mod.Persona | None = None
@@ -4612,7 +4659,13 @@ class Daemon:
         """Kick off a 5-minute /v1/me refresh thread. First fetch fires
         ~3 seconds after the daemon comes up so the menu bar has data
         on the first user interaction. Daemonised so a daemon shutdown
-        doesn't wait for the sleep."""
+        doesn't wait for the sleep.
+
+        Idempotent: serve() runs this on entry, and a restarted serve()
+        must not add a second poller on top of a live one."""
+        if self._usage_poll_thread is not None and self._usage_poll_thread.is_alive():
+            return
+
         def _loop() -> None:
             self._usage_poll_wake.wait(3.0)
             while True:
@@ -4631,7 +4684,8 @@ class Daemon:
                 )
                 self._usage_poll_wake.wait(interval)
 
-        threading.Thread(target=_loop, daemon=True).start()
+        self._usage_poll_thread = threading.Thread(target=_loop, daemon=True)
+        self._usage_poll_thread.start()
 
     def _request_account_refresh(self, accelerate_s: float = 600.0) -> None:
         """Poll /v1/me now and keep polling fast for ``accelerate_s``
@@ -4697,37 +4751,48 @@ class Daemon:
         # narration down for the rest of the session, so: log, drop the
         # half-open connection, back off, carry on. Closing `srv` is how
         # the shutdown handler stops us, and that is the one case we return.
-        backoff = 0.0
-        while True:
-            conn = None
-            try:
-                conn, _ = srv.accept()
-                self._spawn_handler(conn)
-                conn = None  # the handler thread owns it now
-                backoff = 0.0
-            except OSError as e:
-                # accept() failed (no connection to drop), or the spawn
-                # raised something other than RuntimeError — close whatever
-                # we hold before deciding whether to carry on.
-                _close_conn(conn)
-                if _server_is_closed(srv):
-                    _log("serve_stopped", reason="server_closed")
-                    return "stopped"
-                backoff = _next_backoff(backoff)
-                _log(
-                    "accept_error",
-                    err=type(e).__name__,
-                    errno=e.errno,
-                    backoff_s=backoff,
-                )
-                time.sleep(backoff)
-            except RuntimeError as e:
-                # Thread.start() refused the handler: drop this connection
-                # rather than take the whole loop down with it.
-                _close_conn(conn)
-                backoff = _next_backoff(backoff)
-                _log("accept_error", err=type(e).__name__, backoff_s=backoff)
-                time.sleep(backoff)
+        #
+        # The try/finally is the other exit: an exception out of the loop
+        # (anything that isn't transient — a bug, or a failure from the
+        # handler spawn) propagates to the supervisor, and it must not leave
+        # the listener bound. On Windows that is fatal rather than untidy:
+        # the endpoint is held by a file lock, so a daemon that died holding
+        # it can never rebind, and every restart would come back "not_owner"
+        # with nothing serving.
+        try:
+            backoff = 0.0
+            while True:
+                conn = None
+                try:
+                    conn, _ = srv.accept()
+                    self._spawn_handler(conn)
+                    conn = None  # the handler thread owns it now
+                    backoff = 0.0
+                except OSError as e:
+                    # accept() failed (no connection to drop), or the spawn
+                    # raised something other than RuntimeError — close
+                    # whatever we hold before deciding whether to carry on.
+                    _close_conn(conn)
+                    if _server_is_closed(srv):
+                        _log("serve_stopped", reason="server_closed")
+                        return "stopped"
+                    backoff = _next_backoff(backoff)
+                    _log(
+                        "accept_error",
+                        err=type(e).__name__,
+                        errno=e.errno,
+                        backoff_s=backoff,
+                    )
+                    time.sleep(backoff)
+                except RuntimeError as e:
+                    # Thread.start() refused the handler: drop this
+                    # connection rather than take the whole loop down.
+                    _close_conn(conn)
+                    backoff = _next_backoff(backoff)
+                    _log("accept_error", err=type(e).__name__, backoff_s=backoff)
+                    time.sleep(backoff)
+        finally:
+            _release_listener(srv, sock_path)
 
     def _spawn_handler(self, conn) -> None:
         """Hand one connection to a worker thread.
