@@ -64,6 +64,36 @@ def _heard_once_store_floor(tmp_path_factory):
     yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _heard_config_dirs_floor(tmp_path_factory):
+    """Session-wide floor under the per-test isolation below.
+
+    The per-test fixture uses ``monkeypatch``, which restores the previous
+    value at teardown. Without this floor that previous value is the REAL
+    config dir, so any thread a test leaves running (a daemon's speech
+    worker draining its queue, a poller) writes to the user's real
+    ``history.jsonl`` / ``config.yaml`` the moment the test ends. That
+    happened: queue tests left ``"result-4"`` finals in the maintainer's
+    real history on every suite run. With this floor, a teardown restores
+    to a throwaway session dir instead.
+
+    Plain assignment, not monkeypatch, so it lasts the whole run (same
+    reason as the analytics floor above)."""
+    from heard import config as _config
+
+    root = tmp_path_factory.mktemp("heard-session")
+    cfg_dir = root / "config"
+    data_dir = root / "data"
+    _config.CONFIG_DIR = cfg_dir
+    _config.DATA_DIR = data_dir
+    _config.MODELS_DIR = data_dir / "models"
+    _config.CONFIG_PATH = cfg_dir / "config.yaml"
+    _config.SOCKET_PATH = data_dir / "daemon.sock"
+    _config.LOG_PATH = data_dir / "daemon.log"
+    _config.PID_PATH = data_dir / "daemon.pid"
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _heard_config_dirs_isolated(tmp_path, monkeypatch):
     """Point every test at a fresh, throwaway config + data dir."""
