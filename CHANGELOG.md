@@ -42,6 +42,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enqueuing at the exact moment the speech worker finishes no longer strands
   the new line. The worker releases its handle under the queue lock before
   exiting, so the next producer reliably starts a fresh worker.
+- Heard keeps listening when its socket hiccups. The daemon's accept loop used
+  to end on the first transient failure — a full file-descriptor table, a
+  client that gave up mid-handshake, a refused worker thread — and, in the app
+  bundle, that left the menu bar up with narration silently dead until the app
+  was relaunched. It now logs the failure, backs off, and carries on; one
+  connection can cost at most a 5s read timeout and a 1 MiB body (a client that
+  stalls is dropped and logged, and never again holds a thread forever), no
+  more than 32 connections are handled at once, and a daemon thread that
+  crashes outright is announced and restarted instead of going quiet. The
+  restart releases the socket before it comes back and reuses the same daemon,
+  so it can't come back unable to listen — or with a second copy of the agent
+  observers, which spoke every Codex event twice.
+
+- A queued result, failure or question survives the routine tool line that
+  arrives behind it, and survives switching to another agent window. The speech
+  queue is capped at 5, and both eviction rules were positional: a routine line
+  arriving at a full queue cut the FRONT of the queue (usually a result waiting
+  its turn), and a live event from another session cleared every queued line
+  from the session you left. Priority narration — finals, failures, tool
+  questions, focus alerts — is now tagged at enqueue and is dropped only when
+  the queue holds nothing but priority lines (then the oldest one goes). The
+  held-while-you-dictate buffer follows the same rule, so a long dictation can
+  no longer evict the result held alongside it.
+- Per-agent voices work on the local Kokoro voice. With
+  `multi_agent_auto_voices` on, background agents were handed ElevenLabs voice
+  IDs, which Kokoro doesn't have, so every one of their sentences failed and
+  was dropped. Kokoro now has its own pool of seven voices (US and British,
+  female and male). An `agent_voices` entry from another provider falls back to
+  your Kokoro voice instead of going silent.
+
+- The Settings → "Speak up on" toggles (errors, blocked, completions) are
+  saved. The config file only keeps keys it knows, and these weren't among
+  them, so switching one off was dropped on save: the toggle came back on and
+  Heard kept speaking that category. They are now regular settings, and
+  `heard config set notify_errors false` saves a real `false`.
 
 - Cloud voices no longer drop a sentence when the Heard proxy is briefly
   unreachable. A network blip, a proxy or upstream 5xx, or a Cloudflare edge
@@ -62,6 +97,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which Speechify maps to its default rather than rejecting — so every agent
   in a multi-agent session spoke in the same voice, with nothing in the log
   to say why.
+
+- A local-voice fallback no longer speaks too fast. Playback layered the cloud
+  backend's 1.2x cap on top of audio Kokoro had already rendered at the full
+  speed — a 1.5x utterance came out at ~1.87x. The residue is now measured
+  against whichever backend actually synthesised, and speeds outside Kokoro's
+  supported 0.5x–2x window are clamped instead of failing to silence.
+
+- Kokoro as the selected voice handles a speed outside its 0.5x–2x window
+  instead of going silent. A hand-edited `speed: 3.0` raised inside the local
+  model on every sentence and lost the audio; it now renders at 2x, the model's
+  real ceiling, with the remaining 1.5x applied at playback.
 
 ## [1.1.21]
 

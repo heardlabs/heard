@@ -13,14 +13,24 @@ import time
 
 import pytest
 
+_DAEMONS: list = []
+
 
 @pytest.fixture(autouse=True)
 def _quiet(monkeypatch):
-    
     monkeypatch.setattr("heard.hotkey.start", lambda *a, **kw: None)
     monkeypatch.setattr("heard.accessibility.ensure_trusted", lambda **kw: True)
     monkeypatch.setattr("heard.audio_monitor.start", lambda *a, **kw: None)
     yield
+    # Let each daemon's speech worker finish BEFORE monkeypatch restores the
+    # config paths. Several tests end by releasing a blocked fake speaker
+    # (`proceed.set()`), so the worker is still draining when the test
+    # returns; anything it wrote after teardown (a "final" goes to
+    # history.jsonl) used to land in the real config dir.
+    while _DAEMONS:
+        worker = _DAEMONS.pop()._speech_worker
+        if worker is not None:
+            worker.join(timeout=5.0)
 
 
 def _make_daemon(tmp_path, monkeypatch):
@@ -51,7 +61,9 @@ def _make_daemon(tmp_path, monkeypatch):
 
     from heard.daemon import Daemon
 
-    return Daemon()
+    daemon = Daemon()
+    _DAEMONS.append(daemon)
+    return daemon
 
 
 def test_queue_serialises_utterances(tmp_path, monkeypatch):
@@ -153,6 +165,77 @@ def test_queue_caps_at_max_drops_oldest(tmp_path, monkeypatch):
     assert fill[0] not in spoken, "oldest queued item must be evicted under pressure"
     # Total played: in-flight + remaining 5 of {q1..q4, overflow}.
     assert len(spoken) == 1 + cap, f"expected {1 + cap} played, got {len(spoken)}: {spoken}"
+
+
+def test_overflow_evicts_routine_line_not_priority(tmp_path, monkeypatch):
+    """Priority lines (results, failures, questions) are the last thing
+    Heard may drop. A routine tool line arriving at a full queue must
+    evict the OLDEST routine line, never the result sitting ahead of it."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    started_first = threading.Event()
+    proceed_first = threading.Event()
+
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
+        if text == "inflight":
+            started_first.set()
+            proceed_first.wait(timeout=2.0)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    daemon._start_speech("inflight")
+    assert started_first.wait(timeout=1.0), "worker never picked up 'inflight'"
+
+    result = "done — the tests pass"
+    daemon._start_speech(result, priority=True, history_meta={"kind": "final"})
+    # Fill exactly to the cap behind the result.
+    for i in range(daemon._queue_max - 1):
+        daemon._start_speech(f"routine-{i}")
+    with daemon._queue_cv:
+        assert len(daemon._queue) == daemon._queue_max
+
+    # One routine line too many — something has to give.
+    daemon._start_speech("routine-overflow")
+
+    with daemon._queue_cv:
+        queued = [e[0] for e in daemon._queue]
+    assert queued[0] == result, f"priority line evicted: {queued}"
+    assert "routine-0" not in queued, f"oldest routine line survived: {queued}"
+    assert "routine-overflow" in queued, "newest routine line evicted"
+    assert len(queued) == daemon._queue_max
+
+    proceed_first.set()
+
+
+def test_all_priority_queue_evicts_oldest_priority(tmp_path, monkeypatch):
+    """A queue of nothing but priority lines still can't grow without
+    bound: the oldest one goes and the cap holds."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    started = threading.Event()
+    proceed = threading.Event()
+
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
+        if text == "inflight":
+            started.set()
+            proceed.wait(timeout=2.0)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    daemon._start_speech("inflight")
+    assert started.wait(timeout=1.0)
+
+    for i in range(daemon._queue_max + 1):
+        daemon._start_speech(f"result-{i}", priority=True,
+                             history_meta={"kind": "final"})
+
+    with daemon._queue_cv:
+        queued = [e[0] for e in daemon._queue]
+    assert len(queued) == daemon._queue_max, f"queue over cap: {queued}"
+    assert "result-0" not in queued, f"oldest priority line survived: {queued}"
+    assert f"result-{daemon._queue_max}" in queued, f"newest priority line lost: {queued}"
+
+    proceed.set()
 
 
 def test_trial_ended_blurb_matches_actual_fallback(tmp_path, monkeypatch):
@@ -369,6 +452,43 @@ def test_new_session_drops_queued_items_from_other_sessions(tmp_path, monkeypatc
     assert "session-A-third" not in spoken
 
 
+def test_live_event_keeps_queued_priority_from_other_session(tmp_path, monkeypatch):
+    """Freshest-session-wins clears queued narration from other sessions
+    — but a queued PRIORITY line (a result the listener is still owed)
+    outlives the switch."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    started = threading.Event()
+    proceed = threading.Event()
+
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
+        if text == "inflight":
+            started.set()
+            proceed.wait(timeout=2.0)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    daemon._start_speech("inflight")
+    assert started.wait(timeout=1.0)
+
+    daemon._start_speech("A-progress-1", session_id="A")
+    daemon._start_speech("A result", session_id="A", priority=True,
+                         history_meta={"kind": "final"})
+    daemon._start_speech("A-progress-2", session_id="A")
+
+    # A live event (coexists=False) from another session switches focus.
+    daemon._start_speech("B-live", session_id="B")
+
+    with daemon._queue_cv:
+        queued = [e[0] for e in daemon._queue]
+    assert "A result" in queued, f"other session's priority line dropped: {queued}"
+    assert "A-progress-1" not in queued
+    assert "A-progress-2" not in queued
+    assert "B-live" in queued
+
+    proceed.set()
+
+
 def test_mic_active_defers_then_flushes_on_release(tmp_path, monkeypatch):
     """While the mic is hot (user dictating via Wispr), narration is
     HELD, not dropped — and replays through the queue once the mic
@@ -444,6 +564,28 @@ def test_mic_held_buffer_caps_at_deferred_max(tmp_path, monkeypatch):
     assert len(held) == cap
     assert held[0] == "line-3"   # oldest three dropped
     assert held[-1] == f"line-{cap + 2}"
+
+
+def test_mic_deferred_overflow_keeps_priority(tmp_path, monkeypatch):
+    """The held-while-dictating buffer follows the same rule: overflowing
+    it drops held routine lines, never a held result."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+    daemon._mic_active = True
+    cap = daemon._DEFERRED_MIC_MAX
+
+    daemon._start_speech("held result", priority=True,
+                         history_meta={"kind": "final"})
+    for i in range(cap + 2):
+        daemon._start_speech(f"held-routine-{i}",
+                             history_meta={"kind": "intermediate"})
+
+    with daemon._queue_cv:
+        held = [item[0] for item, _pri in daemon._deferred_while_mic]
+        flags = {item[0]: pri for item, pri in daemon._deferred_while_mic}
+    assert len(held) == cap
+    assert "held result" in held, f"held priority line dropped: {held}"
+    assert flags["held result"] is True
+    assert "held-routine-0" not in held
 
 
 def test_mute_clears_held_dictation_buffer(tmp_path, monkeypatch):

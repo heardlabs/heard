@@ -956,7 +956,7 @@ def _build_controller_class():
 
         def _act_set_notify(self, body):
             key = (body.get("key") or "").strip()
-            if key in ("errors", "blocked", "completions", "idle"):
+            if key in ("errors", "blocked", "completions"):
                 try:
                     config.set_value(f"notify_{key}", bool(body.get("on")))
                 except Exception as e:

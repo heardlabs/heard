@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from heard import (
@@ -63,6 +64,34 @@ DEBUG = os.environ.get("HEARD_DEBUG", "").lower() in ("1", "true", "yes")
 # weeks at a time on a busy machine; without rotation the structured
 # per-event lines accumulate into hundreds of MB.
 _LOG_ROTATE_BYTES = 10 * 1024 * 1024
+
+# --- socket ingress budgets ------------------------------------------------
+# The accept loop is the daemon's entire control surface. If it dies, every
+# hook in every agent session goes quietly unheard — client.ensure_daemon()
+# never respawns — so it absorbs transient failures instead of exiting on
+# them, and it bounds what one client can cost it.
+# Backoff after a failed accept(): 50ms, doubling to a 2s ceiling. Long
+# enough to let an fd/thread table drain, short enough that a recovered
+# daemon answers its next hook promptly.
+_ACCEPT_BACKOFF_START_S = 0.05
+_ACCEPT_BACKOFF_MAX_S = 2.0
+# Idle time allowed between recv() chunks of one request. The wire protocol
+# is one connection / one request / client half-closes, and a live hook
+# writes its whole payload in one go, so 5s is generous for that — and it
+# is what makes a client that connects and then says nothing cost one
+# handler slot for five seconds instead of for the life of the daemon.
+_CONN_TIMEOUT_S = 5.0
+_RECV_CHUNK_BYTES = 8192
+# Bodies are one hook payload: CC / Codex events are a few KB, and the
+# longest narration payloads observed are well under 100 KB. 1 MiB is ~10x
+# headroom, and it stops a client from making the daemon buffer without
+# bound.
+_MAX_REQUEST_BYTES = 1 << 20
+# Concurrent handler threads. Requests are one-shot and answered in
+# milliseconds, so 32 covers a burst of parallel agent sessions with room
+# for a few stalled clients; past that we shed (close) rather than queue,
+# because a client stuck behind 32 stalled peers is worse than a retry.
+_MAX_CONCURRENT_CONNS = 32
 
 # A path-like token: one or more "dir/" segments then a final stem with an
 # optional file extension. Templates already basename their own file
@@ -191,6 +220,57 @@ def _maybe_rotate_log() -> None:
         pass
 
 
+def _item_is_priority(item: tuple) -> bool:
+    """Is this speech-queue entry a priority line (a result, a failure, a
+    tool question, a focus alert)? The flag rides on the entry's own
+    history meta (``item[5]``) so it travels with the entry — never infer
+    priority from queue position: priority lines are inserted at the
+    front and routine ones appended, so position says nothing about what
+    a line is worth."""
+    return bool((item[5] or {}).get("priority"))
+
+
+def _pair_is_priority(entry: tuple) -> bool:
+    """Priority flag for an entry in the held-while-dictating buffer,
+    which stores ``(item, priority)`` — the item's meta carries the same
+    flag (see ``_item_is_priority``)."""
+    return bool(entry[1])
+
+
+def _evict_over_cap(
+    items: list,
+    cap: int,
+    priority_of: Callable[[tuple], bool],
+    *,
+    oldest_priority_at: str = "front",
+) -> tuple[list, int]:
+    """Trim ``items`` down to ``cap`` entries, dropping the oldest ROUTINE
+    entry first: routine narration is stale by definition, while a
+    priority one is the thing the listener is actually waiting on. Only a
+    set of entries that are ALL priority drops a priority one, and then it
+    drops the oldest of those.
+
+    ``oldest_priority_at`` says which end of ``items`` holds the oldest
+    priority entry, and is consulted only in that all-priority case. The
+    held-while-dictating buffer is append-ordered, so its oldest is at the
+    "front". The live speech queue is not: priority entries are inserted
+    at the front, so its run of priority entries reads newest-first and
+    the oldest sits at the "back".
+
+    Returns ``(kept, dropped_priority)`` so callers can log how close the
+    queue came to losing a priority line. Pure — no logging, no state.
+    """
+    kept = list(items)
+    dropped_priority = 0
+    while len(kept) > cap:
+        idx = next((i for i, e in enumerate(kept) if not priority_of(e)), None)
+        if idx is None:
+            idx = 0 if oldest_priority_at == "front" else len(kept) - 1
+            dropped_priority += 1
+        del kept[idx]
+    return kept, dropped_priority
+
+
 def _split(text: str) -> list[str]:
     """Split long narration into synth-able chunks.
 
@@ -219,6 +299,108 @@ def _split(text: str) -> list[str]:
         else:
             out.extend(re.split(r"(?<=[,;:])\s+", p))
     return [s for s in out if s.strip()]
+
+
+# --------------------------------------------------------------------------
+# socket ingress
+# --------------------------------------------------------------------------
+
+
+def _server_is_closed(srv: object) -> bool:
+    """Has the listener been closed? That is the shutdown path: accept()
+    on a closed socket raises forever, so the loop ends instead of
+    spinning on it.
+
+    Covers every shape the loop can see: a raw socket (``fileno()`` goes
+    negative), the Unix wrapper (keeps its socket, same check), the TCP
+    wrapper (drops its socket to None on close), and a test double that
+    just reports ``closed``.
+    """
+    if getattr(srv, "closed", False):
+        return True
+    sock = getattr(srv, "_srv", srv)  # the wrappers hold theirs on _srv
+    if sock is None:
+        return True
+    try:
+        return sock.fileno() < 0
+    except (AttributeError, OSError):
+        return False
+
+
+def _release_listener(srv: object, sock_path: str) -> None:
+    """Let go of the listener and its runtime files however serve() ended.
+
+    serve() calls this from a ``finally``, so it runs on the clean stop and
+    on the path that matters more: the accept loop exiting by exception.
+    Leaving the endpoint bound there is not merely untidy — on Windows the
+    channel is held by a file lock, so a daemon that died holding it can
+    never rebind, and every supervised restart would come back "not_owner"
+    with nothing serving the socket.
+
+    Idempotent, and every step is logged rather than silently swallowed:
+    the shutdown handler has usually closed ``srv`` and unlinked both files
+    already by the time this runs.
+    """
+    try:
+        srv.close()
+    except Exception as e:
+        _log("listener_close_failed", err=type(e).__name__)
+    _sockets.unlink(sock_path)
+    try:
+        config.PID_PATH.unlink(missing_ok=True)
+    except OSError as e:
+        # Must not raise: serve() may already be unwinding an exception,
+        # and a failure here would replace it with this one.
+        _log("pid_unlink_failed", err=type(e).__name__)
+
+
+def _close_conn(conn: object) -> None:
+    """Best-effort close of a connection we are dropping (shed, or a
+    handler thread that never started). A client that already hung up
+    makes this raise — hence the log rather than a silent pass."""
+    if conn is None:
+        return
+    try:
+        conn.close()
+    except Exception as e:
+        # Nothing useful to do but record it — see the docstring.
+        _log("conn_close_failed", err=type(e).__name__)
+
+
+def _next_backoff(current: float) -> float:
+    """Next accept-loop backoff: 50ms, doubling to the 2s ceiling. A
+    success resets the caller to 0, which restarts the ramp."""
+    if current <= 0:
+        return _ACCEPT_BACKOFF_START_S
+    return min(current * 2, _ACCEPT_BACKOFF_MAX_S)
+
+
+def _read_request(conn: object) -> bytes | None:
+    """Read one request body to EOF (the wire protocol's framing).
+
+    Returns the body, or None — logged — when the client timed out,
+    errored, or sent more than ``_MAX_REQUEST_BYTES``. Each of those is a
+    reason the handler should end without answering, and each gets a
+    structured line so a stalled or oversize request is visible in
+    daemon.log rather than looking like a client that simply went away.
+    """
+    buf = bytearray()
+    while True:
+        try:
+            chunk = conn.recv(_RECV_CHUNK_BYTES)
+        except TimeoutError:
+            _log("conn_read_timeout", timeout_s=_CONN_TIMEOUT_S)
+            return None
+        except OSError as e:
+            # Includes the Windows path's PermissionError for a bad token.
+            _log("conn_read_error", err=type(e).__name__)
+            return None
+        if not chunk:
+            return bytes(buf)
+        buf += chunk
+        if len(buf) > _MAX_REQUEST_BYTES:
+            _log("conn_rejected_oversize", bytes=len(buf), cap=_MAX_REQUEST_BYTES)
+            return None
 
 
 class Daemon:
@@ -252,6 +434,11 @@ class Daemon:
         # interrupts the sleep for an immediate poll.
         self._usage_poll_wake = threading.Event()
         self._usage_poll_accelerate_until: float = 0.0
+        # The poll thread's handle. serve() calls _start_account_usage_poll
+        # on every pass (a restarted daemon rebinds and re-enters the loop),
+        # so the starter has to be idempotent — two pollers would double
+        # every /v1/me fetch and fight over _account_usage.
+        self._usage_poll_thread: threading.Thread | None = None
         self.tts = self._make_tts()
         # No anonymous-trial first-launch path — anon trials were retired
         # 2026-06-02 (sign-in now required; /v1/auth/anonymous returns 410
@@ -351,6 +538,10 @@ class Daemon:
         self._queue_lock = threading.Lock()
         self._queue_cv = threading.Condition(self._queue_lock)
         self._speech_worker: threading.Thread | None = None
+        # Socket-ingress admission control. One slot per in-flight
+        # connection handler; see Daemon._spawn_handler for why it is
+        # shed rather than queued at the cap.
+        self._conn_slots = threading.BoundedSemaphore(_MAX_CONCURRENT_CONNS)
         # 5 leaves room for "long prose + 4 quick tool calls" without
         # dropping early announcements. 3 was too tight in practice;
         # bursts during a normal turn would silently lose the first
@@ -360,10 +551,10 @@ class Daemon:
         # dictation), narration would otherwise be dropped — instead we
         # stash it here and replay it through the queue once the mic
         # frees up, so the listener hears what happened while they
-        # talked. Bounded to _queue_max and stale-pruned (a fresh result
-        # drops held routine progress) so release plays the freshest
-        # signal, never a minute-long backlog. Each entry is (item,
-        # priority); item matches a _queue tuple.
+        # talked. Bounded to _DEFERRED_MIC_MAX with the same priority-aware
+        # eviction as the live queue: the oldest held routine line goes
+        # first, so a held result outlives held progress. Each entry is
+        # (item, priority); item matches a _queue tuple.
         self._deferred_while_mic: list[tuple[tuple, bool]] = []
         # Cap on the held-while-dictating buffer (separate from the live
         # queue's _queue_max). Larger, because this is a catch-up of a
@@ -427,6 +618,12 @@ class Daemon:
         # daemon restart clears mutes (acceptable — a session is bounded).
         self._muted_sessions: set[str] = set()
         self._codex_app_observer: codex_app.CodexAppObserver | None = None
+        # Handles for the two start-once daemon threads below. Kept so their
+        # starters can be idempotent — a serve() restart reuses this same
+        # Daemon instance, and a doubled digest timer or release poller would
+        # speak every summary twice and double the update checks.
+        self._digest_thread: threading.Thread | None = None
+        self._update_thread: threading.Thread | None = None
         self._start_hotkey()
         self._start_audio_monitor()
         # Layer 3 — Working Memory compressor thread. Idle-loops on
@@ -765,7 +962,12 @@ class Daemon:
         """Spawn the GitHub-Releases poller. Notification + menu-bar
         affordance live entirely in this daemon process — the poller
         itself is logic-only and re-evaluates the config toggle on
-        every tick so users can disable mid-session."""
+        every tick so users can disable mid-session.
+
+        Idempotent, and the handle is kept: two pollers would double every
+        release check (and double the update notification)."""
+        if self._update_thread is not None and self._update_thread.is_alive():
+            return
 
         def _on_update(info: updater.UpdateInfo) -> None:
             self.pending_update = info
@@ -776,7 +978,7 @@ class Daemon:
                 kind="update_available",
             )
 
-        updater.start_periodic_check(
+        self._update_thread = updater.start_periodic_check(
             current_version=updater.resolved_current_version(),
             on_update=_on_update,
             enabled=lambda: bool(self.cfg.get("update_check_enabled", True)),
@@ -832,7 +1034,10 @@ class Daemon:
         boundary) or its total pending count hits
         ``CHANNEL_MAX_PENDING`` (backpressure cap on a busy agent).
         Largest pile first; coexists=True so several flushes in the
-        same tick don't cancel each other."""
+        same tick don't cancel each other. Idempotent: a second timer
+        would drain the same piles twice and speak every digest twice."""
+        if self._digest_thread is not None and self._digest_thread.is_alive():
+            return
 
         def _tick() -> None:
             while True:
@@ -909,7 +1114,8 @@ class Daemon:
                         coexists=True,
                     )
 
-        threading.Thread(target=_tick, daemon=True).start()
+        self._digest_thread = threading.Thread(target=_tick, daemon=True)
+        self._digest_thread.start()
 
     def _kokoro_voice(
         self, cfg: dict | None = None, persona: persona_mod.Persona | None = None
@@ -951,6 +1157,12 @@ class Daemon:
         model menu, this returns False and the caller surfaces the
         original backend error. We don't want a "voice unreachable"
         moment to silently turn into a 30-second 350 MB download.
+
+        ``speed`` is clamped into ``KokoroTTS.SPEED_RANGE`` first:
+        kokoro-onnx raises outside that window, and the swallow-all
+        below would turn a fast-but-playable request into silence.
+        Callers that need the remainder of a clamped speed-up get it
+        from ``_kokoro_render_speed`` at playback time.
         """
         try:
             from heard.tts.kokoro import KokoroTTS
@@ -960,6 +1172,7 @@ class Daemon:
             kokoro = KokoroTTS(config.MODELS_DIR)
             if not kokoro.is_downloaded():
                 return False
+            speed = KokoroTTS.clamp_speed(speed)
             # Kokoro outputs WAV; rename so afplay's downstream
             # subprocess sees the right extension. The path was minted
             # with the primary backend's AUDIO_EXT.
@@ -978,6 +1191,19 @@ class Daemon:
         except Exception as e:
             _log("kokoro_fallback_failed", err=str(e))
             return False
+
+    @staticmethod
+    def _kokoro_render_speed(speed: float) -> float:
+        """The speed a successful Kokoro fallback renders at for ``speed``.
+
+        Asked of ``KokoroTTS`` rather than read off ``self.tts``: after a
+        fallback the actual audio came from the local model, not from
+        whatever backend ``self.tts.MAX_NATIVE_SPEED`` describes, and
+        Kokoro renders inside its own (narrower) window. Playback only
+        has to make up the part Kokoro couldn't bake in."""
+        from heard.tts.kokoro import KokoroTTS  # noqa: PLC0415 — lazy, as elsewhere
+
+        return KokoroTTS.clamp_speed(speed)
 
     def _record_error(self, kind: str, message: str) -> None:
         """Capture the latest failure so the menu bar can show it.
@@ -1833,9 +2059,26 @@ class Daemon:
         # — used by per-agent voice mappings so e.g. agent api speaks
         # in Rachel even when the persona is jarvis.
         voice = voice or self._voice(cfg, persona)
+        # Backstop for Kokoro: an override can still carry another provider's
+        # ID — a hand-written `agent_voices` entry, or a pool voice picked
+        # before a backend switch. Kokoro raises on those and the sentence
+        # is lost, so speak in the configured Kokoro voice instead
+        # (heardlabs/heard#22).
+        if type(self.tts).__name__ == "KokoroTTS":
+            from heard.tts.kokoro import is_kokoro_voice  # noqa: PLC0415
+
+            if not is_kokoro_voice(voice):
+                _log("kokoro_voice_replaced", requested=voice)
+                voice = self._kokoro_voice(cfg, persona)
         speed = float(cfg["speed"])
         lang = cfg["lang"]
         for chunk in _split(text):
+            # Speed the local model baked in, when a Kokoro fallback — not
+            # ``self.tts`` — produces this chunk's audio. Reset at the top
+            # of every chunk so one fallback can't leak its (wider) cap
+            # onto the next chunk or the next utterance; see the
+            # play_speed calc below.
+            kokoro_render_speed: float | None = None
             if cancel.is_set():
                 return
             # Mid-utterance switch to NullTTS (e.g. a 429 in an earlier
@@ -1953,6 +2196,7 @@ class Daemon:
                     chunk, speed, lang, path, cfg=cfg, persona=persona
                 )
                 if fell_back:
+                    kokoro_render_speed = self._kokoro_render_speed(speed)
                     notify.notify(
                         "Heard — using local voice",
                         "Cloud voice is unreachable. Falling back to the "
@@ -2191,6 +2435,7 @@ class Daemon:
                 if not is_auth and not is_rate and not is_bad_voice and self._kokoro_fallback_to(
                     chunk, speed, lang, path, cfg=cfg, persona=persona
                 ):
+                    kokoro_render_speed = self._kokoro_render_speed(speed)
                     notify.notify(
                         "Heard — using local voice",
                         f"{provider} is unreachable. Falling back to the local model for now.",
@@ -2325,7 +2570,16 @@ class Daemon:
                 # via the narration-out spool above; keep the speaker silent.
                 path.unlink(missing_ok=True)
                 continue
-            max_native = float(getattr(self.tts, "MAX_NATIVE_SPEED", 1.2))
+            # A Kokoro fallback synthesised this chunk itself, at its own
+            # (clamped) speed — so its render speed, not the primary
+            # backend's cap, is the baseline the residue is measured
+            # against. Miss this and a 1.5x request came out ~1.87x
+            # (Kokoro at 1.5, then playback's 1.5/1.2 on top).
+            max_native = (
+                kokoro_render_speed
+                if kokoro_render_speed is not None
+                else float(getattr(self.tts, "MAX_NATIVE_SPEED", 1.2))
+            )
             # The backend has already synthesised at ``speed`` (clamped to
             # its own MAX_NATIVE_SPEED), so playback runs at 1.0 unless
             # there's residual speed-up left over the cap. Passing
@@ -2577,8 +2831,13 @@ class Daemon:
 
         The queue is bounded; if events accumulate faster than we can
         speak (long monologue + a burst of tool calls), the oldest
-        entry is dropped — better to drop one stale announcement than
-        keep the user listening for thirty seconds of catch-up.
+        ROUTINE entry is dropped — better to drop one stale announcement
+        than keep the user listening for thirty seconds of catch-up.
+        Priority lines (a final, a failure, a tool question, a focus
+        alert) are the last thing Heard may drop: a routine line never
+        evicts one, and neither does the cross-session clear below. The
+        flag rides on the entry itself (``priority`` in its history
+        meta), so it survives reordering.
 
         Multi-session priority: when a new event arrives from a
         different session_id than what's queued, the queued items
@@ -2587,7 +2846,8 @@ class Daemon:
         through Heard's single audio output; the freshest-session-wins
         rule means whichever terminal you're actively driving is the
         one Heard tracks. Items still play to completion (we don't
-        cancel the in-flight one), but the queue clears.
+        cancel the in-flight one), but the queue clears. Priority lines
+        from the other session stay queued — they're owed, not stale.
         """
         text = (text or "").strip()
         if not text:
@@ -2629,16 +2889,24 @@ class Daemon:
         # it and replay on mic-release (_flush_deferred_while_mic). We
         # keep BOTH progress and results so the listener gets a fuller
         # catch-up of what happened while they talked — the only bound is
-        # the buffer cap (most recent _DEFERRED_MIC_MAX), so a very long
-        # dictation still can't dump an unbounded backlog.
+        # the buffer cap (_DEFERRED_MIC_MAX, evicting the oldest routine
+        # line first), so a very long dictation still can't dump an
+        # unbounded backlog.
+        # Mark the priority flag ON the entry (its history meta) rather
+        # than leaving callers to infer it from queue position: every
+        # eviction site below reads the flag off the entry.
+        hmeta = dict(history_meta or {})
+        if priority:
+            hmeta["priority"] = True
+        item = (text, cfg, persona, session_id, voice_override, hmeta)
         if self._mic_active:
-            item = (text, cfg, persona, session_id, voice_override, history_meta or {})
             with self._queue_cv:
                 self._deferred_while_mic.append((item, priority))
-                if len(self._deferred_while_mic) > self._DEFERRED_MIC_MAX:
-                    self._deferred_while_mic = (
-                        self._deferred_while_mic[-self._DEFERRED_MIC_MAX:]
-                    )
+                self._deferred_while_mic, _dropped_priority = _evict_over_cap(
+                    self._deferred_while_mic,
+                    self._DEFERRED_MIC_MAX,
+                    _pair_is_priority,
+                )
                 held = len(self._deferred_while_mic)
             _log("speech_deferred_mic", session=session_id, held=held)
             return
@@ -2651,11 +2919,24 @@ class Daemon:
             # an agent still clears them, since by then they're stale.
             if session_id and self._queue and not coexists:
                 before = len(self._queue)
-                self._queue = [e for e in self._queue if e[3] == session_id]
+                # Another session's queued ROUTINE lines are stale — but a
+                # priority line from it is a result/failure the listener is
+                # still owed, so it crosses the session switch with us.
+                self._queue = [
+                    e for e in self._queue
+                    if e[3] == session_id or _item_is_priority(e)
+                ]
                 dropped = before - len(self._queue)
                 if dropped:
-                    _log("queue_drop_other_session", dropped=dropped, session=session_id)
-            item = (text, cfg, persona, session_id, voice_override, history_meta or {})
+                    _log(
+                        "queue_drop_other_session",
+                        dropped=dropped,
+                        session=session_id,
+                        priority_kept=sum(
+                            1 for e in self._queue
+                            if e[3] != session_id and _item_is_priority(e)
+                        ),
+                    )
             if priority:
                 # Results / decisions / errors — the thing the listener is
                 # actually waiting on. The moment one lands, any queued
@@ -2663,7 +2944,7 @@ class Daemon:
                 # wants the result NOW, not behind "still structuring the
                 # network." So drop pending routine progress, then jump the
                 # result to the FRONT so it plays next (after whatever's
-                # mid-sentence). Trim drops the oldest tail if still over cap.
+                # mid-sentence).
                 before = len(self._queue)
                 self._queue = [
                     e for e in self._queue
@@ -2673,17 +2954,30 @@ class Daemon:
                 if dropped_stale:
                     _log("queue_drop_stale", dropped=dropped_stale)
                 self._queue.insert(0, item)
-                if len(self._queue) > self._queue_max:
-                    dropped = len(self._queue) - self._queue_max
-                    self._queue = self._queue[:self._queue_max]
-                    _log("queue_drop", dropped=dropped)
             else:
                 self._queue.append(item)
-                if len(self._queue) > self._queue_max:
-                    dropped = len(self._queue) - self._queue_max
-                    self._queue = self._queue[-self._queue_max:]
-                    _log("queue_drop", dropped=dropped)
-            self._ensure_speech_worker()
+            # Overflow: the oldest routine line goes, never a priority one.
+            # The queue is trimmed in one place so both lanes share the
+            # policy — and because the priority lane inserts at the front,
+            # the oldest entry of an all-priority queue is at the back.
+            if len(self._queue) > self._queue_max:
+                before = len(self._queue)
+                self._queue, dropped_priority = _evict_over_cap(
+                    self._queue,
+                    self._queue_max,
+                    _item_is_priority,
+                    oldest_priority_at="back",
+                )
+                _log(
+                    "queue_drop",
+                    dropped=before - len(self._queue),
+                    priority_dropped=dropped_priority,
+                )
+            if self._speech_worker is None or not self._speech_worker.is_alive():
+                self._speech_worker = threading.Thread(
+                    target=self._drain_queue, daemon=True
+                )
+                self._speech_worker.start()
             self._queue_cv.notify()
 
     def _project_label(self, hmeta: dict | None) -> str:
@@ -4405,7 +4699,13 @@ class Daemon:
         """Kick off a 5-minute /v1/me refresh thread. First fetch fires
         ~3 seconds after the daemon comes up so the menu bar has data
         on the first user interaction. Daemonised so a daemon shutdown
-        doesn't wait for the sleep."""
+        doesn't wait for the sleep.
+
+        Idempotent: serve() runs this on entry, and a restarted serve()
+        must not add a second poller on top of a live one."""
+        if self._usage_poll_thread is not None and self._usage_poll_thread.is_alive():
+            return
+
         def _loop() -> None:
             self._usage_poll_wake.wait(3.0)
             while True:
@@ -4424,7 +4724,8 @@ class Daemon:
                 )
                 self._usage_poll_wake.wait(interval)
 
-        threading.Thread(target=_loop, daemon=True).start()
+        self._usage_poll_thread = threading.Thread(target=_loop, daemon=True)
+        self._usage_poll_thread.start()
 
     def _request_account_refresh(self, accelerate_s: float = 600.0) -> None:
         """Poll /v1/me now and keep polling fast for ``accelerate_s``
@@ -4435,15 +4736,25 @@ class Daemon:
         self._usage_poll_accelerate_until = time.monotonic() + accelerate_s
         self._usage_poll_wake.set()
 
-    def serve(self) -> None:
+    def serve(self) -> str:
+        """Accept connections until told to stop.
+
+        Returns why it stopped: ``"stopped"`` when the listener was closed
+        (the shutdown path) and ``"not_owner"`` when another daemon already
+        owns the IPC channel. Anything else — an exception out of the loop
+        — is a crash, which is what the in-process supervisor in
+        packaging/app_entry.py watches for: a daemon thread that dies
+        without a reason is narration that is silently gone, because
+        client.ensure_daemon() never respawns.
+        """
         sock_path = str(config.SOCKET_PATH)
         if not _prepare_runtime_for_bind(sock_path, config.PID_PATH):
-            return
+            return "not_owner"
         try:
             srv = _sockets.create_server(sock_path)
         except _sockets.DaemonBusyError:
             _log("daemon_bind_skip", reason="race_already_running")
-            return
+            return "not_owner"
         config.PID_PATH.write_text(str(os.getpid()))
         print(f"heard daemon ready at {sock_path}", flush=True)
         self._start_account_usage_poll()
@@ -4473,25 +4784,107 @@ class Daemon:
             signal.signal(signal.SIGTERM, shutdown)
             signal.signal(signal.SIGINT, shutdown)
 
-        while True:
-            conn, _ = srv.accept()
-            threading.Thread(target=self._serve_one, args=(conn,), daemon=True).start()
+        # Accept loop. Failures here are transient (EMFILE: fd table full;
+        # ECONNABORTED: client gave up mid-handshake; RuntimeError from
+        # Thread.start(): thread table full) or they are the shutdown path
+        # (the socket was closed under us). Exiting on the former takes
+        # narration down for the rest of the session, so: log, drop the
+        # half-open connection, back off, carry on. Closing `srv` is how
+        # the shutdown handler stops us, and that is the one case we return.
+        #
+        # The try/finally is the other exit: an exception out of the loop
+        # (anything that isn't transient — a bug, or a failure from the
+        # handler spawn) propagates to the supervisor, and it must not leave
+        # the listener bound. On Windows that is fatal rather than untidy:
+        # the endpoint is held by a file lock, so a daemon that died holding
+        # it can never rebind, and every restart would come back "not_owner"
+        # with nothing serving.
+        try:
+            backoff = 0.0
+            while True:
+                conn = None
+                try:
+                    conn, _ = srv.accept()
+                    self._spawn_handler(conn)
+                    conn = None  # the handler thread owns it now
+                    backoff = 0.0
+                except OSError as e:
+                    # accept() failed (no connection to drop), or the spawn
+                    # raised something other than RuntimeError — close
+                    # whatever we hold before deciding whether to carry on.
+                    _close_conn(conn)
+                    if _server_is_closed(srv):
+                        _log("serve_stopped", reason="server_closed")
+                        return "stopped"
+                    backoff = _next_backoff(backoff)
+                    _log(
+                        "accept_error",
+                        err=type(e).__name__,
+                        errno=e.errno,
+                        backoff_s=backoff,
+                    )
+                    time.sleep(backoff)
+                except RuntimeError as e:
+                    # Thread.start() refused the handler: drop this
+                    # connection rather than take the whole loop down.
+                    _close_conn(conn)
+                    backoff = _next_backoff(backoff)
+                    _log("accept_error", err=type(e).__name__, backoff_s=backoff)
+                    time.sleep(backoff)
+        finally:
+            _release_listener(srv, sock_path)
+
+    def _spawn_handler(self, conn) -> None:
+        """Hand one connection to a worker thread.
+
+        Concurrency is capped: past ``_MAX_CONCURRENT_CONNS`` in-flight
+        handlers the connection is shed — closed immediately — instead of
+        queued, so a client stuck behind a pile of stalled peers fails
+        fast and the accept loop never blocks on it. Raises RuntimeError
+        (from Thread.start) so the caller can drop the connection.
+        """
+        if not self._conn_slots.acquire(blocking=False):
+            _log("conn_shed", max=_MAX_CONCURRENT_CONNS)
+            _close_conn(conn)
+            return
+        try:
+            threading.Thread(
+                target=self._run_handler, args=(conn,), daemon=True
+            ).start()
+        except RuntimeError:
+            self._conn_slots.release()
+            raise
+
+    def _run_handler(self, conn) -> None:
+        """Thread body for one connection: serve it, then give the slot
+        back. The slot is released here (not in _serve_one) so that the
+        acquire in _spawn_handler and the release stay paired."""
+        try:
+            self._serve_one(conn)
+        finally:
+            self._conn_slots.release()
 
     def _serve_one(self, conn: socket.socket) -> None:
+        """Read one request and answer it, on a bounded budget.
+
+        The protocol is read-to-EOF, which is fine for a live hook but
+        unbounded means a client that connects and then says nothing
+        holds a thread — and one of the ``_MAX_CONCURRENT_CONNS`` slots —
+        until the process dies. The socket timeout and the size cap are
+        what turn that into one slot held for ``_CONN_TIMEOUT_S``.
+        """
         try:
             with conn:
-                buf = b""
-                while True:
-                    chunk = conn.recv(8192)
-                    if not chunk:
-                        break
-                    buf += chunk
+                conn.settimeout(_CONN_TIMEOUT_S)
+                buf = _read_request(conn)
+                if buf is None:
+                    return
                 resp = self._handle(buf.decode("utf-8", errors="ignore"))
                 if resp is not None:
                     try:
                         conn.sendall(resp)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _log("conn_send_failed", err=type(e).__name__)
         except Exception as e:
             print(f"request error: {e}", file=sys.stderr, flush=True)
 
