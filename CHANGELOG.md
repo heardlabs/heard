@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- One bad utterance can no longer silence everything after it. The speech
+  worker now contains a failure to the item that caused it: it logs
+  `speech_worker_error`, sets the menu-bar error badge, notifies once, and
+  moves on to the rest of the queue instead of letting the thread die with
+  the remaining utterances stranded. The in-flight state is always cleared,
+  so `/status` stops reporting `speaking` permanently, and a failure while
+  playing hands the mic back to the hands-free loop instead of leaving it
+  paused.
+
+- Enqueuing at the exact moment the speech worker finishes no longer strands
+  the new line. The worker releases its handle under the queue lock before
+  exiting, so the next producer reliably starts a fresh worker.
+
 - Cloud voices no longer drop a sentence when the Heard proxy is briefly
   unreachable. A network blip, a proxy or upstream 5xx, or a Cloudflare edge
   rate-limit (429 with no cap reason) now renders the utterance with the local
