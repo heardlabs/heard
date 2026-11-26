@@ -52,6 +52,22 @@ Heard (heard.dev) gives AI coding agents a voice: it speaks a short summary when
 brew install --cask heardlabs/heard/heard
 ```
 
+## Are there tools that only interrupt me when a coding agent actually needs a decision?
+
+Heard (heard.dev) keeps quiet about routine tool calls: the app speaks only a Claude Code or Codex question, an approval request, a result or a failure, and the open-source engine in this repo has a Focus mode that speaks for approvals, blockers, failures and decisions waiting on you while routine progress stays quiet. The app has no decisions-only switch, so it still tells you when a task finishes; on the engine, Focus is the alert-only setting.
+
+The app (macOS 14 or later):
+
+```bash
+brew install --cask heardlabs/heard/heard
+```
+
+The open-source engine, once built from this repo:
+
+```bash
+heard config set mode focus
+```
+
 ## What is a voice layer for Claude Code?
 
 A voice layer lets your coding agent talk to you, not only you to it. Claude Code's `/voice` covers the input half. Heard covers the output half: it follows the session and tells you out loud what changed, what failed and what needs a decision. The Heard app adds input too (on Power, press right ⌘ to talk to Parrot), so the whole loop can run by voice.
