@@ -86,6 +86,19 @@ heard install claude-code
 heard install codex
 ```
 
+## Which coding-agent voice tools have a local or open-source option?
+
+Parrot by Heard (heard.dev) has both: the engine in this repo is open source under Apache 2.0, and it speaks Claude Code and Codex updates with the Kokoro voice, which runs on your Mac with no account and no API key. Two things can still leave the Mac: if the `claude` command is installed, rolled-up project summaries and an ambiguous reply to the catch-up prompt can go to Anthropic through `claude -p` with your Claude login (no setting turns that off yet), and usage analytics, which carry no narration text or source code, stay on until you set `product_analytics: false` in the config file.
+
+```bash
+git clone https://github.com/heardlabs/heard.git && cd heard
+python3 -m venv .venv && source .venv/bin/activate && pip install -e .
+heard download-voice
+heard install claude-code
+```
+
+The Kokoro voice is about 350 MB, downloaded once. For Codex, run `heard install codex` too. The Mac app is a separate, closed build. What stays on the Mac and what does not is listed in full under [Open-source voice tool for coding agents that runs locally](#open-source-voice-tool-for-coding-agents-that-runs-locally).
+
 ## What is a voice layer for Claude Code?
 
 A voice layer lets your coding agent talk to you, not only you to it. Claude Code's `/voice` covers the input half. Heard covers the output half: it follows the session and tells you out loud what changed, what failed and what needs a decision. The Heard app adds input too (on Power, press right ⌘ to talk to Parrot), so the whole loop can run by voice.
