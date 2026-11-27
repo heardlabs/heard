@@ -2594,32 +2594,95 @@ class Daemon:
             # Half-duplex: tell the Power voice service to stop listening while
             # we speak, so ambient input doesn't transcribe Heard's own voice
             # (echo). Best-effort; no-op unless in ambient mode.
+            #
+            # pause → spawn → wait → resume is bracketed in a try/finally: a
+            # spawn that raises (player missing, output device gone) used to
+            # unwind straight past the resume and the temp-file clean-up,
+            # leaving the ambient mic service paused for the rest of the
+            # session and a heard-*.mp3 on disk.
             self._voice_suppress("pause")
-            with self._lock:
-                if cancel.is_set():
-                    path.unlink(missing_ok=True)
-                    self._voice_suppress("resume")
-                    return
-                self._current_proc = _playback.spawn(path, play_speed)
-                proc = self._current_proc
-            proc.wait()
-            self._voice_suppress("resume")
-            killed_by_us = cancel.is_set()
-            return_code = proc.returncode
-            with self._lock:
-                if self._current_proc is proc:
-                    self._current_proc = None
-                # Stamp the finish so a subsequent pause/mic event
-                # knows whether to attribute itself to this utterance.
-                self._last_utterance_finished_at = time.monotonic()
-            path.unlink(missing_ok=True)
-            # Abnormal exit: the player exited non-zero AND we didn't kill
-            # it. That's an audio-pipeline failure on its own — fire
-            # an implicit cutoff defect so the sidecar sees it.
-            if return_code != 0 and not killed_by_us:
+            proc: _playback.PlaybackHandle | None = None
+            try:
+                with self._lock:
+                    if cancel.is_set():
+                        return
+                    self._current_proc = _playback.spawn(path, play_speed)
+                    proc = self._current_proc
+                killed_by_us = self._wait_playback(proc, cancel, len(chunk))
+                return_code = proc.returncode
+            except Exception as exc:
+                # The player never started, so there is nothing to reap —
+                # record the same cutoff a non-zero exit would have, then
+                # fall through to the finally rather than unwinding.
+                _log("playback_failed", err=repr(exc)[:120])
                 self._record_implicit_feedback(
-                    "playback_nonzero", kind="defect", defect_category="cut_off",
+                    "playback_failed", kind="defect", defect_category="cut_off",
                 )
+            else:
+                with self._lock:
+                    # Stamp the finish so a subsequent pause/mic event
+                    # knows whether to attribute itself to this utterance.
+                    self._last_utterance_finished_at = time.monotonic()
+                # Abnormal exit: the player exited non-zero AND we didn't kill
+                # it. That's an audio-pipeline failure on its own — fire
+                # an implicit cutoff defect so the sidecar sees it.
+                if return_code != 0 and not killed_by_us:
+                    self._record_implicit_feedback(
+                        "playback_nonzero", kind="defect", defect_category="cut_off",
+                    )
+            finally:
+                self._voice_suppress("resume")
+                with self._lock:
+                    if proc is not None and self._current_proc is proc:
+                        self._current_proc = None
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as exc:
+                    # Windows keeps the file open until ffplay fully exits;
+                    # a failed unlink costs a temp file, so log it rather
+                    # than losing the rest of the utterance's bookkeeping.
+                    _log("playback_temp_unlink_failed", err=repr(exc)[:120])
+
+    # Playback watchdog. ``proc.wait()`` with no bound parks the
+    # single-consumer speech queue forever behind a wedged player (stalled
+    # output device, ffplay blocked on a dead pipe). The ceiling scales
+    # with the chunk's length — a long paragraph legitimately plays for
+    # tens of seconds — and is clamped by a floor and a ceiling so a stuck
+    # process is always reaped.
+    PLAYBACK_POLL_S: float = 0.25
+    PLAYBACK_TIMEOUT_PER_CHAR_S: float = 1.0
+    PLAYBACK_MIN_TIMEOUT_S: float = 15.0
+    PLAYBACK_MAX_TIMEOUT_S: float = 180.0
+
+    def _wait_playback(
+        self,
+        proc: _playback.PlaybackHandle,
+        cancel: threading.Event,
+        chars: int,
+    ) -> bool:
+        """Wait for *proc* to finish, polling so a cancel lands promptly.
+
+        Returns True when WE stopped it (silence hotkey or the watchdog),
+        False when the player exited on its own — the caller uses that to
+        skip the abnormal-exit defect for a kill it caused itself."""
+        budget = min(
+            max(chars * self.PLAYBACK_TIMEOUT_PER_CHAR_S, self.PLAYBACK_MIN_TIMEOUT_S),
+            self.PLAYBACK_MAX_TIMEOUT_S,
+        )
+        deadline = time.monotonic() + budget
+        while True:
+            # Every handle type returns None on timeout and the real
+            # returncode (0 included) once done — see
+            # platform/playback._SubprocessHandle.wait.
+            if proc.wait(timeout=self.PLAYBACK_POLL_S) is not None:
+                return cancel.is_set()
+            if cancel.is_set():
+                proc.kill()
+                return True
+            if time.monotonic() >= deadline:
+                proc.kill()
+                _log("playback_timeout", chars=chars, budget_s=int(budget))
+                return True
 
     def _voice_suppress(self, action: str) -> None:
         """Pause/resume the Power voice service around narration so ambient
@@ -3038,34 +3101,55 @@ class Daemon:
             # Prepend a brief project tag on a project switch (computed here,
             # at actual play order, not at enqueue — the queue reorders).
             text = self._with_project_tag(text, hmeta)
-            self._speak(text, cancel, cfg=cfg, persona=persona, voice=voice_override)
-            with self._queue_cv:
-                if self._current_cancel is cancel:
-                    self._current_cancel = None
-                if not cancel.is_set():
-                    # Log to spoken history. Synth ms is captured in
-                    # _speak's _log line; we don't repeat it here —
-                    # this record captures the user-facing fact that
-                    # the utterance played to completion. Wraps the
-                    # meta dict the caller passed and adds run-time
-                    # values (the actual voice used, the spoken text).
-                    if hmeta:
-                        utterance_id = history.new_utterance_id()
-                        self._last_utterance_id = utterance_id
-                        # Fresh dedup slate for implicit signals — a
-                        # mic-collide on utterance A doesn't suppress
-                        # the same signal on utterance B.
-                        self._implicit_signals_recorded.clear()
-                        history.append(
-                            {
-                                **hmeta,
-                                "id": utterance_id,
-                                "session_id": session_id or hmeta.get("session_id") or "",
-                                "spoken": text,
-                                "voice": voice_override or self._voice(cfg, persona),
-                                "persona": persona.name if persona else hmeta.get("persona", ""),
-                            }
-                        )
+            # One bad utterance must not take this single-consumer worker —
+            # and everything queued behind it — down with it. _speak can
+            # raise from mkstemp, a malformed cfg["speed"], or a player that
+            # won't spawn; unwind past it and keep draining.
+            speak_failed = False
+            try:
+                self._speak(text, cancel, cfg=cfg, persona=persona, voice=voice_override)
+            except Exception as exc:
+                speak_failed = True
+                _log("speak_crashed", err=repr(exc)[:120])
+                self._record_error("speak_crash", repr(exc)[:200])
+                # Stable kind so a run of failures nudges once, not per line.
+                notify.notify(
+                    "Heard — couldn't speak that line",
+                    f"{type(exc).__name__}: {str(exc)[:140]}",
+                    kind="speak_crash",
+                )
+            finally:
+                with self._queue_cv:
+                    if self._current_cancel is cancel:
+                        self._current_cancel = None
+                    # Still clear it on failure: a stale _current_cancel makes
+                    # status report speaking=True and ambient logic believe
+                    # audio is playing. A failed utterance has no history
+                    # record — it never reached the listener.
+                    if not speak_failed and not cancel.is_set():
+                        # Log to spoken history. Synth ms is captured in
+                        # _speak's _log line; we don't repeat it here —
+                        # this record captures the user-facing fact that
+                        # the utterance played to completion. Wraps the
+                        # meta dict the caller passed and adds run-time
+                        # values (the actual voice used, the spoken text).
+                        if hmeta:
+                            utterance_id = history.new_utterance_id()
+                            self._last_utterance_id = utterance_id
+                            # Fresh dedup slate for implicit signals — a
+                            # mic-collide on utterance A doesn't suppress
+                            # the same signal on utterance B.
+                            self._implicit_signals_recorded.clear()
+                            history.append(
+                                {
+                                    **hmeta,
+                                    "id": utterance_id,
+                                    "session_id": session_id or hmeta.get("session_id") or "",
+                                    "spoken": text,
+                                    "voice": voice_override or self._voice(cfg, persona),
+                                    "persona": persona.name if persona else hmeta.get("persona", ""),
+                                }
+                            )
 
     def _cancel_only(self) -> None:
         """Silence: kill the current utterance AND drop everything
