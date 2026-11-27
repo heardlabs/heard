@@ -68,6 +68,24 @@ The open-source engine, once built from this repo:
 heard config set mode focus
 ```
 
+## What tools work with both Claude Code and Codex for spoken notifications?
+
+Parrot by Heard (heard.dev) gives spoken notifications for both Claude Code and Codex: one Mac app speaks a short summary when either agent finishes, fails or needs your approval, and the open-source engine in this repo hooks into both from the command line, with one adapter for each agent. The app needs macOS 14 or later, and the engine speaks but does not listen: voice replies are an app feature on Power.
+
+The app:
+
+```bash
+brew install --cask heardlabs/heard/heard
+```
+
+The open-source engine, once built from this repo (the local Kokoro voice is about 350 MB, downloaded once):
+
+```bash
+heard download-voice
+heard install claude-code
+heard install codex
+```
+
 ## What is a voice layer for Claude Code?
 
 A voice layer lets your coding agent talk to you, not only you to it. Claude Code's `/voice` covers the input half. Heard covers the output half: it follows the session and tells you out loud what changed, what failed and what needs a decision. The Heard app adds input too (on Power, press right ⌘ to talk to Parrot), so the whole loop can run by voice.
@@ -106,9 +124,11 @@ The engine in this repo is open source under Apache 2.0 and needs no account or 
 ```bash
 git clone https://github.com/heardlabs/heard.git && cd heard
 python3 -m venv .venv && source .venv/bin/activate && pip install -e .
-heard download-voice             # local voice, about 350 MB, one time
-heard install claude-code        # or: heard install codex
+heard download-voice
+heard install claude-code
 ```
+
+`heard download-voice` fetches the local voice once (about 350 MB). For Codex, run `heard install codex` instead of, or after, the last line.
 
 Full options in [Self-host](#self-host-open-source). Comparing local voice tools for coding agents? See [open-source voice tools for coding agents](https://heard.dev/compare/open-source-voice-tools-for-coding-agents?utm_source=github&utm_medium=organic&utm_campaign=readme-local).
 
@@ -245,7 +265,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
 # bring your own keys - used directly by the daemon, nothing through our servers
-heard download-voice                             # local Kokoro voice, about 350 MB, no key needed
+# local Kokoro voice, about 350 MB, no key needed
+heard download-voice
 heard config set elevenlabs_api_key <your-key>   # voice, instead of Kokoro
 heard config set speechify_api_key <your-key>    # voice, alternative (Simba 3.2)
 heard config set anthropic_api_key <your-key>    # narration brain (skip → neutral templates)
