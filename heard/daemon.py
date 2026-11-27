@@ -1511,11 +1511,7 @@ class Daemon:
                 return
             for item, _priority in deferred:
                 self._queue.append(item)
-            if self._speech_worker is None or not self._speech_worker.is_alive():
-                self._speech_worker = threading.Thread(
-                    target=self._drain_queue, daemon=True
-                )
-                self._speech_worker.start()
+            self._ensure_speech_worker()
             self._queue_cv.notify()
         _log("mic_deferred_flush", count=len(deferred))
 
@@ -2595,15 +2591,23 @@ class Daemon:
             # we speak, so ambient input doesn't transcribe Heard's own voice
             # (echo). Best-effort; no-op unless in ambient mode.
             self._voice_suppress("pause")
-            with self._lock:
-                if cancel.is_set():
-                    path.unlink(missing_ok=True)
-                    self._voice_suppress("resume")
-                    return
-                self._current_proc = _playback.spawn(path, play_speed)
-                proc = self._current_proc
-            proc.wait()
-            self._voice_suppress("resume")
+            try:
+                with self._lock:
+                    if cancel.is_set():
+                        path.unlink(missing_ok=True)
+                        return
+                    self._current_proc = _playback.spawn(path, play_speed)
+                    proc = self._current_proc
+                proc.wait()
+            except BaseException:
+                # A raised playback failure must not leave the half-duplex
+                # pause latched (the hands-free loop would stay deaf) or the
+                # temp audio behind. Containment lives in _drain_queue.
+                path.unlink(missing_ok=True)
+                raise
+            finally:
+                # Always hand the mic back, on every exit including cancel.
+                self._voice_suppress("resume")
             killed_by_us = cancel.is_set()
             return_code = proc.returncode
             with self._lock:
@@ -3024,24 +3028,49 @@ class Daemon:
         self._last_spoken_project = proj
         return text
 
+    def _ensure_speech_worker(self) -> None:
+        """Start the drain worker when there isn't one. Caller must hold
+        ``self._queue_cv``.
+
+        Producers key off the HANDLE, not ``is_alive()`` alone: the worker
+        clears ``self._speech_worker`` under the same lock just before it
+        returns, so an enqueue that lands in the window where the thread has
+        left the drain loop but isn't reaped yet still sees None and respawns
+        instead of stranding its item behind a dying worker."""
+        if self._speech_worker is None or not self._speech_worker.is_alive():
+            self._speech_worker = threading.Thread(
+                target=self._drain_queue, daemon=True
+            )
+            self._speech_worker.start()
+
     def _drain_queue(self) -> None:
         """Single-consumer worker. Pops one utterance at a time and
         speaks it through completion, so the next event in the queue
-        only starts after the current chunk's afplay returns."""
+        only starts after the current chunk's afplay returns.
+
+        Containment: a failure in one utterance is logged, surfaced and
+        skipped — it must never kill the thread (which would strand the
+        rest of the queue) or leave ``_current_cancel`` set (which would
+        report ``speaking=True`` forever and make every later mute look
+        like an in-window cutoff)."""
         while True:
             with self._queue_cv:
                 if not self._queue:
+                    # Hand back our own handle UNDER the lock before
+                    # returning, so a producer enqueueing right now sees
+                    # None and respawns (see _ensure_speech_worker). Only
+                    # clear our own — a newer worker may have replaced it.
+                    if self._speech_worker is threading.current_thread():
+                        self._speech_worker = None
                     return
                 text, cfg, persona, session_id, voice_override, hmeta = self._queue.pop(0)
                 cancel = threading.Event()
                 self._current_cancel = cancel
-            # Prepend a brief project tag on a project switch (computed here,
-            # at actual play order, not at enqueue — the queue reorders).
-            text = self._with_project_tag(text, hmeta)
-            self._speak(text, cancel, cfg=cfg, persona=persona, voice=voice_override)
-            with self._queue_cv:
-                if self._current_cancel is cancel:
-                    self._current_cancel = None
+            try:
+                # Prepend a brief project tag on a project switch (computed here,
+                # at actual play order, not at enqueue — the queue reorders).
+                text = self._with_project_tag(text, hmeta)
+                self._speak(text, cancel, cfg=cfg, persona=persona, voice=voice_override)
                 if not cancel.is_set():
                     # Log to spoken history. Synth ms is captured in
                     # _speak's _log line; we don't repeat it here —
@@ -3066,6 +3095,21 @@ class Daemon:
                                 "persona": persona.name if persona else hmeta.get("persona", ""),
                             }
                         )
+            except Exception as e:
+                # One bad utterance must not end narration: report it and
+                # move on to the next queued item. Never re-raise here.
+                _log("speech_worker_error", err=str(e), type=type(e).__name__)
+                self._record_error("speech_worker", str(e))
+                notify.notify(
+                    "Heard — narration hiccup",
+                    "One utterance failed to play. Narration continues.",
+                    kind="speech_worker_error",
+                )
+                continue
+            finally:
+                with self._queue_cv:
+                    if self._current_cancel is cancel:
+                        self._current_cancel = None
 
     def _cancel_only(self) -> None:
         """Silence: kill the current utterance AND drop everything
@@ -4648,11 +4692,7 @@ class Daemon:
         item = (text, self.cfg, self.persona, None, None, hmeta)
         with self._queue_cv:
             self._queue.append(item)
-            if self._speech_worker is None or not self._speech_worker.is_alive():
-                self._speech_worker = threading.Thread(
-                    target=self._drain_queue, daemon=True
-                )
-                self._speech_worker.start()
+            self._ensure_speech_worker()
             self._queue_cv.notify()
 
     def _start_account_usage_poll(self) -> None:
