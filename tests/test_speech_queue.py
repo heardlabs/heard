@@ -8,8 +8,10 @@ sequential.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -640,3 +642,223 @@ def test_silence_clears_queue(tmp_path, monkeypatch):
     # Silence must drop the queued items and (because cancel was set
     # mid-_speak) the in-flight one.
     assert spoken == []
+
+
+# --------------------------------------------------------------------------
+# Crash safety: one bad utterance must not kill the worker, wedge the queue,
+# leave the ambient mic service paused, or leak a heard-*.mp3.
+# --------------------------------------------------------------------------
+
+
+def _stub_tts(daemon, monkeypatch, audio: bytes = b"fake-audio") -> None:
+    """Stand-in backend: drop bytes at the temp path _speak handed us, so
+    playback.spawn receives a real file (and the daemon really unlinks it)."""
+    monkeypatch.setattr(
+        daemon.tts,
+        "synth_to_file",
+        lambda text, voice, speed, lang, path: Path(path).write_bytes(audio),
+    )
+
+
+def _wait_drained(daemon, timeout: float = 3.0) -> bool:
+    """True once the worker emptied the queue and exited."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with daemon._queue_cv:
+            if not daemon._queue and (
+                daemon._speech_worker is None or not daemon._speech_worker.is_alive()
+            ):
+                return True
+        time.sleep(0.01)
+    return False
+
+
+def _history_spoken(tmp_path) -> list[str]:
+    p = tmp_path / "history.jsonl"
+    if not p.exists():
+        return []
+    return [
+        json.loads(line)["spoken"]
+        for line in p.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+class _FakePlayer:
+    """``playback.spawn`` stand-in. ``hang=True`` simulates a wedged player
+    that only exits when killed."""
+
+    def __init__(self, path, speed: float = 1.0, *, hang: bool = False) -> None:
+        self.path = Path(path)
+        self.speed = speed
+        self.hang = hang
+        self.returncode: int | None = None
+        self.started = threading.Event()
+        self.stopped = threading.Event()
+        self.waits = 0
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        self.started.set()
+        self.waits += 1
+        if not self.hang:
+            self.returncode = 0
+            return 0
+        self.stopped.wait(timeout)
+        return self.returncode  # None while still wedged
+
+    def kill(self) -> None:
+        self.returncode = -9
+        self.stopped.set()
+
+
+def test_spawn_failure_keeps_worker_alive(tmp_path, monkeypatch):
+    """A player that won't start (missing binary, device gone) must not take
+    the speech worker — and everything queued behind it — down with it, and
+    must not leave the ambient mic service paused or a heard-*.mp3 on disk."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+    _stub_tts(daemon, monkeypatch)
+
+    players: list[_FakePlayer] = []
+
+    def _spawn(path, speed=1.0):
+        player = _FakePlayer(path, speed)
+        players.append(player)
+        if len(players) == 1:
+            raise OSError("no output device")
+        return player
+
+    monkeypatch.setattr("heard.platform.playback.spawn", _spawn)
+
+    suppress: list[str] = []
+    monkeypatch.setattr(daemon, "_voice_suppress", suppress.append)
+
+    implicit: list[tuple] = []
+    monkeypatch.setattr(
+        daemon,
+        "_record_implicit_feedback",
+        lambda source, **kw: implicit.append((source, kw)),
+    )
+
+    daemon._start_speech("first line")
+    daemon._start_speech("second line")
+    assert _wait_drained(daemon), "worker never drained the queue"
+
+    assert len(players) == 2, "worker died after spawn raised"
+    assert players[1].waits, "the queued utterance never reached playback"
+    assert daemon._current_cancel is None
+    assert daemon._current_proc is None
+    # pause → resume ran for BOTH utterances: the failed one must not leave
+    # the mic service paused for the rest of the session.
+    assert suppress == ["pause", "resume", "pause", "resume"]
+    assert not players[0].path.exists(), "temp file leaked on the failed spawn"
+    # Spawn failure reuses the existing cutoff-defect path.
+    assert implicit == [
+        ("playback_failed", {"kind": "defect", "defect_category": "cut_off"})
+    ]
+
+
+def test_speak_exception_does_not_kill_worker(tmp_path, monkeypatch):
+    """If _speak itself raises (mkstemp OSError, a malformed cfg["speed"]),
+    the worker logs it, drops only that utterance — no history record, no
+    stale cancel — and keeps draining."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+
+    notified: list[str] = []
+    monkeypatch.setattr(
+        "heard.notify.notify",
+        lambda title, body, **kw: notified.append(kw.get("kind", "")),
+    )
+
+    spoken: list[str] = []
+
+    def fake_speak(text, cancel, cfg=None, persona=None, voice=None):
+        if text == "boom":
+            raise ValueError("could not convert string to float: 'fast'")
+        spoken.append(text)
+
+    daemon._speak = fake_speak  # type: ignore[method-assign]
+
+    daemon._start_speech("boom", history_meta={"kind": "final"})
+    daemon._start_speech("after the crash", history_meta={"kind": "final"})
+    assert _wait_drained(daemon), "worker never drained the queue"
+
+    assert spoken == ["after the crash"], "the queue stopped after the crash"
+    assert daemon._current_cancel is None
+    assert notified == ["speak_crash"], "expected exactly one crash notification"
+    assert daemon._last_error is not None
+    assert daemon._last_error["kind"] == "speak_crash"
+    # The failed line never reached the listener, so it has no history record.
+    assert _history_spoken(tmp_path) == ["after the crash"]
+
+
+def test_hung_player_is_reaped_by_watchdog(tmp_path, monkeypatch):
+    """A player that never returns is killed by the watchdog instead of
+    parking the single-consumer queue forever."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+    _stub_tts(daemon, monkeypatch)
+    # Tighten the watchdog: the per-char term would otherwise budget minutes.
+    monkeypatch.setattr(daemon, "PLAYBACK_TIMEOUT_PER_CHAR_S", 0.0)
+    monkeypatch.setattr(daemon, "PLAYBACK_MIN_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(daemon, "PLAYBACK_POLL_S", 0.05)
+
+    players: list[_FakePlayer] = []
+
+    def _spawn(path, speed=1.0):
+        player = _FakePlayer(path, speed, hang=not players)
+        players.append(player)
+        return player
+
+    monkeypatch.setattr("heard.platform.playback.spawn", _spawn)
+
+    events: list[str] = []
+    monkeypatch.setattr("heard.daemon._log", lambda ev, **kw: events.append(ev))
+
+    daemon._start_speech("wedged line")
+    daemon._start_speech("after the wedge")
+    assert _wait_drained(daemon), "watchdog never released the queue"
+
+    assert players[0].returncode == -9, "the hung player was never killed"
+    assert len(players) == 2, "the queue never advanced past the hung player"
+    assert "playback_timeout" in events
+    assert daemon._current_cancel is None
+    assert daemon._current_proc is None
+
+
+def test_cancel_during_playback_kills_promptly(tmp_path, monkeypatch):
+    """Silence mid-playback still stops the player within a poll tick — the
+    watchdog loop must not delay the cancel path, and the queue advances."""
+    daemon = _make_daemon(tmp_path, monkeypatch)
+    _stub_tts(daemon, monkeypatch)
+    monkeypatch.setattr(daemon, "PLAYBACK_POLL_S", 0.05)
+
+    players: list[_FakePlayer] = []
+
+    def _spawn(path, speed=1.0):
+        player = _FakePlayer(path, speed, hang=not players)
+        players.append(player)
+        return player
+
+    monkeypatch.setattr("heard.platform.playback.spawn", _spawn)
+
+    daemon._start_speech("long line")
+    daemon._start_speech("queued line")
+
+    deadline = time.monotonic() + 2.0
+    while not players and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert players, "playback never started"
+    assert players[0].started.wait(timeout=1.0), "playback never started"
+
+    with daemon._queue_cv:
+        cancel = daemon._current_cancel
+    assert cancel is not None, "no in-flight utterance to cancel"
+
+    t0 = time.monotonic()
+    cancel.set()
+    assert _wait_drained(daemon), "queue never drained after the cancel"
+    elapsed = time.monotonic() - t0
+
+    assert players[0].returncode == -9, "cancel didn't kill the in-flight player"
+    assert elapsed < 1.0, f"cancel took {elapsed:.2f}s to land"
+    assert daemon._current_cancel is None
+    assert daemon._current_proc is None
